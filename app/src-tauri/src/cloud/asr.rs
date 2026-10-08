@@ -21,9 +21,9 @@ pub enum AsrInput {
 }
 
 #[derive(Default)]
-struct AudioSequence { next:u64, padded_tail:bool, real_samples:u64 }
+pub(super) struct AudioSequence { next:u64, padded_tail:bool, real_samples:u64 }
 impl AudioSequence {
-    fn frame(&mut self,sequence:u64,pcm:&[i16],padding:usize)->Result<(),CloudError> {
+    pub(super) fn frame(&mut self,sequence:u64,pcm:&[i16],padding:usize)->Result<(),CloudError> {
         if pcm.is_empty() || pcm.len()>1600 {
             return Err(CloudError::new("audio_frame_limit","asr","音频帧为空或超过100毫秒限制"));
         }
@@ -40,7 +40,7 @@ impl AudioSequence {
         self.padded_tail=padding>0;
         Ok(())
     }
-    fn finish(&self,next_sequence:u64)->Result<(),CloudError> {
+    pub(super) fn finish(&self,next_sequence:u64)->Result<(),CloudError> {
         if next_sequence!=self.next {
             return Err(CloudError::new("audio_incomplete","audio","音频尾帧尚未收齐，不能结束识别"));
         }
@@ -143,22 +143,27 @@ impl AsrTelemetry {
                     pending_items:event.pending_items,final_items:event.final_items}).collect(),terminated:self.terminated}
     }
 }
-struct WireDiagnostics { metadata:AsrTelemetry, callback:Arc<dyn Fn(AsrProgress)+Send+Sync> }
+pub(super) struct WireDiagnostics { pub(super) metadata:AsrTelemetry, callback:Arc<dyn Fn(AsrProgress)+Send+Sync> }
 impl WireDiagnostics {
-    fn new(callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Self { Self{metadata:AsrTelemetry::default(),callback} }
-    fn publish(&self) { (self.callback)(AsrProgress::Diagnostics(self.metadata.clone())); }
+    pub(super) fn new(callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Self { Self{metadata:AsrTelemetry::default(),callback} }
+    pub(super) fn publish(&self) { (self.callback)(AsrProgress::Diagnostics(self.metadata.clone())); }
     fn event(&mut self,kind:AsrEventKind,value:Option<&Value>,assembler:&Assembler) {
-        let at=Instant::now();self.metadata.observed_events=self.metadata.observed_events.saturating_add(1);
-        self.metadata.event_counts[kind as usize]=self.metadata.event_counts[kind as usize].saturating_add(1);
-        if kind==AsrEventKind::SessionFinished {self.metadata.session_finished_received_at.get_or_insert(at);}
-        self.metadata.final_items=assembler.items.values().filter(|item|item.final_text.is_some()).count();
-        self.metadata.pending_items=assembler.items.len()-self.metadata.final_items;
+        let final_items=assembler.items.values().filter(|item|item.final_text.is_some()).count();
         let item=value.and_then(|value|value["item_id"].as_str().or_else(||value.pointer("/item/id").and_then(Value::as_str)))
             .and_then(|id|assembler.items.get(id));
         let previous=item.and_then(|item|item.previous.as_deref()).and_then(|id|assembler.items.get(id));
+        self.event_summary(kind,assembler.items.len()-final_items,final_items,item.map(|item|item.seen),previous.map(|item|item.seen));
+    }
+    /// Both protocols publish the same bounded, content-free event vocabulary.
+    pub(super) fn event_summary(&mut self,kind:AsrEventKind,pending_items:usize,final_items:usize,item_ordinal:Option<u64>,previous_item_ordinal:Option<u64>) {
+        let at=Instant::now();self.metadata.observed_events=self.metadata.observed_events.saturating_add(1);
+        self.metadata.event_counts[kind as usize]=self.metadata.event_counts[kind as usize].saturating_add(1);
+        if kind==AsrEventKind::SessionFinished {self.metadata.session_finished_received_at.get_or_insert(at);}
+        self.metadata.final_items=final_items;
+        self.metadata.pending_items=pending_items;
         if self.metadata.event_tail.len()==ASR_EVENT_TAIL {self.metadata.event_tail.pop_front();}
         self.metadata.event_tail.push_back(AsrWireEvent{sequence:self.metadata.observed_events,kind,received_at:at,
-            item_ordinal:item.map(|item|item.seen),previous_item_ordinal:previous.map(|item|item.seen),
+            item_ordinal,previous_item_ordinal,
             pending_items:self.metadata.pending_items,final_items:self.metadata.final_items});self.publish();
     }
 }
@@ -311,11 +316,14 @@ fn session_update(language:&str,dictionary:&DictionarySnapshot)->Result<Value,Cl
 
 pub async fn run(config:ProviderConfig, secret:String, language:String, dictionary:DictionarySnapshot, attempt:String, audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Result<Vec<SourceItem>,CloudError> {
     let url=endpoints(&config)?.asr;
+    if super::models::validate_recognition(&config,&language)?.protocol==super::models::AsrProtocol::TaskStreaming {
+        return super::asr_task::run_at(config,secret,language,dictionary,attempt,audio,cancel,callback,url,Timeouts::default()).await;
+    }
     run_at(config,secret,language,dictionary,attempt,audio,cancel,callback,url,Timeouts::default()).await
 }
 
 #[derive(Clone,Copy)]
-struct Timeouts { establishment:Duration,send:Duration,finish:Duration }
+pub(super) struct Timeouts { pub(super) establishment:Duration,pub(super) send:Duration,pub(super) finish:Duration }
 impl Default for Timeouts {fn default()->Self {Self{establishment:Duration::from_secs(10),send:Duration::from_secs(5),finish:Duration::from_secs(15)}}}
 
 // Private transport seam: only run() can select a production URL; localhost injection lives in tests.
@@ -399,7 +407,7 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, dictionar
     }
 }
 
-fn cancelled()->CloudError {CloudError::new("cancelled","asr","已取消识别")}
+pub(super) fn cancelled()->CloudError {CloudError::new("cancelled","asr","已取消识别")}
 fn set_time(slot:&mut Option<u64>,value:Option<&Value>)->Result<(),CloudError> {
     if let Some(value)=value {
         let time=value.as_u64().ok_or_else(||CloudError::new("invalid_order","asr","识别时间无效"))?;
@@ -408,14 +416,14 @@ fn set_time(slot:&mut Option<u64>,value:Option<&Value>)->Result<(),CloudError> {
     }
     Ok(())
 }
-async fn send_message(socket:&mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,message:Message,cancel:&CancellationToken,deadline:tokio::time::Instant)->Result<(),CloudError> {
+pub(super) async fn send_message(socket:&mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,message:Message,cancel:&CancellationToken,deadline:tokio::time::Instant)->Result<(),CloudError> {
     tokio::select! {biased;
         _=cancel.cancelled()=>Err(cancelled()),
         result=tokio::time::timeout_at(deadline,socket.send(message))=>result.map_err(|_|CloudError::new("asr_send_timeout","asr","语音发送积压，已停止"))?.map_err(|_|CloudError::new("asr_send_failed","asr","语音数据发送失败")),
     }
 }
 
-fn authorized_request(url:&str,secret:&str,workspace:Option<&str>)->Result<tokio_tungstenite::tungstenite::http::Request<()>,CloudError> {
+pub(super) fn authorized_request(url:&str,secret:&str,workspace:Option<&str>)->Result<tokio_tungstenite::tungstenite::http::Request<()>,CloudError> {
     let mut request=url.into_client_request().map_err(|_|CloudError::new("invalid_endpoint","configuration","服务地址无效"))?;
     request.headers_mut().insert("Authorization",format!("Bearer {secret}").parse().map_err(|_|CloudError::new("invalid_key","credentials","Key 格式无效"))?);
     if let Some(workspace)=workspace.filter(|s|!s.is_empty()) {

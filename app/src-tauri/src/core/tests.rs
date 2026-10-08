@@ -22,6 +22,54 @@ fn path() -> PathBuf {
 }
 fn draft(name:&str) -> ModeDraft {ModeDraft{id:None,name:name.into(),base_mode:BaseMode::Light,rules:"保留条件，用简洁段落。".into(),expected_revision:None}}
 
+fn term_patch()->CorrectionPatch {CorrectionPatch{block_id:"block-1".into(),start:0,end:2,expected_text:"会议".into(),replacement:"SpeakMode".into()}}
+
+#[test]
+fn correction_memory_only_persists_only_explicit_word_and_rolls_back_memory_on_sql_failure() {
+    let file=path();
+    {
+        let mut store=Store::open(&file).unwrap();let before=ready(&mut store,"private-correction",StoragePolicy::MemoryOnly);
+        store.test_connection().execute_batch("CREATE TRIGGER reject_word BEFORE INSERT ON dictionary_entries BEGIN SELECT RAISE(ABORT,'synthetic'); END;").unwrap();
+        assert!(store.correct_term("private-correction","output-private-correction",term_patch(),Some(1),"now").is_err());
+        assert_eq!(store.get_result("private-correction").unwrap(),before);assert_eq!(store.dictionary().unwrap().version,1);
+        store.test_connection().execute_batch("DROP TRIGGER reject_word;").unwrap();
+        let result=store.correct_term("private-correction","output-private-correction",term_patch(),Some(1),"now").unwrap();
+        assert_eq!(result.dictionary_status,CorrectionDictionaryStatus::Added);assert_eq!(result.detail.source,before.source);assert!(result.detail.can_undo);
+        assert_eq!(store.history_list("",0,20).unwrap().total,0);
+        for table in ["sessions","sources","source_items","outputs"] {assert_eq!(store.test_connection().query_row(&format!("SELECT COUNT(*) FROM {table}"),[],|row|row.get::<_,u64>(0)).unwrap(),0);}
+        let undone=store.undo_output("private-correction",&result.detail.output.unwrap().id,"undo").unwrap();assert_eq!(undone.output.unwrap().blocks,before.output.unwrap().blocks);
+    }
+    let store=Store::open(&file).unwrap();assert_eq!(store.dictionary().unwrap().entries[0].term,"SpeakMode");assert!(matches!(store.get_result("private-correction"),Err(StoreError::NotFound)));
+    drop(store);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn correction_cancelled_or_deleted_commit_guard_cannot_publish_either_change() {
+    for policy in [StoragePolicy::History,StoragePolicy::MemoryOnly] {
+        for deleted in [false,true] {
+            let mut store=Store::in_memory().unwrap();let before=ready(&mut store,"cancel-correction",policy);
+            let parent=std::sync::Arc::new(CommitGuard::new("cancel-correction".into(),7));parent.observe_ready().unwrap();let guard=parent.operation();
+            if deleted{parent.delete();}else{assert_eq!(guard.cancel(),CancelDecision::Accepted);}
+            let result=store.with_commit_guard(guard,|store|store.correct_term("cancel-correction","output-cancel-correction",term_patch(),Some(1),"now"));
+            assert!(matches!(result,Err(StoreError::Cancelled)));assert_eq!(store.get_result("cancel-correction").unwrap(),before);assert_eq!(store.dictionary().unwrap(),DictionarySnapshot::default());
+        }
+    }
+}
+
+#[test]
+fn correction_context_limit_and_unicode_single_occurrence_are_enforced() {
+    let mut store=Store::in_memory().unwrap();let before=ready(&mut store,"bounded-correction",StoragePolicy::History);
+    let terms=(0..16).map(|index|format!("{index:02}{}","词".repeat(78))).collect();
+    let dictionary=store.import_dictionary(terms,1).unwrap();
+    let mut patch=term_patch();patch.replacement="长".repeat(80);
+    assert!(matches!(store.correct_term("bounded-correction","output-bounded-correction",patch,Some(dictionary.version),"now"),Err(StoreError::Invalid(reason)) if reason=="dictionary_context_limit"));
+    assert_eq!(store.get_result("bounded-correction").unwrap(),before);assert_eq!(store.dictionary().unwrap(),dictionary);
+    let mut blocks=before.output.as_ref().unwrap().blocks.clone();blocks[0].text="🙂飞格玛和飞格玛".into();
+    let edited=store.edit_output("bounded-correction","output-bounded-correction",blocks,"edit").unwrap();
+    let result=store.correct_term("bounded-correction",&edited.output.unwrap().id,CorrectionPatch{block_id:"block-1".into(),start:1,end:4,expected_text:"飞格玛".into(),replacement:"Figma".into()},None,"correct").unwrap();
+    let blocks=result.detail.output.unwrap().blocks;assert_eq!(blocks[0].text,"🙂Figma和飞格玛");assert_eq!(blocks[1],before.output.unwrap().blocks[1]);
+}
+
 #[test]
 fn dictionary_v2_migration_preserves_v1_preferences_modes_history_sources_and_usage() {
     let file=path();

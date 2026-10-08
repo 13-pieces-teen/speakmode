@@ -34,6 +34,14 @@ SQLite 由专用 worker 独占，使用有界队列、提交 guard 和最终 COM
 
 ## 0.1.5 词典与采音
 
-词典由 SQLite worker 持久化，主窗口 RPC 使用版本比较和提交 guard。一次录音开始时冻结词库，ASR 重试仍使用该版本；非空词库经 `session.update.input_audio_transcription.corpus.text` 作为识别上下文发送，不做来源字符串替换，也不改变 Mode prompt。录音浮层快照不包含完整词条。
+词典由 SQLite worker 持久化，主窗口 RPC 使用版本比较和提交 guard。一次录音开始时冻结词库，ASR 重试仍使用该版本。旧实时协议经 `session.update.input_audio_transcription.corpus.text` 发送；0.2.0的新Task Streaming接口按官方即时热词与有限context编码。两者都不做来源字符串替换，也不把词典作为Mode正文；录音浮层快照不包含完整词条。
 
 CPAL 输入回调复用启动时预分配的 mono 缓存；非阻塞地收取空缓存、downmix、交给 worker。worker 重采样后返还缓存。2 秒原始样本预算、64 块上限、明确 overflow 故障、停止 cutoff 与 stream 销毁后的尾音排空继续生效；完整管线的其他线程仍可分配内存。具体增量与实测边界见[版本计划](plans/voice-0.1.5.md)。
+
+## 0.2.0质量与纠词
+
+`cloud/asr.rs`按兼容目录分派协议，`asr_task.rs`实现Audio3.1的run-task、ACK、二进制PCM、finish-task和最终任务回执。两条路径复用帧计数、取消和有界诊断；Task句号按sentence_id固定，partial可修订，只有全部final和任务完成才形成来源。模型变更只影响下次录音。
+
+`revision.correctTerm`对显式选中的单处文本创建新输出版本，并可在同一数据库事务加入规范词条；绑定输出／词典版本与取消guard。MemoryOnly正文仍只在内存，用户明确记住的词独立落库。既有来源、局部恢复和undo契约不变，历史纠正不重复自动输入。
+
+结构整理可以在一个连续sourceRange内归并话题，不能跨块任意重新挂来源。有限事实检查增加输出到有效来源的数值／单位／版本比对；不是通用语义判断。个人表达快捷选项写入现有个人Mode规则，规则仍不能提供口述中不存在的事实。见[升级计划](plans/voice-0.2.0.md)。

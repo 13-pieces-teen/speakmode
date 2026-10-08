@@ -521,6 +521,35 @@ impl Store {
         output.id=id(); output.kind=RevisionKind::Restore; output.creation_reason=CreationReason::History; output.created_at=created_at.into();
         self.commit_revision(session_id,expected_current_revision_id,output,false)
     }
+    /// The explicit correction and optional dictionary append share one guarded
+    /// commit. Neither a stale dictionary nor a failed word insert edits text.
+    pub fn correct_term(&mut self, session_id:&str, expected_current_revision_id:&str, patch:CorrectionPatch, expected_dictionary_version:Option<u64>, created_at:&str) -> StoreResult<CorrectionReceipt> {
+        let mut output=self.current_for_edit(session_id,expected_current_revision_id)?;
+        if patch.end<=patch.start || patch.end-patch.start>DICTIONARY_MAX_TERM_CHARS || patch.expected_text.chars().count()>DICTIONARY_MAX_TERM_CHARS {return Err(invalid("correction_selection_invalid"));}
+        let term=dictionary_term(&patch.replacement)?;
+        let block=output.blocks.iter_mut().find(|block|block.id==patch.block_id).ok_or_else(||invalid("correction_selection_invalid"))?;
+        let (start,end)=scalar_range(&block.text,patch.start,patch.end)?;
+        if block.text[start..end]!=patch.expected_text {return Err(invalid("correction_selection_mismatch"));}
+        if patch.expected_text==term {return Err(invalid("correction_unchanged"));}
+        block.text.replace_range(start..end,&term);
+        output.id=id();output.kind=RevisionKind::Edit;output.creation_reason=CreationReason::History;output.created_at=created_at.into();
+        let mut status=CorrectionDictionaryStatus::NotRequested;
+        let dictionary=if let Some(expected)=expected_dictionary_version {
+            let mut next=self.checked_dictionary(expected)?;
+            if next.entries.iter().any(|entry|folded(&entry.term)==folded(&term)) {
+                status=CorrectionDictionaryStatus::Existing;
+            }else{
+                next.entries.push(DictionaryEntry{id:id(),term,created_at:created_at.into(),updated_at:created_at.into()});
+                next.entries.sort_by_cached_key(|entry|(folded(&entry.term),entry.id.clone()));
+                next.version=expected.checked_add(1).ok_or_else(||invalid("dictionary_version"))?;
+                status=CorrectionDictionaryStatus::Added;
+            }
+            validate_dictionary(&next)?;Some(next)
+        }else{None};
+        let mutation=dictionary.as_ref().zip(expected_dictionary_version).map(|(next,expected)|(next,expected,status==CorrectionDictionaryStatus::Added));
+        let detail=self.commit_revision_with_dictionary(session_id,expected_current_revision_id,output,false,mutation)?;
+        Ok(CorrectionReceipt{detail,dictionary,dictionary_status:status})
+    }
     pub fn undo_output(&mut self, session_id:&str, expected_current_revision_id:&str, created_at:&str) -> StoreResult<HistoryDetail> {
         let detail=self.get_result(session_id)?;
         self.current_for_edit(session_id,expected_current_revision_id)?;
@@ -536,7 +565,10 @@ impl Store {
         if current.id!=expected { return Err(StoreError::Conflict {current:current.id}); }
         Ok(current)
     }
-    fn commit_revision(&mut self, session_id:&str, expected:&str, mut output:OutputRevision, clear_undo:bool) -> StoreResult<HistoryDetail> {
+    fn commit_revision(&mut self, session_id:&str, expected:&str, output:OutputRevision, clear_undo:bool) -> StoreResult<HistoryDetail> {
+        self.commit_revision_with_dictionary(session_id,expected,output,clear_undo,None)
+    }
+    fn commit_revision_with_dictionary(&mut self, session_id:&str, expected:&str, mut output:OutputRevision, clear_undo:bool, dictionary:Option<(&DictionarySnapshot,u64,bool)>) -> StoreResult<HistoryDetail> {
         let detail=self.get_result(session_id)?;
         self.current_for_edit(session_id,expected)?;
         if output.session_id!=session_id || output.source_revision_id!=detail.session.current_source_id { return Err(invalid("revision source/session mismatch")); }
@@ -549,11 +581,20 @@ impl Store {
         if detail.session.seed.storage_policy==StoragePolicy::MemoryOnly{
             let mut memory=self.memory_sessions.get(session_id).ok_or(StoreError::NotFound)?.clone();memory.record=result.session.clone();memory.outputs.insert(output.id.clone(),output.clone());
             let current=memory.record.current_output_id.as_deref();let previous=memory.record.undo_target_id.as_deref();memory.outputs.retain(|key,_|Some(key.as_str())==current||Some(key.as_str())==previous);
-            let mut discarded=None;finalize_memory(guard.as_deref(),CommitKind::Revision,||{discarded=self.memory_sessions.insert(session_id.into(),memory);})?;drop(discarded);
+            let mut discarded=None;
+            if let Some((next,version,changed))=dictionary {
+                let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;
+                write_dictionary_transaction(&tx,next,version,changed)?;
+                // Only the explicitly remembered word is durable. The corrected
+                // memory-only body publishes after the SQL COMMIT under one guard.
+                tx.commit_guarded(guard.as_deref(),CommitKind::Revision,||{discarded=self.memory_sessions.insert(session_id.into(),memory);})?;
+            }else{finalize_memory(guard.as_deref(),CommitKind::Revision,||{discarded=self.memory_sessions.insert(session_id.into(),memory);})?;}
+            drop(discarded);
         }else{
             let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;insert_output(&tx,&output)?;
             let changed=tx.execute("UPDATE sessions SET output_id=?1,undo_id=?2,search_text=?3 WHERE id=?4 AND output_id=?5",params![output.id,undo,folded(&format!("{}\n{}",detail.source.text(),output.text())),session_id,expected])?;
             if changed!=1{return Err(StoreError::Conflict{current:detail.session.current_output_id.unwrap_or_default()});}
+            if let Some((next,version,changed))=dictionary {write_dictionary_transaction(&tx,next,version,changed)?;}
             tx.commit_guarded(guard.as_deref(),CommitKind::Revision,||{})?;
         }
         Ok(result)
@@ -635,6 +676,17 @@ impl<'a> CheckedTransaction<'a>{
 impl<'a> Deref for CheckedTransaction<'a>{type Target=Transaction<'a>;fn deref(&self)->&Self::Target{self.tx.as_ref().unwrap()}}
 impl Drop for CheckedTransaction<'_>{fn drop(&mut self){let _=self.rollback_checked();}}
 fn finalize_memory(guard:Option<&CommitGuard>,kind:CommitKind,publish:impl FnOnce())->StoreResult<()>{if let Some(guard)=guard{guard.finalize(kind,||{publish();Ok(())})}else{publish();Ok(())}}
+
+fn write_dictionary_transaction(tx:&Transaction<'_>,next:&DictionarySnapshot,expected:u64,changed:bool)->StoreResult<()> {
+    let updated=tx.execute("UPDATE dictionary_meta SET version=?1 WHERE singleton=1 AND version=?2",params![i64_checked(next.version)?,i64_checked(expected)?])?;
+    if updated!=1 {let current:u64=tx.query_row("SELECT version FROM dictionary_meta WHERE singleton=1",[],|row|row.get(0))?;return Err(StoreError::Conflict{current:current.to_string()});}
+    if changed {
+        // This helper is used only after validation of the bounded snapshot.
+        tx.execute("DELETE FROM dictionary_entries",[])?;
+        for entry in &next.entries {tx.execute("INSERT INTO dictionary_entries(id,normalized_term,term,created_at,updated_at) VALUES(?1,?2,?3,?4,?5)",params![entry.id,folded(&entry.term),entry.term,entry.created_at,entry.updated_at])?;}
+    }
+    Ok(())
+}
 
 fn enum_string<T:Serialize>(v:T) -> StoreResult<String> { Ok(serde_json::from_str::<String>(&json(&v)?)?) }
 fn json_string(s:&str) -> String { serde_json::to_string(s).expect("serializing a string cannot fail") }

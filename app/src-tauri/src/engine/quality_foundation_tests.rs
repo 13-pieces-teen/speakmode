@@ -7,7 +7,8 @@ async fn incompatible_model_configuration_does_not_change_saved_settings() {
     let hub=tests::hub();let original=hub.db.snapshot().provider_config;
     let mut config=original.clone();config.region=Some("beijing".into());
     for (asr,adapter,rewrite,code) in [
-        ("qwen-audio-3.1-asr-flash-streaming","qwen-realtime-v1","qwen-flash","asr_adapter_not_implemented"),
+        ("qwen-audio-3.0-asr-flash-streaming","qwen-realtime-v1","qwen-flash","asr_adapter_not_implemented"),
+        ("qwen-audio-3.1-asr-flash-streaming","qwen-realtime-v1","qwen-flash","asr_adapter_mismatch"),
         ("qwen3-asr-flash-realtime","task-streaming","qwen-flash","asr_adapter_mismatch"),
         ("unknown-model","qwen-realtime-v1","qwen-flash","unsupported_asr_model"),
         ("qwen3-asr-flash-realtime","qwen-realtime-v1","unknown-model","unsupported_rewrite_model"),
@@ -24,7 +25,8 @@ fn main_snapshot_exposes_compatibility_but_does_not_advertise_future_adapters_as
     let hub=tests::hub();let snapshot=hub.snapshot("main").unwrap();
     let models=snapshot["provider"]["modelCatalog"]["asr"].as_array().unwrap();
     assert!(models.iter().any(|m|m["id"]=="qwen3-asr-flash-realtime-2026-02-10"&&m["implemented"]==true));
-    assert!(models.iter().any(|m|m["id"]=="qwen-audio-3.1-asr-flash-streaming"&&m["implemented"]==false));
+    assert!(models.iter().any(|m|m["id"]=="qwen-audio-3.1-asr-flash-streaming"&&m["implemented"]==true&&m["adapterVersion"]=="qwen-task-streaming-v1"));
+    assert!(models.iter().any(|m|m["id"]=="qwen-audio-3.0-asr-flash-streaming"&&m["implemented"]==false));
     assert!(hub.snapshot("recording").unwrap().get("provider").is_none());
 }
 

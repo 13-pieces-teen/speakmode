@@ -33,6 +33,8 @@ struct Manifest { scope: Value, asr_runs: Vec<RunSpec> }
 struct RunSpec {
     run_id: String, fixture_id: String, wav_path: PathBuf,
     dictionary_terms: Vec<String>, language: String, base_modes: Vec<BaseMode>,
+    #[serde(default)] asr_model: Option<String>,
+    #[serde(default)] rewrite_model: Option<String>,
 }
 struct Fixture { pcm: Arc<Vec<i16>>, sha256: String }
 struct PreparedRun { spec: RunSpec, fixture: Arc<Fixture>, dictionary: DictionarySnapshot }
@@ -147,6 +149,21 @@ fn config(path: &Path) -> Result<ProviderConfig, CloudError> {
 fn config_metadata(config: &ProviderConfig) -> Value {
     json!({"region": config.region, "asrModel": config.asr_model, "rewriteModel": config.rewrite_model,
         "adapterVersion": config.adapter_version})
+}
+fn config_for_run(base: &ProviderConfig, spec: &RunSpec) -> Result<ProviderConfig, CloudError> {
+    let mut selected = base.clone();
+    if let Some(id) = &spec.asr_model {
+        let model = cloud::models::catalog().asr.into_iter().find(|model| model.id == id)
+            .ok_or_else(|| lab_error("unsupported_asr_model", "实验语音模型不在兼容清单中"))?;
+        selected.asr_model = id.clone();
+        selected.adapter_version = model.adapter_version
+            .ok_or_else(|| lab_error("asr_adapter_not_implemented", "实验语音模型的接口尚未接入"))?.into();
+    }
+    if let Some(id) = &spec.rewrite_model { selected.rewrite_model = id.clone(); }
+    cloud::models::validate_recognition(&selected, &spec.language)?;
+    cloud::models::validate_rewrite_model(&selected)?;
+    cloud::endpoints(&selected)?;
+    Ok(selected)
 }
 
 #[derive(Default, Serialize)]
@@ -299,12 +316,16 @@ fn stop_reason(error: &CloudError, consecutive_transport: &mut u32) -> Option<Va
     (*consecutive_transport >= 3).then(|| json!({"code":"consecutive_transport_failures","count":*consecutive_transport}))
 }
 async fn execute(manifest: PreparedManifest, config: ProviderConfig, out: &Path) -> Result<(), CloudError> {
+    // Validate every arm before credentials or network: a bad later arm must not spend a partial budget.
+    let configurations = manifest.runs.iter().map(|run| config_for_run(&config, &run.spec))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut evidence = Evidence::new(out)?;
     let mut receipt = json!({"schemaVersion":1,"tool":"speakmode-voice-lab","appVersion":env!("CARGO_PKG_VERSION"),
         "startedAt":Utc::now().to_rfc3339(),"scope":manifest.scope,"configuration":config_metadata(&config),
         "manifestSha256":manifest.manifest_sha256,
-        "preregisteredRuns":manifest.runs.iter().map(|run|json!({"runId":run.spec.run_id,"fixtureId":run.spec.fixture_id,
+        "preregisteredRuns":manifest.runs.iter().zip(&configurations).map(|(run, selected)|json!({"runId":run.spec.run_id,"fixtureId":run.spec.fixture_id,
             "fixtureSha256":run.fixture.sha256,"audioSamples":run.fixture.pcm.len(),"dictionaryTerms":run.spec.dictionary_terms,
+            "configuration":config_metadata(selected),
             "language":run.spec.language,"baseModes":run.spec.base_modes})).collect::<Vec<_>>(),
         "totalPreregisteredAudioSamples":manifest.total_samples,"maximumAsrRuns":18,"maximumRewriteCalls":36,
         "sampleFormat":"PCM16 mono 16000Hz","automaticRetries":0,"status":"running","results":[],
@@ -319,7 +340,7 @@ async fn execute(manifest: PreparedManifest, config: ProviderConfig, out: &Path)
         Err(error) => { evidence.append(&json!({"kind":"credentialFailure","error":safe_error(&error)}))?;
             halted = Some(json!({"code":error.code,"reason":"credential_access_failed"})); None }
     };
-    for run in &manifest.runs {
+    for (run, selected) in manifest.runs.iter().zip(&configurations) {
         if let Some(reason) = &halted {
             let row = json!({"kind":"asr","runId":run.spec.run_id,"fixtureId":run.spec.fixture_id,"status":"skipped","reason":reason});
             evidence.append(&row)?; receipt["results"].as_array_mut().unwrap().push(row);
@@ -330,18 +351,19 @@ async fn execute(manifest: PreparedManifest, config: ProviderConfig, out: &Path)
             evidence.checkpoint(&receipt)?; continue;
         }
         println!("run {}: fixed audio {} ms, dictionary {} terms", run.spec.run_id, run.fixture.pcm.len() as u64 * 1000 / 16000, run.dictionary.entries.len());
-        let (row, source, error) = recognize(run, &config, secret.as_deref().unwrap()).await;
+        let (mut row, source, error) = recognize(run, selected, secret.as_deref().unwrap()).await;
+        row["configuration"] = config_metadata(selected);
         println!("run {}: ASR {}", run.spec.run_id, row["status"].as_str().unwrap_or("unknown"));
         evidence.append(&row)?; receipt["results"].as_array_mut().unwrap().push(row); evidence.checkpoint(&receipt)?;
         if let Some(error) = &error { halted = stop_reason(error, &mut consecutive_transport); }
         else { consecutive_transport = 0; }
         for base in &run.spec.base_modes {
-            let mut row = json!({"kind":"rewrite","runId":run.spec.run_id,"fixtureId":run.spec.fixture_id,"baseMode":base,"automaticRetries":0});
+            let mut row = json!({"kind":"rewrite","runId":run.spec.run_id,"fixtureId":run.spec.fixture_id,"baseMode":base,"configuration":config_metadata(selected),"automaticRetries":0});
             if source.is_none() || halted.is_some() {
                 row["status"] = json!("skipped"); row["reason"] = halted.clone().unwrap_or_else(|| json!({"code":"asr_not_complete"}));
             } else {
                 let started = Instant::now();
-                match cloud::rewrite::rewrite(&config, secret.as_deref().unwrap(), &mode(*base), source.as_ref().unwrap(), CancellationToken::new()).await {
+                match cloud::rewrite::rewrite(selected, secret.as_deref().unwrap(), &mode(*base), source.as_ref().unwrap(), CancellationToken::new()).await {
                     Ok(result) => { row["status"] = json!("passed"); row["output"] = serde_json::to_value(result).expect("rewrite serializes"); consecutive_transport = 0; }
                     Err(error) => { row["status"] = json!("failed"); row["error"] = safe_error(&error); halted = stop_reason(&error, &mut consecutive_transport); }
                 }
@@ -387,6 +409,36 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn per_run_models_keep_scope_and_default_configuration_frozen() {
+        let mut base = ProviderConfig::default();
+        base.region=Some("beijing".into()); base.workspace=Some("owned-lab".into());
+        let frozen=base.clone();
+        let spec:RunSpec=serde_json::from_value(json!({"runId":"candidate-01","fixtureId":"same-audio",
+            "wavPath":"D:/synthetic.wav","dictionaryTerms":[],"language":"auto","baseModes":[],
+            "asrModel":"qwen3-asr-flash-realtime-2026-02-10","rewriteModel":"qwen-plus"})).unwrap();
+        let candidate=config_for_run(&base,&spec).unwrap();
+        assert_eq!(candidate.asr_model,"qwen3-asr-flash-realtime-2026-02-10");
+        assert_eq!(candidate.rewrite_model,"qwen-plus");
+        assert_eq!(candidate.region,base.region); assert_eq!(candidate.workspace,base.workspace);
+        assert_eq!(candidate.adapter_version,"qwen-realtime-v1");
+        assert_eq!(base,frozen,"an experiment must not mutate the user's default configuration");
+    }
+    #[test]
+    fn model_arms_derive_adapter_and_reject_invalid_overrides_before_execution() {
+        let mut base = ProviderConfig::default(); base.region=Some("beijing".into());
+        let mut spec:RunSpec=serde_json::from_value(json!({"runId":"candidate-02","fixtureId":"same-audio",
+            "wavPath":"D:/synthetic.wav","dictionaryTerms":[],"language":"auto","baseModes":[]})).unwrap();
+        assert_eq!(config_for_run(&base,&spec).unwrap(),base);
+        spec.asr_model=Some("qwen-audio-3.1-asr-flash-streaming".into());
+        assert_eq!(config_for_run(&base,&spec).unwrap().adapter_version,"qwen-task-streaming-v1");
+        spec.asr_model=Some("unknown-model".into());
+        assert_eq!(config_for_run(&base,&spec).unwrap_err().code,"unsupported_asr_model");
+        spec.asr_model=Some("fun-asr-realtime".into());
+        assert_eq!(config_for_run(&base,&spec).unwrap_err().code,"asr_adapter_not_implemented");
+        spec.asr_model=None; spec.rewrite_model=Some("unknown-text-model".into());
+        assert_eq!(config_for_run(&base,&spec).unwrap_err().code,"unsupported_rewrite_model");
+    }
     #[test]
     fn dictionary_context_matches_production_capacity_and_unicode_identity() {
         assert!(dictionary(&["SpeakMode".into(), "ＳＰＥＡＫＭＯＤＥ".into()]).is_err());

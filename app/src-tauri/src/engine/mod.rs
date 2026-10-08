@@ -51,7 +51,7 @@ pub struct ProviderStatus {pub config:ProviderConfig,pub configured:bool,pub cre
 
 struct CandidateSlot {key:String,run:String,cancel:CancellationToken,base:String,result:Option<OutputRevision>,adopting:Option<Arc<CommitGuard>>}
 #[derive(Clone)]
-enum ReplayValue {Safe(Value),Session(String,u64),Mode(String,u64),Detail(String),Candidate(String,String),Capture(String),Dictionary(u64),Acknowledged}
+enum ReplayValue {Safe(Value),Session(String,u64),Mode(String,u64),Detail(String),Candidate(String,String),Capture(String),Dictionary(u64),Correction(String,String,Option<u64>,CorrectionDictionaryStatus),Acknowledged}
 struct RequestRecord {fingerprint:String,outcome:Mutex<Option<Result<ReplayValue>>>,completed:tokio::sync::Notify}
 struct RequestOwner(Arc<RequestRecord>);
 impl Drop for RequestOwner {fn drop(&mut self){let mut outcome=self.0.outcome.lock().unwrap();if outcome.is_none(){*outcome=Some(Err(ApiError::new("request_interrupted","ipc","操作已中断，请刷新状态后核对")));}drop(outcome);self.0.completed.notify_waiters();}}
@@ -121,7 +121,7 @@ struct SettingsLease {hub:Arc<AppHub>,id:String}
 impl Drop for SettingsLease {fn drop(&mut self){let mut i=self.hub.inner.lock().unwrap();if i.settings_pending.as_deref()==Some(&self.id){i.settings_pending=None;}}}
 fn db_wire(value:DbValue)->Result<Value>{match value{
     DbValue::Snapshot(v)=>Ok(json!({"revision":v.revision,"preferences":v.preferences,"providerConfig":v.provider_config,"modes":v.modes,"dictionary":v.dictionary,"usage":v.usage,"temporaryResult":v.temporary_result})),DbValue::Preferences(v)=>wire(v),DbValue::ProviderConfig(v)=>wire(v),
-    DbValue::Modes(v)=>wire(v),DbValue::Dictionary(v)=>wire(v),DbValue::Mode(v)=>wire(v),DbValue::ModeSnapshot(v)=>wire(v),
+    DbValue::Modes(v)=>wire(v),DbValue::Dictionary(v)=>wire(v),DbValue::Correction(v)=>wire(v),DbValue::Mode(v)=>wire(v),DbValue::ModeSnapshot(v)=>wire(v),
     DbValue::Detail(v)=>wire(v),DbValue::Source(v)=>wire(v),DbValue::Output(v)=>wire(v),
     DbValue::HistoryPage(v)=>wire(v),DbValue::Usage(v)=>wire(v),DbValue::UsageEvent(v)=>wire(v),
     DbValue::Delivery(v)=>wire(v),DbValue::Unit=>Ok(Value::Null),
@@ -147,6 +147,14 @@ fn dictionary_error(error:StoreError)->ApiError {
     let mut error=ApiError::from(error);error.stage="dictionary".into();error
 }
 pub(crate) fn now()->String{chrono::Utc::now().to_rfc3339()}
+
+fn correction_error(error:StoreError)->ApiError {
+    if let StoreError::Invalid(reason)=&error {
+        if reason.starts_with("dictionary_"){return dictionary_error(error);}
+        return ApiError::new("correction_invalid","correction","所选词条或范围无效，请重新划选；文字与词典均未保存");
+    }
+    let mut result=ApiError::from(error);result.stage="correction".into();result
+}
 
 impl AppHub {
     fn reserve_settings(self:&Arc<Self>)->Result<SettingsLease>{let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;if i.settings_pending.is_some(){return Err(ApiError::new("settings_busy","preferences","正在保存设置，请稍候"));}let id=Uuid::new_v4().to_string();i.settings_pending=Some(id.clone());Ok(SettingsLease{hub:Arc::clone(self),id})}
@@ -269,6 +277,7 @@ impl AppHub {
             "session.start"=>ReplayValue::Safe(value.clone()),
             "session.stop"|"session.selectMode"|"asr.retry"|"rewrite.retry"|"result.retrySave"=>ReplayValue::Session(value.get("sessionId").or_else(||value.get("id")).and_then(Value::as_str).unwrap_or("").into(),value["generation"].as_u64().unwrap_or(0)),
             "dictionary.save"|"dictionary.import"|"dictionary.delete"=>ReplayValue::Dictionary(value["version"].as_u64().unwrap_or(0)),
+            "revision.correctTerm"=>ReplayValue::Correction(value.pointer("/detail/session/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/detail/output/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/dictionary/version").and_then(Value::as_u64),serde_json::from_value(value["dictionaryStatus"].clone()).unwrap_or(CorrectionDictionaryStatus::NotRequested)),
             "mode.save"=>ReplayValue::Mode(id("id"),value["revision"].as_u64().unwrap_or(0)),
             "revision.adopt"|"revision.edit"|"revision.restore"|"revision.undo"|"result.useSource"=>ReplayValue::Detail(value.pointer("/session/id").and_then(Value::as_str).unwrap_or("").into()),
             "history.rewrite"=>ReplayValue::Candidate(id("sessionId"),id("id")),
@@ -282,6 +291,12 @@ impl AppHub {
         match value {
             ReplayValue::Safe(value)=>Ok(value),
             ReplayValue::Dictionary(version)=>{let snapshot=self.db.snapshot().dictionary;if snapshot.version!=version{return Err(already());}wire(snapshot)},
+            ReplayValue::Correction(id,revision,dictionary_version,dictionary_status)=>{
+                let detail=db_detail(self.db_read(DbCommand::GetResult{session_id:id}).await.map_err(|_|already())?)?;
+                if detail.output.as_ref().map(|output|output.id.as_str())!=Some(revision.as_str()){return Err(already());}
+                let dictionary=if let Some(version)=dictionary_version{let snapshot=self.db.snapshot().dictionary;if snapshot.version!=version{return Err(already());}Some(snapshot)}else{None};
+                wire(CorrectionReceipt{detail,dictionary,dictionary_status})
+            },
             ReplayValue::Acknowledged=>Err(already()),
             ReplayValue::Session(id,generation)=>{let i=self.inner.lock().unwrap();wire(i.active.as_ref().filter(|s|s.id==id&&s.generation==generation).ok_or_else(already)?.view())},
             ReplayValue::Detail(id)=>db_wire(self.db_read(DbCommand::GetResult{session_id:id}).await.map_err(|_|already())?),
@@ -360,6 +375,15 @@ impl AppHub {
                 let id=text(&p,"sessionId")?.to_owned();let command=DbCommand::Edit{session_id:id.clone(),expected_current_revision_id:text(&p,"expectedCurrentRevisionId")?.into(),blocks:parse(p["blocks"].clone())?,created_at:now()};
                 let guard=self.history_guard(&id).await?.operation();let intent=self.reserve_revision_intent(&id);
                 let detail=db_detail(self.db_write(command,guard,DbPriority::Normal).await?)?;self.sync_revision_receipt(intent,&detail);wire(detail)
+            },
+            "revision.correctTerm"=>{
+                let id=text(&p,"sessionId")?.to_owned();
+                let remember=p["remember"].as_bool().ok_or_else(||ApiError::new("invalid_payload","correction","请选择是否记住词条"))?;
+                let command=DbCommand::CorrectTerm{session_id:id.clone(),expected_current_revision_id:text(&p,"expectedCurrentRevisionId")?.into(),patch:parse(p["patch"].clone())?,expected_dictionary_version:if remember{Some(number(&p,"expectedDictionaryVersion")?)}else{None},created_at:now()};
+                let guard=self.history_guard(&id).await?.operation();let intent=self.reserve_revision_intent(&id);
+                let ticket=self.db.submit(command,Some(guard),DbPriority::Normal).map_err(correction_error)?;
+                let receipt=match ticket.wait().await.map_err(correction_error)?{DbValue::Correction(receipt)=>receipt,_=>return Err(ApiError::new("storage_protocol","storage","数据库返回类型无效"))};
+                self.sync_revision_receipt(intent,&receipt.detail);wire(receipt)
             },
             "revision.restore"=>{
                 let id=text(&p,"sessionId")?.to_owned();let command=DbCommand::Restore{session_id:id.clone(),expected_current_revision_id:text(&p,"expectedCurrentRevisionId")?.into(),patch:parse(p["patch"].clone())?,created_at:now()};

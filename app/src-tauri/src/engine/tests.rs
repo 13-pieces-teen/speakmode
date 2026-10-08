@@ -126,6 +126,97 @@ async fn command(hub: &Arc<AppHub>, name: &str, payload: Value) -> Result<Value>
 }
 
 #[tokio::test]
+async fn correction_remembers_only_the_selected_term_and_preserves_source_and_undo() {
+    let h=hub();install(&h,"correct-term",SessionPhase::FinalizingAsr,true);ready(&h,"correct-term");
+    let before=h.db.get_result("correct-term").unwrap();
+    let result=command(&h,"revision.correctTerm",json!({"sessionId":"correct-term","expectedCurrentRevisionId":"output-correct-term","requestId":"correct-first","patch":{"blockId":"block-0","start":0,"end":2,"expectedText":"会议","replacement":"PolyU"},"remember":true,"expectedDictionaryVersion":1})).await.unwrap();
+    let detail:HistoryDetail=serde_json::from_value(result["detail"].clone()).unwrap();
+    assert_eq!(detail.output.as_ref().unwrap().blocks[0].text,"PolyU未确认前，不要订机票；先保留行程。");
+    assert_eq!(detail.source,before.source);assert!(detail.can_undo);
+    assert_eq!(result["dictionaryStatus"],"added");assert_eq!(result["dictionary"]["entries"][0]["term"],"PolyU");
+    assert_eq!(h.db.snapshot().dictionary.entries[0].term,"PolyU");
+    let undone:HistoryDetail=serde_json::from_value(command(&h,"revision.undo",json!({"sessionId":"correct-term","expectedCurrentRevisionId":detail.output.unwrap().id,"requestId":"correct-undo"})).await.unwrap()).unwrap();
+    assert_eq!(undone.output.unwrap().blocks,before.output.unwrap().blocks);
+    assert_eq!(h.db.snapshot().dictionary.entries[0].term,"PolyU","undo text keeps the explicitly remembered dictionary word");
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+}
+
+fn correction_payload(id:&str,revision:&str,replacement:&str,remember:bool)->Value {
+    json!({"sessionId":id,"expectedCurrentRevisionId":revision,"requestId":Uuid::new_v4().to_string(),"patch":{"blockId":"block-0","start":0,"end":2,"expectedText":"会议","replacement":replacement},"remember":remember,"expectedDictionaryVersion":1})
+}
+
+#[tokio::test]
+async fn correction_dictionary_failure_and_stale_versions_commit_neither_side() {
+    let h=hub();install(&h,"correction-atomic",SessionPhase::FinalizingAsr,true);ready(&h,"correction-atomic");
+    let original=h.db.get_result("correction-atomic").unwrap();
+    fault(&h,"CREATE TRIGGER reject_correction_word BEFORE INSERT ON dictionary_entries BEGIN SELECT RAISE(ABORT,'synthetic dictionary failure'); END;");
+    let payload=correction_payload("correction-atomic","output-correction-atomic","SpeakMode",true);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"storageFailed");
+    assert_eq!(h.db.get_result("correction-atomic").unwrap(),original);assert_eq!(h.db.snapshot().dictionary,DictionarySnapshot::default());
+    fault(&h,"DROP TRIGGER reject_correction_word;");
+    command(&h,"dictionary.import",json!({"terms":["Figma"],"expectedVersion":1,"requestId":"correction-dictionary-change"})).await.unwrap();
+    let payload=correction_payload("correction-atomic","output-correction-atomic","SpeakMode",true);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"revisionConflict");
+    assert_eq!(h.db.get_result("correction-atomic").unwrap(),original);assert_eq!(h.db.snapshot().dictionary.entries[0].term,"Figma");
+    let edited:HistoryDetail=serde_json::from_value(command(&h,"revision.edit",edit_payload("correction-atomic","output-correction-atomic","已有新版本")).await.unwrap()).unwrap();
+    let mut payload=correction_payload("correction-atomic","output-correction-atomic","SpeakMode",true);payload["expectedDictionaryVersion"]=json!(2);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"revisionConflict");
+    assert_eq!(h.db.get_result("correction-atomic").unwrap(),edited);assert_eq!(h.db.snapshot().dictionary.entries.len(),1);
+}
+
+#[tokio::test]
+async fn correction_duplicate_word_is_idempotent_and_replay_cannot_resurrect_a_deleted_word() {
+    let h=hub();install(&h,"correction-replay",SessionPhase::FinalizingAsr,true);ready(&h,"correction-replay");
+    let dictionary=command(&h,"dictionary.import",json!({"terms":["SpeakMode"],"expectedVersion":1,"requestId":"correction-existing"})).await.unwrap();
+    let mut payload=correction_payload("correction-replay","output-correction-replay","ＳＰＥＡＫＭＯＤＥ",true);payload["expectedDictionaryVersion"]=json!(2);
+    let result=command(&h,"revision.correctTerm",payload.clone()).await.unwrap();
+    assert_eq!(result["dictionaryStatus"],"existing");assert_eq!(result["dictionary"],dictionary);assert_eq!(h.db.snapshot().dictionary.version,2);
+    assert_eq!(command(&h,"revision.correctTerm",payload.clone()).await.unwrap(),result);
+    assert_eq!(h.db.get_result("correction-replay").unwrap().output.unwrap().blocks[0].text,"ＳＰＥＡＫＭＯＤＥ未确认前，不要订机票；先保留行程。");
+    command(&h,"dictionary.delete",json!({"entryId":dictionary["entries"][0]["id"],"expectedVersion":2,"requestId":"correction-delete-existing"})).await.unwrap();
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"request_already_processed");
+    assert!(h.db.snapshot().dictionary.entries.is_empty());
+}
+
+#[tokio::test]
+async fn correction_capacity_is_atomic_and_user_may_correct_without_remembering() {
+    let h=hub();install(&h,"correction-full",SessionPhase::FinalizingAsr,true);ready(&h,"correction-full");
+    let terms:Vec<_>=(0..200).map(|index|format!("term{index}")).collect();
+    command(&h,"dictionary.import",json!({"terms":terms,"expectedVersion":1,"requestId":"correction-fill"})).await.unwrap();
+    let original=h.db.get_result("correction-full").unwrap();
+    let mut payload=correction_payload("correction-full","output-correction-full","SpeakMode",true);payload["expectedDictionaryVersion"]=json!(2);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"dictionary_entry_limit");
+    assert_eq!(h.db.get_result("correction-full").unwrap(),original);assert_eq!(h.db.snapshot().dictionary.entries.len(),200);
+    let result=command(&h,"revision.correctTerm",correction_payload("correction-full","output-correction-full","SpeakMode",false)).await.unwrap();
+    assert_eq!(result["dictionaryStatus"],"notRequested");assert!(result["dictionary"].is_null());assert_eq!(h.db.snapshot().dictionary.entries.len(),200);
+    assert_eq!(result["detail"]["output"]["blocks"][0]["text"],"SpeakMode未确认前，不要订机票；先保留行程。");
+}
+
+#[tokio::test]
+async fn correction_rejects_wrong_occurrence_invalid_terms_and_recording_window_without_mutation() {
+    let h=hub();install(&h,"correction-validate",SessionPhase::FinalizingAsr,true);ready(&h,"correction-validate");
+    let original=h.db.get_result("correction-validate").unwrap();
+    for change in [json!({"start":0,"end":0}),json!({"expectedText":"不是这里"}),json!({"blockId":"other"}),json!({"replacement":"x".repeat(81)}),json!({"replacement":"name\n"}),json!({"replacement":"name\u{200b}"})] {
+        let mut payload=correction_payload("correction-validate","output-correction-validate","SpeakMode",true);
+        for (key,value) in change.as_object().unwrap(){payload["patch"][key]=value.clone();}
+        assert!(command(&h,"revision.correctTerm",payload).await.is_err());
+        assert_eq!(h.db.get_result("correction-validate").unwrap(),original);assert_eq!(h.db.snapshot().dictionary.version,1);
+    }
+    let request=CommandRequest{name:"revision.correctTerm".into(),payload:correction_payload("correction-validate","output-correction-validate","SpeakMode",true)};
+    assert_eq!(h.command("recording",request).await.unwrap_err().code,"forbidden");
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn correction_revokes_prepared_delivery_without_clipboard_or_input() {
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");enable_fixture_delivery(&h);
+    let copies=Arc::new(std::sync::atomic::AtomicUsize::new(0));let chords=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let native=h.native_io.lock().unwrap();let delivery=fake_delivery(h.clone(),copies.clone(),chords.clone());wait_prepared(&h).await;
+    let result=command(&h,"revision.correctTerm",correction_payload("s","output-s","SpeakMode",true)).await.unwrap();
+    assert_eq!(h.inner.lock().unwrap().active.as_ref().unwrap().output.as_ref().unwrap().id,result["detail"]["output"]["id"].as_str().unwrap());
+    drop(native);delivery.await.unwrap();assert_eq!(copies.load(Ordering::SeqCst),0);assert_eq!(chords.load(Ordering::SeqCst),0);assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+}
+
+#[tokio::test]
 async fn dictionary_ipc_lists_without_request_id_and_mutations_return_authoritative_snapshots() {
     let h=hub();let empty=command(&h,"dictionary.list",json!({})).await.unwrap();
     assert_eq!(empty["version"],1);assert_eq!(empty["entries"],json!([]));

@@ -1,0 +1,57 @@
+{
+  "scope": "FIXED_SYNTHETIC_PROVIDER_RESPONSE_REPLAY_NOT_NEW_INFERENCE",
+  "originalReceipt": "voice-0.2.0-2026-10-08-r1/rewrite-diagnostic-r3.json",
+  "originalReceiptSha256": "0ae22be37c98686e15793c51a5bb2df3a042d7c01dc6a30003077984cb515375",
+  "originalStatus": "rejected",
+  "originalError": "rewrite_meaning_risk",
+  "source": {
+    "adapterVersion": "quality-text-v1",
+    "asrAttemptId": "fixed-topic-regrouping",
+    "complete": true,
+    "createdAt": "2026-10-08T00:00:00Z",
+    "generation": 1,
+    "id": "source-topic-regrouping",
+    "items": [
+      {
+        "captureOrder": 0,
+        "endMs": null,
+        "final": true,
+        "id": "topic-regrouping:0",
+        "providerItemId": "0",
+        "startMs": null,
+        "text": "展示打印费先按二百八十元，不对，二百六十元。"
+      },
+      {
+        "captureOrder": 1,
+        "endMs": null,
+        "final": true,
+        "id": "topic-regrouping:1",
+        "providerItemId": "1",
+        "startMs": null,
+        "text": "可能周二做汇报。"
+      },
+      {
+        "captureOrder": 2,
+        "endMs": null,
+        "final": true,
+        "id": "topic-regrouping:2",
+        "providerItemId": "2",
+        "startMs": null,
+        "text": "刚才的打印费只算海报，装裱另算。"
+      },
+      {
+        "captureOrder": 3,
+        "endMs": null,
+        "final": true,
+        "id": "topic-regrouping:3",
+        "providerItemId": "3",
+        "startMs": null,
+        "text": "如果房间还没确认，先不要通知同学。"
+      }
+    ],
+    "model": "fixed-text",
+    "provider": "synthetic",
+    "sessionId": "synthetic-topic-regrouping"
+  },
+  "modelContent": "{\n  \"resolvedMode\": \"structure\",\n  \"blocks\": [\n    {\n      \"text\": \"• 打印费按二百六十元计算，仅包含海报，装裱费用另计。\\n• 汇报可能安排在周二。\\n• 若房间尚未确认，请暂勿通知同学。\",\n      \"sourceRange\": [0, 3]\n    }\n  ]\n}"
+}

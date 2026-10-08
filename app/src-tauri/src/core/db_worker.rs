@@ -14,10 +14,11 @@ pub enum DbCommand {
  GetResult{session_id:String},GetSource{source_id:String},GetOutput{revision_id:String},HistoryList{query:String,cursor:u64,limit:u64},UsageToday{date:String},UsageEvent{session_id:String},
  Checkpoint{seed:SessionSeed,source:SourceRevision},Ready{output:OutputRevision},UseSource{session_id:String,expected_generation:u64,created_at:String},Adopt{session_id:String,expected_current_revision_id:String,candidate:OutputRevision},Edit{session_id:String,expected_current_revision_id:String,blocks:Vec<OutputBlock>,created_at:String},Restore{session_id:String,expected_current_revision_id:String,patch:RestorePatch,created_at:String},Undo{session_id:String,expected_current_revision_id:String,created_at:String},CancelUnfinished{session_id:String},DeleteHistory{session_id:String},PrepareDelivery{attempt:DeliveryAttempt},TransitionDelivery{attempt_id:String,expected:DeliveryState,next:DeliveryState,reason:Option<String>},DeliveryAttempt{attempt_id:String},ClearTemporary,Shutdown,
  #[cfg(test)] TestExecuteBatch{sql:String},
+ CorrectTerm{session_id:String,expected_current_revision_id:String,patch:CorrectionPatch,expected_dictionary_version:Option<u64>,created_at:String},
  #[cfg(test)] TestQueryCount{sql:String},
 }
 #[derive(Debug,Clone)]
-pub enum DbValue {Snapshot(DbSnapshot),Preferences(Preferences),ProviderConfig(ProviderConfig),Modes(Vec<ModeRecord>),Dictionary(DictionarySnapshot),Mode(ModeRecord),ModeSnapshot(ModeSnapshot),Detail(HistoryDetail),Source(SourceRevision),Output(OutputRevision),HistoryPage(HistoryPage),Usage(DailyUsage),UsageEvent(Option<UsageEvent>),Delivery(DeliveryAttempt),Unit,#[cfg(test)] Count(u64)}
+pub enum DbValue {Snapshot(DbSnapshot),Preferences(Preferences),ProviderConfig(ProviderConfig),Modes(Vec<ModeRecord>),Dictionary(DictionarySnapshot),Correction(CorrectionReceipt),Mode(ModeRecord),ModeSnapshot(ModeSnapshot),Detail(HistoryDetail),Source(SourceRevision),Output(OutputRevision),HistoryPage(HistoryPage),Usage(DailyUsage),UsageEvent(Option<UsageEvent>),Delivery(DeliveryAttempt),Unit,#[cfg(test)] Count(u64)}
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub enum DbPriority {Normal,Critical}
 #[derive(Debug,Clone)]
@@ -100,10 +101,10 @@ fn validate_guard(store:&Store,command:&DbCommand,guard:Option<&CommitGuard>)->S
  let identity:Option<(&str,Option<u64>)>=match command{
   DbCommand::Checkpoint{seed,..}=>Some((&seed.id,Some(seed.generation))),DbCommand::Ready{output}=>Some((&output.session_id,None)),
   DbCommand::UseSource{session_id,expected_generation,..}=>Some((session_id,Some(*expected_generation))),
-  DbCommand::Adopt{session_id,..}|DbCommand::Edit{session_id,..}|DbCommand::Restore{session_id,..}|DbCommand::Undo{session_id,..}|DbCommand::CancelUnfinished{session_id}|DbCommand::DeleteHistory{session_id}=>Some((session_id,None)),
+  DbCommand::Adopt{session_id,..}|DbCommand::Edit{session_id,..}|DbCommand::CorrectTerm{session_id,..}|DbCommand::Restore{session_id,..}|DbCommand::Undo{session_id,..}|DbCommand::CancelUnfinished{session_id}|DbCommand::DeleteHistory{session_id}=>Some((session_id,None)),
   DbCommand::PrepareDelivery{attempt}=>Some((&attempt.session_id,Some(attempt.generation))),_=>None,
  };
- let requires=matches!(command,DbCommand::SaveDictionary{..}|DbCommand::ImportDictionary{..}|DbCommand::DeleteDictionary{..}|DbCommand::Checkpoint{..}|DbCommand::Ready{..}|DbCommand::UseSource{..}|DbCommand::Adopt{..}|DbCommand::Edit{..}|DbCommand::Restore{..}|DbCommand::Undo{..}|DbCommand::PrepareDelivery{..});
+ let requires=matches!(command,DbCommand::SaveDictionary{..}|DbCommand::ImportDictionary{..}|DbCommand::DeleteDictionary{..}|DbCommand::Checkpoint{..}|DbCommand::Ready{..}|DbCommand::UseSource{..}|DbCommand::Adopt{..}|DbCommand::Edit{..}|DbCommand::CorrectTerm{..}|DbCommand::Restore{..}|DbCommand::Undo{..}|DbCommand::PrepareDelivery{..});
  if requires&&guard.is_none(){return Err(StoreError::Invalid("session content writes require a commit guard".into()));}
  if let (Some((id,generation)),Some(guard))=(identity,guard){
   if id!=guard.session_id{return Err(StoreError::Invalid("commit guard session identity mismatch".into()));}
@@ -127,6 +128,7 @@ fn execute_inner(store:&mut Store,command:DbCommand)->StoreResult<DbValue>{
   C::ReadSnapshot{..}|C::Shutdown=>Err(StoreError::Invalid("worker control reached SQL dispatcher".into())),
   #[cfg(test)] C::TestQueryCount{sql}=>Ok(V::Count(store.test_connection().query_row(&sql,[],|r|r.get(0))?)),
   #[cfg(test)] C::TestExecuteBatch{sql}=>{store.test_connection().execute_batch(&sql)?;Ok(V::Unit)},
+  C::CorrectTerm{session_id,expected_current_revision_id,patch,expected_dictionary_version,created_at}=>Ok(V::Correction(store.correct_term(&session_id,&expected_current_revision_id,patch,expected_dictionary_version,&created_at)?)),
  }
 }
 // Queries that assemble multiple tables execute in a consistent read transaction.

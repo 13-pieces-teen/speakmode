@@ -19,7 +19,7 @@ CATALOG = {
     "asr": [
         {"id": "qwen3-asr-flash-realtime", "label": "Qwen3 实时（当前默认）", "implemented": True, "adapterVersion": "qwen-realtime-v1"},
         {"id": "qwen3-asr-flash-realtime-2026-02-10", "label": "Qwen3 实时 · 2026-02-10（待评测）", "implemented": True, "adapterVersion": "qwen-realtime-v1"},
-        {"id": "qwen-audio-3.1-asr-flash-streaming", "label": "Qwen Audio 3.1（尚未接入）", "implemented": False, "adapterVersion": None},
+        {"id": "qwen-audio-3.1-asr-flash-streaming", "label": "Qwen Audio 3.1 流式（热词候选）", "implemented": True, "adapterVersion": "qwen-task-streaming-v1", "dictionarySupport": "vocabularyAndContext"},
     ],
     "rewrite": [
         {"id": "qwen-flash", "label": "Qwen Flash（当前默认）", "implemented": True},
@@ -52,7 +52,7 @@ def main():
         browser = p.chromium.launch(channel='msedge', headless=True)
         receipt['browserVersion'] = browser.version
         try:
-            for name in ['compatible-save', 'unknown-existing', 'empty-existing', 'missing-catalog', 'browser-preview']:
+            for name in ['compatible-save', 'task-streaming-save', 'unknown-existing', 'empty-existing', 'missing-catalog', 'browser-preview']:
                 context = browser.new_context(viewport={'width': 1220, 'height': 900}, locale='zh-CN')
                 data = qa.fixture()
                 provider = data['snapshot']['provider']
@@ -94,8 +94,11 @@ def main():
                         expect(asr).to_contain_text('尚未确认兼容')
                     else:
                         asr.click()
-                        expect(page.get_by_role('option', name='Qwen Audio 3.1（尚未接入）', exact=True)).to_be_disabled()
-                        page.get_by_role('option', name='Qwen3 实时 · 2026-02-10（待评测）', exact=True).click()
+                        expect(page.get_by_role('option', name='Qwen Audio 3.1 流式（热词候选）', exact=True)).to_be_enabled()
+                        selected = 'Qwen Audio 3.1 流式（热词候选）' if name == 'task-streaming-save' else 'Qwen3 实时 · 2026-02-10（待评测）'
+                        page.get_by_role('option', name=selected, exact=True).click()
+                        if name == 'task-streaming-save':
+                            expect(page.locator('#provider-asr-capability')).to_contain_text('支持词典热词与词汇上下文')
                         page.get_by_role('combobox', name='整理模型', exact=True).click()
                         page.get_by_role('option', name='Qwen Plus（待评测）', exact=True).click()
                         expect(save).to_be_enabled()
@@ -105,8 +108,8 @@ def main():
                         assert len(calls) == 1
                         payload = calls[0]['payload']
                         assert payload['expectedVersion'] == 1
-                        assert payload['config']['adapterVersion'] == 'qwen-realtime-v1'
-                        assert payload['config']['asrModel'] == 'qwen3-asr-flash-realtime-2026-02-10'
+                        assert payload['config']['adapterVersion'] == ('qwen-task-streaming-v1' if name == 'task-streaming-save' else 'qwen-realtime-v1')
+                        assert payload['config']['asrModel'] == ('qwen-audio-3.1-asr-flash-streaming' if name == 'task-streaming-save' else 'qwen3-asr-flash-realtime-2026-02-10')
                         assert payload['config']['rewriteModel'] == 'qwen-plus'
                         assert not any(r['name'].startswith('credential.') for r in qa.command_ledger(page))
                         row['configurePayload'] = payload

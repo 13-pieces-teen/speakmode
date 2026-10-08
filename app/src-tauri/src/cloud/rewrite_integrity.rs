@@ -56,7 +56,7 @@ const PHRASES: &[(&str, Kind)] = &[
     ("尚未确定", Kind::Pending), ("尚未确认", Kind::Pending), ("未确定", Kind::Pending), ("未确认", Kind::Pending),
     ("没有确定", Kind::Pending), ("没有确认", Kind::Pending), ("没确定", Kind::Pending), ("没确认", Kind::Pending),
     ("不能确定", Kind::Pending), ("不确定", Kind::Pending), ("待确认", Kind::Pending), ("待确定", Kind::Pending), ("待定", Kind::Pending), ("未定", Kind::Pending),
-    ("不要", Kind::Prohibition), ("请勿", Kind::Prohibition), ("切勿", Kind::Prohibition), ("禁止", Kind::Prohibition), ("不得", Kind::Prohibition), ("暂不", Kind::Prohibition), ("暂时不", Kind::Prohibition), ("别", Kind::Prohibition),
+    ("不要", Kind::Prohibition), ("请勿", Kind::Prohibition), ("切勿", Kind::Prohibition), ("禁止", Kind::Prohibition), ("不得", Kind::Prohibition), ("暂不", Kind::Prohibition), ("暂时不", Kind::Prohibition), ("暂勿", Kind::Prohibition), ("别", Kind::Prohibition),
     ("并不是", Kind::NegativeFact), ("不是", Kind::NegativeFact), ("并非", Kind::NegativeFact), ("不等于", Kind::NegativeFact), ("≠", Kind::NegativeFact),
     ("尚未", Kind::NegativeStatus), ("还没有", Kind::NegativeStatus), ("还没", Kind::NegativeStatus), ("没有", Kind::NegativeStatus), ("并未", Kind::NegativeStatus), ("未曾", Kind::NegativeStatus), ("没", Kind::NegativeStatus),
     ("不会", Kind::Negative), ("不能", Kind::Negative), ("无法", Kind::Negative), ("不可能", Kind::Negative), ("不可以", Kind::Negative), ("不", Kind::Negative),
@@ -322,7 +322,8 @@ pub(super) fn validate_meaning(source: &SourceRevision, blocks: &[OutputBlock]) 
             .map(|anchor| fingerprints(english_negative_scope(&clause, &anchor))).collect::<Vec<_>>();
         (kinds, fingerprints(&clause), numeric_scopes, english_negatives)
     }).collect::<Vec<_>>())).collect::<Vec<_>>();
-    for span in effective_spans(source) {
+    let spans = effective_spans(source);
+    for span in &spans {
         let protected = anchors(&span.text);
         let scope = fingerprints(&span.text);
         let english_negative_count = protected.iter().filter(|anchor| anchor.text.is_ascii() && anchor.kind == Kind::Negative).count();
@@ -341,6 +342,63 @@ pub(super) fn validate_meaning(source: &SourceRevision, blocks: &[OutputBlock]) 
             let retained = candidates.iter().filter(|(block, _)| block.source_refs.iter().any(|id| id == span.source_id)).flat_map(|(_, clauses)| clauses).flat_map(|(_, _, numbers, _)| numbers)
                 .any(|(key, candidate_scope, candidate_negative)| *key == fact.key && negative == *candidate_negative && scope_matches(&scope, candidate_scope));
             if !retained { return Err(CloudError::new("rewrite_meaning_risk", "rewrite", "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理")); }
+        }
+    }
+    validate_added_facts(&spans, blocks)
+}
+
+// The forward check above cannot detect "budget 3500, tax 500" when only the
+// budget was dictated. Check a deliberately bounded set of additions too. Bare
+// scalars are excluded: numbering a list or normalizing prose like "一、" is
+// presentation, and this finite parser cannot distinguish every such case.
+// This is still NOT semantic equivalence: facts without these numeric units,
+// unsupported notations, paraphrases and new unqualified prose are unverified.
+fn addition_checked_key(key: &str) -> bool { !key.starts_with("scalar:") }
+
+fn adjacent_equivalence(text: &str, numeric: &[facts::Fact], index: usize) -> bool {
+    if index == 0 { return false; }
+    let previous = &numeric[index - 1]; let current = &numeric[index];
+    if previous.key != current.key || number_is_negative(text, numeric, index - 1) != number_is_negative(text, numeric, index) { return false; }
+    // Permit only a directly adjacent parenthetical equivalent representation,
+    // such as 3秒（即3000毫秒）. A new label (税款3500元), changed value, changed
+    // polarity or separated assertion must still find its own source support.
+    let gap = text[previous.end..current.start].trim();
+    let Some((opening, mut inner)) = gap.strip_prefix('（').map(|inner| ('（',inner))
+        .or_else(||gap.strip_prefix('(').map(|inner| ('(',inner))) else { return false; };
+    inner = inner.trim();
+    for cue in ["也就是", "等于", "即"] {
+        if let Some(rest) = inner.strip_prefix(cue) { inner = rest.trim(); break; }
+    }
+    if !inner.is_empty() && !["不是", "并非", "不等于", "≠"].contains(&inner) { return false; }
+    text[current.end..].trim_start().starts_with(if opening == '（' { '）' } else { ')' })
+}
+
+fn validate_added_facts(spans: &[Span<'_>], blocks: &[OutputBlock]) -> Result<(), CloudError> {
+    let source_facts = spans.iter().flat_map(|span| {
+        let numeric = facts::extract(&span.text);
+        numeric.iter().enumerate().filter(|(_, fact)| addition_checked_key(&fact.key)).map(|(index, fact)|
+            (span.source_id, fact.key.clone(), fingerprints(&facts::local_scope(&span.text, &numeric, index)), number_is_negative(&span.text, &numeric, index)))
+            .collect::<Vec<_>>()
+    }).collect::<Vec<_>>();
+    for block in blocks {
+        for clause in scoped_candidates(&block.text) {
+            let numeric = facts::extract(&clause);
+            let mut directly_supported = vec![false; numeric.len()];
+            for (index, fact) in numeric.iter().enumerate().filter(|(_, fact)| addition_checked_key(&fact.key)) {
+                let scope = fingerprints(&facts::local_scope(&clause, &numeric, index));
+                let negative = number_is_negative(&clause, &numeric, index);
+                let supported = source_facts.iter().any(|(source_id, key, source_scope, source_negative)|
+                    block.source_refs.iter().any(|id| id == source_id) && *key == fact.key
+                        && *source_negative == negative && scope_matches(source_scope, &scope));
+                directly_supported[index] = supported;
+                if !supported && !(index > 0 && directly_supported[index - 1] && adjacent_equivalence(&clause, &numeric, index)) {
+                    return Err(CloudError::new("rewrite_meaning_risk", "rewrite", "整理结果可能新增数值、单位或版本，请核对识别稿或重新整理"));
+                }
+            }
+            // Do not infer that a qualifier was invented merely because the
+            // source lexicon did not find it. Spoken "等确认了再发" can legally
+            // become "如果确认了，再发". Existing forward qualifier checks stay;
+            // arbitrary new conditions/prose remain outside this finite guard.
         }
     }
     Ok(())

@@ -85,3 +85,21 @@
 .history-mode-snapshot summary { cursor: pointer; border-radius: 4px; }
 .history-mode-snapshot p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .history-mode-snapshot summary:focus-visible { outline: 3px solid #85aff5; outline-offset: 3px; }
+.history-term-correction { margin-top: 20px; padding: 18px; border: 1px solid #cfdef1; border-radius: 10px; background: #f7faff; min-width: 0; }
+.history-term-correction .history-section-topline > .history-secondary { margin: 0; font-size: 12px; }
+.history-term-correction .rt-SelectTrigger { max-width: 100%; margin-bottom: 12px; }
+.history-term-correction .rt-TextFieldRoot { max-width: 100%; }
+.history-correction-source { width: 100%; }
+.history-correction-selection { color: var(--sm-muted); font-size: 12px; line-height: 21px; overflow-wrap: anywhere; }
+.history-correction-selection strong { color: var(--sm-ink); font-weight: 500; }
+.history-correction-label { display: block; margin: 16px 0 8px; font-size: 13px; color: var(--sm-secondary); }
+.history-correction-remember { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.history-correction-remember > .rt-CheckboxRoot { flex: none; margin-top: 3px; }
+.history-correction-remember > span { min-width: 0; }
+.history-correction-remember strong { display: block; color: var(--sm-ink); font-size: 13px; line-height: 22px; font-weight: 500; }
+.history-correction-remember small { display: block; color: var(--sm-muted); font-size: 12px; line-height: 21px; overflow-wrap: anywhere; }
+.history-correction-preview { background: var(--sm-paper,white); padding: 13px 14px; border: 1px solid var(--sm-line); border-radius: 8px; margin-top: 16px; }
+.history-correction-preview p { font-size: 14px; line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
+.history-correction-conflict { margin-top: 12px; padding: 12px; border: 1px solid #e5d7ba; border-radius: 8px; color: #795c2f; font-size: 13px; line-height: 22px; }
+.history-correction-conflict p { margin-top: 0; }
+@container history-detail (max-width: 459px) { .history-term-correction { padding: 14px; } }

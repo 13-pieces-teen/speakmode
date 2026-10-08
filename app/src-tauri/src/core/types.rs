@@ -275,6 +275,27 @@ pub struct RestorePatch {
     pub source_selections: Vec<SourceSelection>,
 }
 
+/// A bounded, explicit occurrence in one displayed output revision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CorrectionPatch {
+    pub block_id: String,
+    pub start: usize,
+    pub end: usize,
+    pub expected_text: String,
+    pub replacement: String,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CorrectionDictionaryStatus { Added, Existing, NotRequested }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorrectionReceipt {
+    pub detail: HistoryDetail,
+    pub dictionary: Option<DictionarySnapshot>,
+    pub dictionary_status: CorrectionDictionaryStatus,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DeliveryState { Prepared, Dispatched, Confirmed, Unconfirmed, Skipped, Failed }

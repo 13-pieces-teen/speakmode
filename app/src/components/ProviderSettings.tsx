@@ -140,14 +140,21 @@ export function ProviderSettings() {
         <input id="provider-workspace" className="settings-text-input" type="text" value={draft.workspace ?? ''} disabled={disabled}
           onChange={event => edit('workspace', event.target.value)} aria-describedby="provider-workspace-description" placeholder="默认业务空间" autoComplete="off" spellCheck={false} maxLength={80} />
       </SettingRow>
-      <SettingRow title="语音识别模型" description="选择已接入的实时模型；候选效果仍需评测，更改用于下一次口述。" htmlFor="provider-asr-model">
+      <SettingRow title="语音识别模型" description="更改用于下一次口述，当前录音仍使用开始时的模型。" htmlFor="provider-asr-model">
+        <div className="settings-delivery-control">
         <Select.Root value={draft.asrModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('asrModel', value)}>
-          <Select.Trigger id="provider-asr-model" aria-label="语音识别模型" aria-describedby="provider-asr-model-description" className="settings-select" variant="surface" />
+          <Select.Trigger id="provider-asr-model" aria-label="语音识别模型" aria-describedby="provider-asr-model-description provider-asr-capability" className="settings-select" variant="surface" />
           <Select.Content position="popper" sideOffset={6}>
             {!selectedAsr && <Select.Item value={draft.asrModel || UNSELECTED_MODEL} disabled>当前配置（尚未确认兼容）</Select.Item>}
             {asrModels.map(model => <Select.Item key={model.id} value={model.id} disabled={!model.implemented}>{model.label}</Select.Item>)}
           </Select.Content>
         </Select.Root>
+        <p className="settings-control-hint" id="provider-asr-capability">{selectedAsr?.implemented
+          ? selectedAsr.dictionarySupport === 'vocabularyAndContext'
+            ? '支持词典热词与词汇上下文。会使用你保存的词条；识别效果可与 Qwen3 实时模型比较。'
+            : '使用已有实时识别链路。词典通过旧接口传入，效果因词语与发音而异。'
+          : '请选择已接入的实时识别模型。'}</p>
+        </div>
       </SettingRow>
       <SettingRow title="整理模型" description="候选模型未做质量排名，实际可用性取决于账号权限与地域。" htmlFor="provider-rewrite-model">
         <Select.Root value={draft.rewriteModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('rewriteModel', value)}>

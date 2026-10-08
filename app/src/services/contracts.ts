@@ -27,6 +27,8 @@ export interface DesktopError { scope:DesktopErrorScope; message:string; session
 export interface RecorderModeRequest { sequence:number; sessionId:string; generation:number }
 export interface AppEvent { sequence:number; kind:string; payload:unknown; sessionId?:string; generation?:number; scope?:DesktopErrorScope }
 export interface RestorePatch { blockId:string; start:number; end:number; sourceSelections:{itemId:string;start:number;end:number}[] }
+export interface CorrectionPatch { blockId:string; start:number; end:number; expectedText:string; replacement:string }
+export interface CorrectionReceipt { detail:HistoryDetail; dictionary:DictionarySnapshot|null; dictionaryStatus:'added'|'existing'|'notRequested' }
 export const initialPreferences:NativePreferences={version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',keepHistory:true,launchAtLogin:false};
 export const initialProvider:ProviderStatus={configured:false,config:{version:1,provider:'aliyun',region:null,workspace:null,asrModel:'qwen3-asr-flash-realtime',rewriteModel:'qwen-flash',adapterVersion:'qwen-realtime-v1'}};
 
