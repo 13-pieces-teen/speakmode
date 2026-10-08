@@ -1,6 +1,27 @@
 import type {DictionarySnapshot} from './services/contracts';
 
-export const dictionaryLimits = {entries: 200, termScalars: 80} as const;
+export const dictionaryLimits = {entries: 200, termScalars: 80, contextBytes: 4000} as const;
+
+/** SpeakMode's stored dictionary budget, matching DictionarySnapshot.asr_context.
+ * This is not a provider limit: individual ASR adapters also validate their payloads.
+ */
+export function dictionaryContextBytes(terms: readonly string[]): number {
+  return terms.length ? new TextEncoder().encode(`常用词汇：${JSON.stringify(terms)}`).byteLength : 0;
+}
+
+type CapacityDraft = {kind: 'single'; id?: string; text: string} | {kind: 'bulk'; terms: readonly string[]};
+
+/** Upper bound for valid drafts against the displayed snapshot. Native NFKC +
+ * full Unicode case-folding remains authoritative; search normalization is not
+ * sufficient to predict duplicates. Never use this estimate to block a save.
+ */
+export function dictionaryDraftCapacity(entries: readonly Pick<DictionarySnapshot['entries'][number], 'id' | 'term'>[], draft: CapacityDraft) {
+  const terms = entries.filter(entry => draft.kind !== 'single' || entry.id !== draft.id).map(entry => entry.term);
+  if (draft.kind === 'single') terms.push(draft.text.trim());
+  else terms.push(...draft.terms);
+  const bytes = dictionaryContextBytes(terms);
+  return {bytes, entries: terms.length, remainingBytes: dictionaryLimits.contextBytes - bytes};
+}
 
 /** Search normalization never mutates the spelling sent to the recognizer. */
 export function dictionarySearchKey(value: string): string {

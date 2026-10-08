@@ -40,7 +40,7 @@ export function SessionRecovery({onOpen}:{onOpen:(id:string)=>void}) {
    {s.canRetryRewrite&&<Button variant="soft" disabled={Boolean(busy)||!s.workerReleased} onClick={()=>void act('rewrite.retry')}>重试整理</Button>}
    {s.canRetrySave&&s.pendingCommitId&&<Button variant="soft" disabled={Boolean(busy)||!s.workerReleased} onClick={()=>void act('result.retrySave')}>重试保存</Button>}
    {delivery?.canCopyOutput&&<Button disabled={Boolean(busy)} onClick={()=>void act('result.copy')}>复制成稿</Button>}
-   {delivery&&<Button variant="soft" onClick={()=>onOpen(s.sessionId??s.id!)}>查看成稿</Button>}
+   {delivery?.canViewOutput&&<Button variant="soft" onClick={()=>onOpen(s.sessionId??s.id!)}>查看成稿</Button>}
    {problem&&<Button variant="ghost" color="gray" disabled={Boolean(busy)} onClick={()=>void act('session.cancel')}>放弃本次恢复</Button>}
   </div>
   {problem&&<p className="history-secondary">放弃后清除本次未完成的文字与音频缓存，不影响已经完成的口述记录。</p>}

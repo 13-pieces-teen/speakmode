@@ -59,6 +59,7 @@ pub(crate) struct Inner {
     guards:HashMap<String,Arc<CommitGuard>>,
     sequence:u64,
     pub(crate) active:Option<session::ActiveSession>,
+    recovery:Option<session::ActiveSession>,
     candidate:Option<CandidateSlot>,
     preview:Option<(String,CancellationToken)>,
     shortcut_capture:Option<String>,
@@ -193,7 +194,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let key_configured=credentials::configured(&config).unwrap_or(false);
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{guards:HashMap::new(),sequence:0,active:None,candidate:None,preview:None,shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
@@ -223,7 +224,8 @@ impl AppHub {
         let sinks=self.subscribers.lock().unwrap().values().cloned().collect::<Vec<_>>();for sink in sinks{sink(event.clone());}
     }
     pub fn snapshot(&self,window:&str)->Result<Value> {
-        let i=self.inner.lock().unwrap();
+        let mut i=self.inner.lock().unwrap();
+        i.expire_audio_caches();
         let cache=self.db.snapshot();
         let mut modes=cache.modes;
         if window=="recording" {for m in &mut modes{m.rules.clear();}return Ok(json!({"sequence":i.sequence,"session":i.active.as_ref().map(|s|s.view()),"modes":modes}));}
@@ -232,7 +234,7 @@ impl AppHub {
         let configuration=cloud::endpoints(&config);let valid=configuration.is_ok();
         let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
         provider["modelCatalog"]=wire(cloud::models::catalog())?;
-        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
+        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
     }
 
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
@@ -253,7 +255,7 @@ impl AppHub {
         if !owner{loop {let notified=record.completed.notified();tokio::pin!(notified);notified.as_mut().enable();let outcome=record.outcome.lock().unwrap().clone();if let Some(outcome)=outcome{return match outcome{Ok(value)=>self.replay(value).await,Err(error)=>Err(error)};}notified.await;}}
         // The operation owns its reply and resources, not the IPC receiver.
         // Dropping a caller must not discard a late successful COMMIT.
-        let track=!matches!(request.name.as_str(),"session.start"|"session.stop"|"session.cancel"|"session.selectMode");
+        let track=!matches!(request.name.as_str(),"session.start"|"session.stop"|"session.cancel"|"session.selectMode"|"recovery.activate");
         let hub=Arc::clone(self);let owned_record=Arc::clone(&record);let window=window.to_owned();let (reply_tx,reply_rx)=tokio::sync::oneshot::channel();
         if track{self.db_command_workers.fetch_add(1,std::sync::atomic::Ordering::SeqCst);}
         tokio::spawn(async move{
@@ -275,7 +277,7 @@ impl AppHub {
         let id=|field:&str|value.get(field).and_then(Value::as_str).unwrap_or("").to_owned();
         match name {
             "session.start"=>ReplayValue::Safe(value.clone()),
-            "session.stop"|"session.selectMode"|"asr.retry"|"rewrite.retry"|"result.retrySave"=>ReplayValue::Session(value.get("sessionId").or_else(||value.get("id")).and_then(Value::as_str).unwrap_or("").into(),value["generation"].as_u64().unwrap_or(0)),
+            "session.stop"|"session.selectMode"|"asr.retry"|"rewrite.retry"|"result.retrySave"|"recovery.activate"=>ReplayValue::Session(value.get("sessionId").or_else(||value.get("id")).and_then(Value::as_str).unwrap_or("").into(),value["generation"].as_u64().unwrap_or(0)),
             "dictionary.save"|"dictionary.import"|"dictionary.delete"=>ReplayValue::Dictionary(value["version"].as_u64().unwrap_or(0)),
             "revision.correctTerm"=>ReplayValue::Correction(value.pointer("/detail/session/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/detail/output/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/dictionary/version").and_then(Value::as_u64),serde_json::from_value(value["dictionaryStatus"].clone()).unwrap_or(CorrectionDictionaryStatus::NotRequested)),
             "mode.save"=>ReplayValue::Mode(id("id"),value["revision"].as_u64().unwrap_or(0)),
@@ -350,7 +352,9 @@ impl AppHub {
             "history.get"=>db_wire(self.db_read(DbCommand::GetResult{session_id:text(&p,"sessionId")?.into()}).await?),
             "history.delete"=>{let id=text(&p,"sessionId")?.to_owned();let guard=self.record_guard(&id,0);guard.delete();
                 {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id){s.revoke_for_deletion();}
+                    if i.recovery.as_ref().is_some_and(|s|s.id==id){i.discard_retained_recovery();}
                     if i.candidate.as_ref().is_some_and(|c|c.key==id){i.candidate.take().unwrap().cancel.cancel();}}
+                self.publish("recovery.changed",Value::Null);
                 let result=self.db.submit(DbCommand::DeleteHistory{session_id:id.clone()},None,DbPriority::Critical).map_err(ApiError::from)?.wait().await.map_err(ApiError::from);
                 if result.is_ok(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id){s.discard_deleted_content();}}
                 db_wire(result?)},
@@ -404,6 +408,8 @@ impl AppHub {
             "result.useSource"=>self.use_source_async(&p).await,
             "result.retrySave"=>self.retry_save(&p).await,
             "session.start"=>self.start_session().await,
+            "recovery.activate"=>self.activate_recovery(&p),
+            "recovery.discard"=>self.discard_recovery(&p),
             "session.stop"=>self.stop_session(&p).await,
             "session.cancel"=>self.cancel_session_async(&p).await,
             "session.selectMode"=>self.select_session_mode_async(&p).await,

@@ -15,6 +15,7 @@ import {fromDetail,type Mode} from './model';
 import {errorMessage} from './services/bridge';
 import {RecorderWindow} from './windows/RecorderWindow';
 import {SessionRecovery} from './components/SessionRecovery';
+import {RetainedRecovery} from './components/RetainedRecovery';
 export function App(){return <DesktopProvider><ModeProvider><NavigationGuardProvider>{new URLSearchParams(location.search).get('window')==='recorder'?<RecorderWindow/>:<AppContent/>}</NavigationGuardProvider></ModeProvider></DesktopProvider>;}
 function AppContent(){
  const desktop=useDesktop(),dictations=useDictations(),modes=useModes(),navigation=useNavigationGuard();
@@ -34,6 +35,7 @@ function AppContent(){
   {desktop.available&&!desktop.provider.configured&&view!=='settings'&&<div className="environment-banner"><div><strong>先配置云端服务</strong><p>添加自己的 API Key 与账号地域，之后即可开始口述。</p></div><Button variant="soft" onClick={()=>navigate('settings')}>前往设置</Button></div>}
   {(error||desktop.error)&&<div role="alert" className="environment-banner environment-error"><p>{error||desktop.error}</p><Button variant="soft" color="gray" onClick={()=>{setError('');void desktop.refresh();}}>重新读取</Button></div>}
   {desktop.available&&<SessionRecovery onOpen={openRecord}/>} 
+  {desktop.available&&<RetainedRecovery/>}
   {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={mode=>void updateDefault(mode).catch(showError)} stats={dictations.stats} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onManageModes={()=>manageModes('home')}/>}
   {view==='history'&&<HistoryPage selectedId={selectedId} onSelect={setSelectedId}/>}
   {view==='dictionary'&&<DictionaryPage/>}

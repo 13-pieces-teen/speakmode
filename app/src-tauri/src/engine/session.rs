@@ -7,6 +7,8 @@ use tokio::sync::{mpsc,oneshot,Notify};
 use super::diagnostics::{Stage,Origin,TraceHandle,BridgeTelemetry,DiagnosticsRecorder};
 #[path="retry_audio.rs"]
 mod retry_audio;
+#[path="recovery.rs"]
+mod recovery;
 
 fn stop_capture_failure_reason(error: &platform::PlatformError) -> &'static str {
     match error {
@@ -49,11 +51,16 @@ mod retry_asr_experiment_tests;
 #[path="quality_foundation_tests.rs"]
 mod quality_foundation_tests;
 
+#[cfg(test)]
+#[path="recovery_retention_tests.rs"]
+mod recovery_retention_tests;
+
 #[derive(Debug,Clone,Copy,PartialEq,Eq,Serialize)]
 #[serde(rename_all="camelCase")]
 pub enum SessionPhase {Starting,Recording,FinalizingAsr,Rewriting,Ready,Failed,Incomplete,Cancelled}
 const RECORDING_LIMIT_MS:u64=600_000;
 const RECORDING_WARNING_MS:u64=30_000;
+const AUDIO_CACHE_RETENTION:Duration=Duration::from_secs(1800);
 fn recording_limit_remaining(duration_ms:u64)->Option<u64>{
     let remaining=RECORDING_LIMIT_MS.saturating_sub(duration_ms);
     (remaining<=RECORDING_WARNING_MS).then_some(remaining)
@@ -92,6 +99,16 @@ pub(crate) struct ActiveSession {
     processing_worker_released:bool,db_pending:usize,cancel_pending:bool,
 }
 impl ActiveSession {
+    pub(crate) fn expire_audio_cache(&mut self)->bool {
+        if self.cache.is_none()||self.cache_created.is_none_or(|created|created.elapsed()<AUDIO_CACHE_RETENTION){return false;}
+        self.cache=None;self.cache_complete=false;self.cache_created=None;
+        if self.source.is_none()&&self.reason==CreationReason::Retry&&self.phase==SessionPhase::FinalizingAsr {
+            self.cancel.cancel();
+            self.phase=SessionPhase::Incomplete;
+            self.error=Some(ApiError::new("asr_retry_expired","recovery","音频恢复期限已到，重试已停止。已有字幕可复制，请重新口述。").for_session(&self.id,self.generation));
+        }
+        true
+    }
     pub(crate) fn reserve_revision_intent(&mut self)->u64{
         self.original_delivery_revoked=true;
         if let Some(permit)=&self.delivery_permit{permit.cancel_before_injection();}
@@ -113,7 +130,7 @@ impl ActiveSession {
         let released=self.worker_released&&self.delivery_worker_released&&self.processing_worker_released&&!self.target_capture_pending&&self.db_pending==0&&!self.cancel_pending;
         let problem=matches!(self.phase,SessionPhase::Failed|SessionPhase::Incomplete)&&!self.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed");
         let can_retry_save=released&&problem&&self.pending.is_some();
-        let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache_created.is_some_and(|t|t.elapsed()<Duration::from_secs(1800));
+        let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())&&self.cache_created.is_some_and(|t|t.elapsed()<AUDIO_CACHE_RETENTION);
         let can_retry_rewrite=released&&problem&&self.source.is_some()&&self.pending.is_none();
         LiveSession{captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
     }
@@ -162,6 +179,33 @@ fn matching<'a>(inner:&'a mut Inner,p:&Value)->Result<&'a mut ActiveSession> {
 }
 
 impl AppHub {
+    fn accept_capture_cache(&self,id:&str,generation:u64,summary:&CaptureSummary,cache:Vec<i16>,cache_created:Instant) {
+        let mut inner=self.inner.lock().unwrap();
+        if let Some(session)=inner.active.as_mut().filter(|s|s.id==id&&s.generation==generation){
+            session.worker_released=true;session.capture_duration_ms=summary.duration_ms();
+            if session.phase!=SessionPhase::Cancelled&&!session.cancel.is_cancelled(){
+                session.cache_complete=summary.complete;session.cache=Some(cache);session.cache_created=Some(cache_created);
+            }
+            if session.ended_at.is_none(){session.ended_at=Some(chrono::Local::now().to_rfc3339());}
+        }
+    }
+    fn schedule_audio_cache_expiry(self:&Arc<Self>,id:String,created:Instant) {
+        // This owner retains no PCM or strong AppHub reference. Moving a failed
+        // session must never reset its original monotonic retention deadline.
+        let weak=Arc::downgrade(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(AUDIO_CACHE_RETENTION.saturating_sub(created.elapsed())).await;
+            let Some(hub)=weak.upgrade()else{return;};
+            let expired={let mut inner=hub.inner.lock().unwrap();
+                let active=inner.active.as_mut().filter(|s|s.id==id&&s.cache_created==Some(created)).is_some_and(ActiveSession::expire_audio_cache);
+                let retained=inner.recovery.as_mut().filter(|s|s.id==id&&s.cache_created==Some(created)).is_some_and(ActiveSession::expire_audio_cache);
+                if retained{inner.recovery=None;}active||retained};
+            if expired{hub.publish_session();}
+            // A concurrent snapshot may already have released this lease. The
+            // main panel must still learn that its retained entry has expired.
+            hub.publish("recovery.changed",Value::Null);
+        });
+    }
     fn trace(&self,id:&str,generation:u64)->Option<TraceHandle>{
         self.inner.lock().unwrap().active.as_ref().filter(|s|s.id==id&&s.generation==generation).and_then(|s|s.diagnostic_trace.clone())
     }
@@ -204,8 +248,7 @@ impl AppHub {
     pub async fn start_session(self:&Arc<Self>)->Result<Value> {
         self.start_session_at(Instant::now(),Origin::UiCommand).await
     }
-    async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
-        let (id,generation,config,prefs,mode,dictionary)={
+    fn prepare_start_state(&self,intent:Instant,origin:Origin)->Result<(String,u64,ProviderConfig,Preferences,ModeSnapshot,DictionarySnapshot)> {
             let _native=self.native_io.try_lock().map_err(|_|ApiError::new("native_busy","session","上一条复制或输入操作尚未结束"))?;
             let mut i=self.inner.lock().unwrap();
             if self.quitting.load(Ordering::SeqCst)||self.db.owner_released()||!self.capture_available.load(Ordering::SeqCst){return Err(ApiError::new("system_unavailable","session","系统录音权限或快捷键尚未恢复，请稍候"));}
@@ -220,10 +263,14 @@ impl AppHub {
             let mode:ModeSnapshot=cache.modes.into_iter().find(|m|m.id==prefs.default_mode_id).ok_or_else(||ApiError::new("notFound","mode","默认整理方式已删除"))?.into();
             let generation=i.active.as_ref().map(|s|s.generation+1).unwrap_or(1);
             let id=Uuid::new_v4().to_string();
+            i.park_retryable_failure()?;
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
             i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
-            (id,generation,config,prefs,mode,dictionary)
-        };
+            Ok((id,generation,config,prefs,mode,dictionary))
+    }
+    async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
+        let (id,generation,config,prefs,mode,dictionary)=self.prepare_start_state(intent,origin)?;
+        self.publish("recovery.changed",Value::Null);
         let preflight=self.processing_lease(&id,generation);
         // Input position is frozen at the stop intent, so browsing or moving the
         // caret while recording does not invalidate the final delivery.
@@ -370,7 +417,8 @@ impl AppHub {
     }
     pub fn shutdown(&self)->Result<()> {
         let mut first_error=None;
-        let current={let i=self.inner.lock().unwrap();self.quitting.store(true,Ordering::SeqCst);self.capture_available.store(false,Ordering::SeqCst);self.lifecycle_epoch.fetch_add(1,Ordering::SeqCst);i.active.as_ref().map(|s|json!({"sessionId":s.id,"generation":s.generation}))};
+        let current={let mut i=self.inner.lock().unwrap();self.quitting.store(true,Ordering::SeqCst);self.capture_available.store(false,Ordering::SeqCst);self.lifecycle_epoch.fetch_add(1,Ordering::SeqCst);i.discard_retained_recovery();if let Some(s)=i.active.as_mut(){s.cache=None;s.cache_complete=false;s.cache_created=None;}i.active.as_ref().map(|s|json!({"sessionId":s.id,"generation":s.generation}))};
+        self.publish("recovery.changed",Value::Null);
         self.cancel_auxiliary();
         if self.db.owner_released(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut(){s.revoke_for_deletion();}}
         else if let Some(p)=current{if let Err(error)=self.cancel_session(&p){first_error=Some(error);}}
@@ -401,7 +449,12 @@ impl AppHub {
         self.capture_available.store(false,Ordering::SeqCst);self.lifecycle_epoch.fetch_add(1,Ordering::SeqCst)+1
     }
     pub async fn interrupt_session_at_epoch(self:&Arc<Self>,reason:&str,epoch:u64)->Result<()> {
-        let (current,capture)={let i=self.inner.lock().unwrap();if self.lifecycle_epoch.load(Ordering::SeqCst)!=epoch{return Ok(());}self.capture_available.store(false,Ordering::SeqCst);(i.active.as_ref().map(|s|json!({"sessionId":s.id,"expectedGeneration":s.generation})),i.shortcut_capture.clone())};
+        let (current,capture)={let mut i=self.inner.lock().unwrap();if self.lifecycle_epoch.load(Ordering::SeqCst)!=epoch{return Ok(());}self.capture_available.store(false,Ordering::SeqCst);i.discard_retained_recovery();
+            // Ready cancellation may return alreadyCompleted without cleanup.
+            // Release audio at the lifecycle boundary while retaining its text.
+            if let Some(s)=i.active.as_mut(){s.cache=None;s.cache_complete=false;s.cache_created=None;}
+            (i.active.as_ref().map(|s|json!({"sessionId":s.id,"expectedGeneration":s.generation})),i.shortcut_capture.clone())};
+        self.publish("recovery.changed",Value::Null);
         let mut first_error=None;
         if !self.cancel_auxiliary_at_epoch(epoch){return Ok(());}
         if let Some(p)=current{if let Err(error)=self.cancel_session_async(&p).await{first_error=Some(error);}}
@@ -448,7 +501,7 @@ impl AppHub {
     fn fail(&self,id:&str,generation:u64,error:ApiError,resources_released:bool) {
         let error=error.for_session(id,generation);
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.worker_released=resources_released;
-            if !matches!(s.phase,SessionPhase::Cancelled|SessionPhase::Ready)&&!s.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed"){s.phase=if matches!(error.code.as_str(),"asr_finish_timeout"|"asr_disconnected"|"audio_incomplete"|"audio_capture_stalled"|"audio_capture_device_error"|"audio_capture_queue_overflow"|"audio_capture_malformed"|"recording_limit"|"cache_overflow"|"capture_overflow"|"missing_order"|"invalid_order"|"conflicting_order"|"conflicting_final"|"incomplete_source"|"asr_closed"|"asr_send_timeout"|"asr_receive_failed"|"invalid_final"|"invalid_asr_event")||(error.stage=="asr"&&s.first_samples){SessionPhase::Incomplete}else{SessionPhase::Failed};self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"failed",Some(&error.code));s.error=Some(error);}
+            if !matches!(s.phase,SessionPhase::Cancelled|SessionPhase::Ready)&&!s.error.as_ref().is_some_and(|e|matches!(e.code.as_str(),"cancel_cleanup_failed"|"asr_retry_expired")){s.phase=if matches!(error.code.as_str(),"asr_finish_timeout"|"asr_disconnected"|"audio_incomplete"|"audio_capture_stalled"|"audio_capture_device_error"|"audio_capture_queue_overflow"|"audio_capture_malformed"|"recording_limit"|"cache_overflow"|"capture_overflow"|"missing_order"|"invalid_order"|"conflicting_order"|"conflicting_final"|"incomplete_source"|"asr_closed"|"asr_send_timeout"|"asr_receive_failed"|"invalid_final"|"invalid_asr_event")||(error.stage=="asr"&&s.first_samples){SessionPhase::Incomplete}else{SessionPhase::Failed};self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"failed",Some(&error.code));s.error=Some(error);}
         }}self.publish_session();self.changed();
     }
     fn valid_active(&self,id:&str,generation:u64)->bool {self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())}
@@ -506,7 +559,9 @@ impl AppHub {
             _=>{self.fail(&id,generation,ApiError::new("capture_cleanup_failed","audio","采音资源尚未确认释放，请退出重开"),platform::audio::capture_resources_released());return;}
         };
         self.diagnostics.lengths(trace.as_ref(),summary.duration_ms(),None);
-        {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.worker_released=true;s.capture_duration_ms=summary.duration_ms();if s.phase!=SessionPhase::Cancelled{s.cache_complete=summary.complete;s.cache=Some(cache);s.cache_created=Some(Instant::now());}if s.ended_at.is_none(){s.ended_at=Some(chrono::Local::now().to_rfc3339());}}}
+        let cache_created=Instant::now();
+        self.accept_capture_cache(&id,generation,&summary,cache,cache_created);
+        self.schedule_audio_cache_expiry(id.clone(),cache_created);
         if let Some(error)=capture_failure(&summary){self.fail(&id,generation,error,true);return;}
         let items=match result {Ok(v) if summary.complete=>v,Ok(_)=>{self.fail(&id,generation,ApiError::new("audio_incomplete","audio","采音未完整结束，可复制已有字幕"),true);return;},Err(e)=>{self.fail(&id,generation,e.into(),true);return;}};
         if items.is_empty(){self.fail(&id,generation,ApiError::new("empty_recording","asr","未识别到有效语音"),true);return;}
