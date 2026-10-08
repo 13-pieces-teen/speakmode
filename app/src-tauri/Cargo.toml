@@ -60,6 +60,22 @@ windows = { version = "0.58", features = ["Foundation", "Win32_Foundation", "Win
 [patch.crates-io]
 handy-keys = { path = "src/platform/vendor/handy-keys" }
 
+# Reuse one target directory without accumulating incremental snapshots. Limited
+# debug info retains source locations; full variable/type inspection is opt-in.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false
+
+[profile.dev.build-override]
+debug = 0
+
+[profile.test.build-override]
+debug = 0
+
 [profile.release]
 strip = true
 lto = "thin"
