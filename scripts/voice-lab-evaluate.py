@@ -36,7 +36,16 @@ def distance(a, b):
     return previous[-1]
 
 
-def freeze(root):
+def commit_sha(value):
+    if len(value) != 40 or any(c not in '0123456789abcdefABCDEF' for c in value):
+        raise argparse.ArgumentTypeError('--source-commit must be a complete 40-character hexadecimal commit SHA')
+    return value.lower()
+
+
+def freeze(root, source_commit):
+    # Bind the preregistration to an explicitly selected candidate rather than
+    # silently attributing a later build to the original 0.1.5 baseline.
+    source_commit = commit_sha(source_commit)
     texts = json.loads((root / 'fixture-texts.json').read_text(encoding='utf-8'))
     fixtures = root / 'fixtures'
     with wave.open(str(fixtures / 'C1.wav'), 'rb') as first, wave.open(str(fixtures / 'C2.wav'), 'rb') as last:
@@ -69,7 +78,7 @@ def freeze(root):
     assert len(runs) == 12 and total <= 600
     prereg = {
         'frozenAt': datetime.now(timezone.utc).isoformat(),
-        'sourceCommit': 'c192ea08f17a1756e8ce7892cad2d7dd841e7953',
+        'sourceCommit': source_commit,
         'voice': 'Microsoft Huihui Desktop - Chinese (Simplified)', 'voiceRate': 0,
         'fixtures': details, 'dictionaryTerms': TERMS, 'totalAsrAudioSeconds': total,
         'scoring': {'cer': 'NFKC + casefold; remove Unicode punctuation and whitespace; character Levenshtein/reference length. No spelling or number normalization.',
@@ -118,6 +127,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['freeze', 'evaluate'])
     parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--source-commit', type=commit_sha,
+                        help='Required for freeze: exact 40-character source commit for this candidate')
     args = parser.parse_args()
+    if args.command == 'freeze' and args.source_commit is None:
+        parser.error('freeze requires --source-commit with the exact candidate commit SHA')
     assert args.root.is_absolute()
-    (freeze if args.command == 'freeze' else evaluate)(args.root)
+    if args.command == 'freeze':
+        freeze(args.root, args.source_commit)
+    else:
+        evaluate(args.root)

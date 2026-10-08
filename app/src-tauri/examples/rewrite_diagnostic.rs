@@ -53,19 +53,62 @@ fn missing_refs(content: &str, source: &SourceRevision) -> Value {
     match serde_json::from_str::<Value>(content) {
         Ok(value) => {
             let mut covered = HashSet::<String>::new(); let mut returned = Vec::<String>::new();
-            if let Some(blocks) = value["blocks"].as_array() {
-                for block in blocks {
-                    if let Some(refs) = block["sourceRefs"].as_array() {
-                        for source_ref in refs.iter().filter_map(Value::as_str) { covered.insert(source_ref.into()); returned.push(source_ref.into()); }
+            let mut invalid_ranges = Vec::<Value>::new();
+            let Some(blocks) = value["blocks"].as_array().filter(|blocks| !blocks.is_empty()) else {
+                return json!({"jsonDecoded":true,"wireContract":"undetermined","mappingIndeterminate":true,
+                    "reason":"missing_or_empty_blocks","sourceCount":source.items.len()});
+            };
+            let has_ranges = blocks.iter().any(|block| block.get("sourceRange").is_some());
+            let has_refs = blocks.iter().any(|block| block.get("sourceRefs").is_some());
+            if has_ranges && has_refs {
+                return json!({"jsonDecoded":true,"wireContract":"mixed","mappingIndeterminate":true,
+                    "reason":"mixed_mapping_contracts","sourceCount":source.items.len(),
+                    "coveredSourceCount":null,"returnedRefs":null,"missingSources":null});
+            }
+            let wire_contract = if has_ranges { "v2" } else if has_refs { "v1" } else { "undetermined" };
+            let mut previous_end = None;
+            let mut malformed_refs = false;
+            for (block_index, block) in blocks.iter().enumerate() {
+                if has_ranges {
+                    let raw = block.get("sourceRange").unwrap_or(&Value::Null);
+                    let range = raw.as_array().filter(|range|range.len() == 2)
+                        .and_then(|range| Some((usize::try_from(range[0].as_u64()?).ok()?,
+                            usize::try_from(range[1].as_u64()?).ok()?)));
+                    match range {
+                        Some((start,end)) if start <= end && end < source.items.len()
+                            && previous_end.is_none_or(|previous|start > previous) => {
+                            // Diagnostic expansion only. This never changes the
+                            // model response, persisted output or production refs.
+                            for item in &source.items[start..=end] {
+                                covered.insert(item.id.clone()); returned.push(item.id.clone());
+                            }
+                            previous_end = Some(end);
+                        }
+                        _ => invalid_ranges.push(json!({"blockIndex":block_index,"sourceRange":raw,
+                            "reason":"malformed_reversed_overlapping_or_out_of_bounds"})),
                     }
+                } else if let Some(refs) = block["sourceRefs"].as_array() {
+                    if refs.is_empty() || refs.iter().any(|source_ref|!source_ref.is_string()) { malformed_refs = true; }
+                    for source_ref in refs.iter().filter_map(Value::as_str) {
+                        covered.insert(source_ref.into()); returned.push(source_ref.into());
+                    }
+                } else {
+                    malformed_refs = true;
                 }
             }
+            if !invalid_ranges.is_empty() || malformed_refs {
+                return json!({"jsonDecoded":true,"wireContract":wire_contract,"mappingIndeterminate":true,
+                    "sourceCount":source.items.len(),"coveredSourceCount":null,"returnedRefs":null,
+                    "unknownRefs":null,"missingSources":null,"invalidRanges":invalid_ranges,
+                    "malformedLegacyRefs":malformed_refs});
+            }
             let allowed = source.items.iter().map(|item| item.id.as_str()).collect::<HashSet<_>>();
-            json!({"jsonDecoded":true,"sourceCount":source.items.len(),"coveredSourceCount":covered.iter().filter(|id|allowed.contains(id.as_str())).count(),
+            json!({"jsonDecoded":true,"wireContract":wire_contract,"mappingIndeterminate":false,
+                "sourceCount":source.items.len(),"coveredSourceCount":covered.iter().filter(|id|allowed.contains(id.as_str())).count(),
                 "returnedRefs":returned,"unknownRefs":covered.iter().filter(|id|!allowed.contains(id.as_str())).collect::<Vec<_>>(),
                 "missingSources":source.items.iter().filter(|item|!covered.contains(&item.id)).map(|item|json!({"id":item.id,"text":item.text,"captureOrder":item.capture_order})).collect::<Vec<_>>()})
         }
-        Err(_) => json!({"jsonDecoded":false,"mappingIndeterminate":true}),
+        Err(_) => json!({"jsonDecoded":false,"wireContract":"undetermined","mappingIndeterminate":true}),
     }
 }
 async fn request(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, client: &reqwest::Client) -> Result<(String, Option<String>), CloudError> {
@@ -121,7 +164,7 @@ async fn execute(source: SourceRevision, receipt_hash: String, fixture_hash: Str
     // Validate both exact production requests before any credential access or network call.
     for base in [BaseMode::Light, BaseMode::Structure] { cloud::rewrite::request_body(&config, &mode(base), &source)?; }
     let mut evidence = Evidence::new(out)?;
-    let mut receipt = json!({"schemaVersion":1,"tool":"speakmode-rewrite-diagnostic","appVersion":env!("CARGO_PKG_VERSION"),
+    let mut receipt = json!({"schemaVersion":1,"tool":"speakmode-rewrite-diagnostic","appVersion":env!("CARGO_PKG_VERSION"),"wireContract":"v2",
         "scope":"DIAGNOSTIC_NEW_REQUESTS_NOT_R1_RETRY","automaticRetries":0,"maximumCalls":2,"sourceRunId":run_id,
         "sourceReceiptSha256":receipt_hash,"fixtureSha256":fixture_hash,"source":source,"startedAt":Utc::now().to_rfc3339(),
         "configuration":{"region":config.region,"asrModel":config.asr_model,"rewriteModel":config.rewrite_model,"adapterVersion":config.adapter_version},
@@ -209,5 +252,32 @@ mod tests {
         let source = fixture(); let content = r#"{"resolvedMode":"light","blocks":[{"text":"预算是三千五百元。","sourceRefs":["s1","s2","s3"]}]}"#;
         assert_eq!(missing_refs(content,&source)["missingSources"],json!([]));
         assert!(cloud::rewrite::parse_model_output(content,&mode(BaseMode::Light),&source).is_ok());
+    }
+    #[test]
+    fn closed_range_diagnostic_expands_frozen_ids_and_reports_gaps_without_guessing() {
+        let source = fixture();
+        let full = r#"{"resolvedMode":"light","blocks":[{"text":"预算是三千五百元。","sourceRange":[0,2]}]}"#;
+        let report = missing_refs(full,&source);
+        assert_eq!(report["wireContract"],"v2");assert_eq!(report["mappingIndeterminate"],false);
+        assert_eq!(report["coveredSourceCount"],3);assert_eq!(report["returnedRefs"],json!(["s1","s2","s3"]));
+        assert_eq!(report["missingSources"],json!([]));
+        let gap = r#"{"resolvedMode":"light","blocks":[{"text":"预算是三千五百元。","sourceRange":[1,2]}]}"#;
+        let report = missing_refs(gap,&source);
+        assert_eq!(report["mappingIndeterminate"],false);assert_eq!(report["coveredSourceCount"],2);
+        assert_eq!(report["missingSources"][0]["id"],"s1");
+        assert_eq!(cloud::rewrite::parse_model_output(gap,&mode(BaseMode::Light),&source).unwrap_err().code,"incomplete_source_coverage");
+    }
+    #[test]
+    fn invalid_or_mixed_ranges_are_indeterminate_and_do_not_claim_known_missing_sources() {
+        let source = fixture();
+        for blocks in [json!([{"text":"输出","sourceRange":[0,3]}]),
+            json!([{"text":"输出","sourceRange":[2,1]}]),json!([{"text":"输出","sourceRange":[0,2.0]}]),
+            json!([{"text":"输出","sourceRange":[0,2,2]}]),
+            json!([{"text":"输出","sourceRange":[0,1]},{"text":"重复","sourceRange":[1,2]}]),
+            json!([{"text":"输出","sourceRange":[0,1]},{"text":"旧格式","sourceRefs":["s3"]}])] {
+            let report = missing_refs(&json!({"resolvedMode":"light","blocks":blocks}).to_string(),&source);
+            assert_eq!(report["mappingIndeterminate"],true);
+            assert!(report["coveredSourceCount"].is_null());assert!(report["missingSources"].is_null());
+        }
     }
 }

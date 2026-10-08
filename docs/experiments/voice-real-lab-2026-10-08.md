@@ -185,7 +185,7 @@ $providerConfigDb = '<ABS_CONFIG_DB>'
 powershell.exe -NoProfile -Command '. "D:/Codex_Project/SpeakMode_Dev/scripts/use-msvc-env.ps1"; cargo build --locked --offline --manifest-path "D:/Codex_Project/SpeakMode_Dev/publication/github-speakmode-2026-10-08/app/src-tauri/Cargo.toml" --target x86_64-pc-windows-msvc --examples; exit $LASTEXITCODE'
 if ($LASTEXITCODE -ne 0) { throw 'Experiment tools build failed' }
 & "$repoDir/scripts/prepare-voice-lab.ps1" -OutputDirectory $labDir
-python "$repoDir/scripts/voice-lab-evaluate.py" freeze --root $labDir
+python "$repoDir/scripts/voice-lab-evaluate.py" freeze --root $labDir --source-commit c192ea08f17a1756e8ce7892cad2d7dd841e7953
 & "$exampleDir/voice_lab.exe" cloud --manifest "$labDir/cloud-manifest.json" --config-db $providerConfigDb --out "$labDir/cloud.json"
 python "$repoDir/scripts/voice-lab-evaluate.py" evaluate --root $labDir
 & "$exampleDir/capture_lab.exe" --out "$labDir/capture" --fixture-short "$labDir/fixtures/A.wav" --fixture-long "$labDir/fixtures/C.wav"
@@ -194,7 +194,7 @@ python "$repoDir/scripts/voice-lab-evaluate.py" evaluate --root $labDir
 & "$exampleDir/rewrite_diagnostic.exe" --source-receipt "$labDir/cloud.json" --run-id B-off-r1 --config-db $providerConfigDb --out "$labDir/rewrite-diagnostic.json"
 ```
 
-每个命令完成后检查退出码和 receipt；失败保留原始文件，停止原因按预登记处理。额外请求必须另行登记，不能将其合并成原矩阵成功。工具修订后需记录新的源码哈希；当前冻结脚本的 `sourceCommit` 为本报告的 c192 基线，使用另一产品版本时必须在首次调用之前重新登记版本，不得沿用旧版本标识。
+每个命令完成后检查退出码和 receipt；失败保留原始文件，停止原因按预登记处理。额外请求必须另行登记，不能将其合并成原矩阵成功。工具修订后需记录新的源码哈希。本报告实际运行使用的旧冻结脚本内置 c192 基线；0.1.6 起脚本必须显式传入候选 `--source-commit`。以上命令展示历史基线，复测其他版本必须在首次调用之前登记对应候选，不能沿用旧标识；本报告原始结果不变。
 
 本轮证据索引如下，均在上述本地证据目录中，原始运行失败记录保留：
 

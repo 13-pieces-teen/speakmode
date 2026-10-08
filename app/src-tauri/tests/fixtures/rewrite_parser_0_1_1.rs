@@ -1,7 +1,15 @@
 // Test-only parser copied verbatim from the SHA256-verified 0.1.1 source.
 // Baseline file SHA256: 2a6050915d7b41157ce9e2b08267ca393edd58e07119607174315760fe972f5f
 // Surrounding types and validate_source were unchanged by the Q1 increment.
+// 0.1.6 gives the baseline its own legacy wire types; parser algorithm below
+// remains verbatim and is never given the new range wire format.
 use super::*;
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ModelOutput { resolved_mode: BaseMode, blocks: Vec<ModelBlock> }
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ModelBlock { text: String, source_refs: Vec<String> }
 
 pub fn parse_model_output(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
     validate_source(source)?;
@@ -24,4 +32,3 @@ pub fn parse_model_output(content: &str, mode: &ModeSnapshot, source: &SourceRev
     }
     Ok(RewriteResult {resolved_mode:decoded.resolved_mode, blocks})
 }
-

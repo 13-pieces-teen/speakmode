@@ -474,11 +474,25 @@ impl AppHub {
         tokio::spawn(async move{let _lease=CommandLease(Arc::clone(&hub));let result=hub.db_write(DbCommand::Checkpoint{seed,source},guard,DbPriority::Critical).await;hub.checkpoint_receipt(&id,generation,pending,result)}).await.map_err(|_|ApiError::new("save_interrupted","storage","来源保存未确认，请核对本机记录"))?
     }
     async fn finish_rewrite(self:&Arc<Self>,id:String,generation:u64,secret:String) {
+        self.finish_rewrite_with(id,generation,move|config,mode,source,cancel|async move{
+            rewrite::rewrite(&config,&secret,&mode,&source,cancel).await
+        }).await;
+    }
+    // Private completion seam: tests supply a parsed fixture future while using
+    // the same checkpoint, cancellation, storage and delivery gates. Production
+    // always uses rewrite(), with its allowlisted endpoint and 20-second bound.
+    async fn finish_rewrite_with<F>(self:&Arc<Self>,id:String,generation:u64,
+        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken)->F)
+        where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
         let (config,mode,source,cancel,reason)={let i=self.inner.lock().unwrap();let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};(s.config.clone(),s.mode.clone(),s.source.clone().unwrap(),s.cancel.clone(),s.reason)};
         self.publish_session();
         self.diagnostics.mark(trace.as_ref(),Stage::RewriteStarted);
-        let generated=match rewrite::rewrite(&config,&secret,&mode,&source,cancel).await{Ok(v)=>v,Err(e)=>{self.fail(&id,generation,e.into(),true);return;}};
+        let generated=generate(config,mode.clone(),source.clone(),cancel).await;
+        // A completed parser/transport response cannot revive a cancelled or
+        // replaced session, even if its future returned success after cutoff.
+        if !self.valid_active(&id,generation){return;}
+        let generated=match generated{Ok(v)=>v,Err(e)=>{self.fail(&id,generation,e.into(),true);return;}};
         self.diagnostics.mark(trace.as_ref(),Stage::RewriteValidated);
         let output=OutputRevision{id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}

@@ -266,6 +266,109 @@ fn coverage_failure_keeps_checkpoint_and_offers_recovery_without_ready_usage_or_
     assert_eq!(h.diagnostics.snapshot().unwrap().traces[0].error_code.as_deref(),Some("incomplete_source_coverage"));
 }
 
+fn range_rewrite_source()->SourceRevision {
+    let mut value=source("s");
+    value.items[0].text="今天用 SpeakMode 比较 Typeless。".into();
+    value.items[1].text="音频采集用 WASAPI。".into();
+    value
+}
+fn range_rewrite_content(retain_today:bool,include_tail:bool)->String {
+    let mut blocks=vec![json!({"text":if retain_today{"今天用 SpeakMode 比较 Typeless。"}else{"用 SpeakMode 比较 Typeless。"},"sourceRange":[0,0]})];
+    if include_tail{blocks.push(json!({"text":"音频采集用 WASAPI。","sourceRange":[1,1]}));}
+    json!({"resolvedMode":"structure","blocks":blocks}).to_string()
+}
+fn range_rewrite_checkpoint(h:&AppHub) {
+    install(h,"s",SessionPhase::FinalizingAsr,true);install_trace(h);
+    h.checkpoint("s",7,range_rewrite_source()).unwrap();
+}
+async fn finish_parsed_fixture(h:&Arc<AppHub>,content:String) {
+    h.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel|async move{
+        rewrite::parse_model_output(&content,&mode,&source)
+    }).await;
+}
+fn assert_range_rewrite_rejected(h:&AppHub,expected_code:&str) {
+    let live=view(h);assert_eq!(live.state,SessionPhase::Failed);
+    assert_eq!(live.error_code.as_deref(),Some(expected_code));
+    assert!(live.can_retry_rewrite&&live.can_use_source&&live.can_copy_recovery);
+    assert!(!live.can_retry_asr);assert!(live.worker_released);
+    let saved=h.db.get_result("s").unwrap();assert_eq!(saved.source,range_rewrite_source());
+    assert_eq!(saved.session.status,StoredSessionStatus::Checkpointed);assert!(saved.output.is_none());
+    assert_eq!(usage_count(h),0);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+    let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();
+    assert!(active.output.is_none()&&active.delivery.is_none()&&active.delivery_permit.is_none());
+}
+
+#[tokio::test]
+async fn parsed_complete_ranges_commit_stable_source_refs_without_changing_source() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    h.inner.lock().unwrap().active.as_mut().unwrap().prefs.delivery_mode=DeliveryMode::Preview;
+    finish_parsed_fixture(&h,range_rewrite_content(true,true)).await;
+    let live=view(&h);assert_eq!(live.state,SessionPhase::Ready);assert!(live.error.is_none());
+    let stored=h.db.get_result("s").unwrap();assert_eq!(stored.source,range_rewrite_source());
+    let output=stored.output.unwrap();assert_eq!(output.source_revision_id,"source-s");
+    assert_eq!(output.blocks[0].source_refs,["item-s-0"]);assert_eq!(output.blocks[1].source_refs,["item-s-1"]);
+    assert_eq!(output.resolved_mode,BaseMode::Structure);assert_eq!(output.creation_reason,CreationReason::NormalInitial);
+    assert_eq!(usage_count(&h),1);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+}
+
+#[tokio::test]
+async fn parsed_missing_time_qualifier_keeps_checkpoint_and_never_readies_or_claims_input() {
+    let h=hub();range_rewrite_checkpoint(&h);let seen=events(&h);
+    {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
+    finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
+    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+    assert_eq!(h.diagnostics.snapshot().unwrap().traces[0].error_code.as_deref(),Some("rewrite_meaning_risk"));
+    assert!(seen.lock().unwrap().iter().any(|event|event.kind=="session"&&event.payload["state"]=="failed"&&event.payload["errorCode"]=="rewrite_meaning_risk"));
+    h.initial_delivery_with("s",7,|_|panic!("rejected output must not validate a target"),|_,_,_,_|panic!("rejected output must not inject text"));
+    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+}
+
+#[tokio::test]
+async fn parsed_range_gap_keeps_checkpoint_and_never_readies_or_counts_usage() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    finish_parsed_fixture(&h,range_rewrite_content(true,false)).await;
+    assert_range_rewrite_rejected(&h,"incomplete_source_coverage");
+}
+
+#[tokio::test]
+async fn cancellation_rejects_late_successfully_parsed_range_output_before_commit() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    let (parsed_tx,parsed_rx)=tokio::sync::oneshot::channel();let(release_tx,release_rx)=tokio::sync::oneshot::channel();
+    let worker=h.clone();let job=tokio::spawn(async move{
+        worker.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel|async move{
+            let parsed=rewrite::parse_model_output(&range_rewrite_content(true,true),&mode,&source);
+            assert!(parsed.is_ok());parsed_tx.send(()).unwrap();
+            // Deliberately ignore cancellation in the fixture transport: the
+            // AppHub receipt gate must still reject this already-parsed result.
+            release_rx.await.unwrap();parsed
+        }).await;
+    });
+    parsed_rx.await.unwrap();h.cancel_session_async(&identity("s")).await.unwrap();
+    release_tx.send(()).unwrap();job.await.unwrap();
+    let live=view(&h);assert_eq!(live.state,SessionPhase::Cancelled);assert!(!live.can_copy_recovery);
+    assert!(h.db.get_result("s").is_err());assert_eq!(usage_count(&h),0);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+    let trace=h.diagnostics.snapshot().unwrap();assert!(!trace.traces[0].marks.iter().any(|mark|mark.stage==Stage::RewriteValidated||mark.stage==Stage::ReadyCommitted));
+}
+
+#[tokio::test]
+async fn rejected_range_output_never_falls_back_or_reinputs_after_explicit_source_adoption() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
+    finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
+    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+    h.initial_delivery_with("s",7,|_|panic!("failure cannot enter input"),|_,_,_,_|panic!("failure cannot fall back to source input"));
+    let adopted=h.use_source_async(&identity("s")).await.unwrap();
+    assert_eq!(adopted["source"],serde_json::to_value(range_rewrite_source()).unwrap());
+    let saved=h.db.get_result("s").unwrap();let output=saved.output.unwrap();
+    let original=range_rewrite_source();
+    assert_eq!(output.kind,RevisionKind::UseSource);assert_eq!(output.creation_reason,CreationReason::UseSource);
+    assert_eq!(output.blocks.iter().map(|block|block.text.as_str()).collect::<Vec<_>>(),original.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>());
+    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(usage_count(&h),1);
+    h.initial_delivery_with("s",7,|_|panic!("explicit source adoption cannot reclaim the original target"),|_,_,_,_|panic!("explicit source adoption cannot automatically input"));
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+}
+
 #[test]
 fn same_generation_trace_handles_keep_worker_exit_on_its_own_retry_run(){
     let h=hub();install(&h,"s",SessionPhase::Recording,true);let old=install_trace(&h);
