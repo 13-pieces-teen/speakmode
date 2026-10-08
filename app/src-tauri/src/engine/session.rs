@@ -37,7 +37,7 @@ pub struct LiveSession {
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
 pub(crate) struct ActiveSession {
     diagnostic_trace:Option<TraceHandle>,caption_render_token:Option<String>,
-    pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,
+    pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,dictionary:DictionarySnapshot,
     started_at:String,ended_at:Option<String>,capture_duration_ms:u64,
     recording_limit_remaining_ms:Option<u64>,
     first_samples:bool,provider_ready:bool,level:f32,captions:Vec<CaptionItem>,error:Option<ApiError>,
@@ -164,7 +164,7 @@ impl AppHub {
         self.start_session_at(Instant::now(),Origin::UiCommand).await
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
-        let (id,generation,config,prefs,mode)={
+        let (id,generation,config,prefs,mode,dictionary)={
             let _native=self.native_io.try_lock().map_err(|_|ApiError::new("native_busy","session","上一条复制或输入操作尚未结束"))?;
             let mut i=self.inner.lock().unwrap();
             if self.quitting.load(Ordering::SeqCst)||self.db.owner_released()||!self.capture_available.load(Ordering::SeqCst){return Err(ApiError::new("system_unavailable","session","系统录音权限或快捷键尚未恢复，请稍候"));}
@@ -174,14 +174,14 @@ impl AppHub {
             if !i.auxiliary_workers.is_empty(){return Err(ApiError::new("processing_busy","session","文字处理任务尚未释放，请稍候"));}
             if !platform::audio::capture_resources_released(){return Err(ApiError::new("capture_busy","session","上一条采音尚未释放，请稍候"));}
             if i.active.as_ref().is_some_and(ActiveSession::busy){return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候"));}
-            let cache=self.db.snapshot();let prefs=cache.preferences;let config=cache.provider_config;cloud::endpoints(&config)?;
+            let cache=self.db.snapshot();let prefs=cache.preferences;let config=cache.provider_config;let dictionary=cache.dictionary;cloud::endpoints(&config)?;
             if !i.key_configured{return Err(ApiError::new("key_required","configuration","请先在设置中配置云服务 Key"));}
             let mode:ModeSnapshot=cache.modes.into_iter().find(|m|m.id==prefs.default_mode_id).ok_or_else(||ApiError::new("notFound","mode","默认整理方式已删除"))?.into();
             let generation=i.active.as_ref().map(|s|s.generation+1).unwrap_or(1);
             let id=Uuid::new_v4().to_string();
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_capture_pending:false,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
-            (id,generation,config,prefs,mode)
+            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_capture_pending:false,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            (id,generation,config,prefs,mode,dictionary)
         };
         let preflight=self.processing_lease(&id,generation);
         // Input position is frozen at the stop intent, so browsing or moving the
@@ -191,7 +191,7 @@ impl AppHub {
         {let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));};s.worker_released=false;}
         self.publish_session(); let _=self.native_action("recording",true);
         let hub=Arc::clone(self);let job_id=id.clone();
-        tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,secret).await;});
+        tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secret).await;});
         Ok(json!({"sessionId":id,"generation":generation,"state":"starting"}))
     }
     fn begin_stop_target(&self,p:&Value,intent:Instant)->Result<Option<(String,u64)>> {
@@ -411,7 +411,7 @@ impl AppHub {
         reached
     }
 
-    async fn record_pipeline(self:Arc<Self>,id:String,generation:u64,config:ProviderConfig,prefs:Preferences,_mode:ModeSnapshot,secret:String) {
+    async fn record_pipeline(self:Arc<Self>,id:String,generation:u64,config:ProviderConfig,prefs:Preferences,_mode:ModeSnapshot,dictionary:DictionarySnapshot,secret:String) {
         let trace=self.trace(&id,generation);
         if !self.valid_active(&id,generation){self.fail(&id,generation,ApiError::new("cancelled","session","口述已取消"),platform::audio::capture_resources_released());return;}
         let attempt=Uuid::new_v4().to_string();
@@ -431,7 +431,7 @@ impl AppHub {
         });
         let event_hub=Arc::clone(&self);let event_id=id.clone();let event_attempt=attempt.clone();
         let callback=Arc::new(move|progress:AsrProgress|event_hub.accept_asr_progress(&event_id,generation,&event_attempt,progress));
-        let result=asr::run(config.clone(),secret.clone(),prefs.language.clone(),attempt.clone(),audio_rx,cancel.clone(),callback).await;
+        let result=asr::run(config.clone(),secret.clone(),prefs.language.clone(),dictionary,attempt.clone(),audio_rx,cancel.clone(),callback).await;
         if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}
         // Any ASR early failure aborts capture; normal finish has already drained it.
         if result.is_err(){let i=self.inner.lock().unwrap();if let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation){s.stop.store(true,Ordering::SeqCst);}}
@@ -651,13 +651,13 @@ impl AppHub {
             if p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","这次识别尝试已经变化"));}
             (s.id.clone(),s.generation,s.config.clone())};
         let secret=credentials::read(&config)?;
-        let (generation,language,cache,cancel,attempt)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
+        let (generation,language,dictionary,cache,cancel,attempt)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=old_generation||!s.view().can_retry_asr||p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","识别请求已过期"));}
             s.generation+=1;s.cancel=CancellationToken::new();s.phase=SessionPhase::FinalizingAsr;s.reason=CreationReason::Retry;s.error=None;s.captions.clear();s.processing_worker_released=false;
             let attempt=Uuid::new_v4().to_string();s.asr_attempt_id=Some(attempt.clone());
             s.caption_render_token=None;s.provider_ready=false;
             s.diagnostic_trace=self.diagnostics.begin(&s.id,s.generation,Origin::AsrRetry,retry_intent,&s.config,&s.mode);self.diagnostics.attempt(s.diagnostic_trace.as_ref(),&attempt);
-            let values=(s.generation,s.prefs.language.clone(),s.cache.clone().unwrap(),s.cancel.clone(),attempt);
+            let values=(s.generation,s.prefs.language.clone(),s.dictionary.clone(),s.cache.clone().unwrap(),s.cancel.clone(),attempt);
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),values.0)));values};
         let processing=self.processing_lease(&id,generation);
         let trace=self.trace(&id,generation);
@@ -672,7 +672,7 @@ impl AppHub {
         });
         let hub=Arc::clone(self);let event_id=id.clone();let event_attempt=attempt.clone();
         let callback=Arc::new(move|progress:AsrProgress|hub.accept_asr_progress(&event_id,generation,&event_attempt,progress));
-        let result=asr::run(config.clone(),secret.clone(),language,attempt.clone(),rx,cancel,callback).await;
+        let result=asr::run(config.clone(),secret.clone(),language,dictionary,attempt.clone(),rx,cancel,callback).await;
         if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}let _=producer.await;
         let rows=match result{Ok(v)=>v,Err(e)=>{self.fail(&id,generation,e.into(),true);drop(processing);return self.scoped_view(&id,generation);}};
         if rows.is_empty(){self.fail(&id,generation,ApiError::new("empty_recording","asr","未识别到有效语音"),true);drop(processing);return self.scoped_view(&id,generation);}

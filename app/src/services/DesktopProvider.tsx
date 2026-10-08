@@ -1,13 +1,14 @@
 import {createContext,useCallback,useContext,useEffect,useRef,useState,type ReactNode} from 'react';
 import {desktopAvailable,desktopCommand,errorMessage,subscribeDesktop} from './bridge';
-import {initialPreferences,initialProvider,type AppEvent,type AudioDevice,type DailyUsage,type DesktopError,type RecorderModeRequest,type HistoryDetail,type HistoryPage,type LiveSession,type ModeRecord,type NativePreferences,type NativeSnapshot,type ProviderStatus} from './contracts';
+import {initialPreferences,initialProvider,type AppEvent,type AudioDevice,type DailyUsage,type DesktopError,type RecorderModeRequest,type HistoryDetail,type HistoryPage,type LiveSession,type ModeRecord,type NativePreferences,type NativeSnapshot,type ProviderStatus,type DictionarySnapshot} from './contracts';
 import {fromDetail,fromSummary,type Dictation} from '../model';
 import {mergeLiveLevel,receiveLevel} from './liveLevel';
-export interface DesktopState {available:boolean;status:'browser'|'loading'|'ready'|'error';error:string;errors:DesktopError[];recorderModeRequest:RecorderModeRequest|null;preferences:NativePreferences;modes:ModeRecord[];usage:DailyUsage;provider:ProviderStatus;devices:AudioDevice[];devicesStatus:'idle'|'loading'|'ready'|'error';session:LiveSession|null;temporaryResult:HistoryDetail|null;capabilities:Record<string,boolean>}
+export interface DesktopState {available:boolean;status:'browser'|'loading'|'ready'|'error';error:string;errors:DesktopError[];recorderModeRequest:RecorderModeRequest|null;preferences:NativePreferences;modes:ModeRecord[];dictionary:DictionarySnapshot|null;usage:DailyUsage;provider:ProviderStatus;devices:AudioDevice[];devicesStatus:'idle'|'loading'|'ready'|'error';session:LiveSession|null;temporaryResult:HistoryDetail|null;capabilities:Record<string,boolean>}
 interface DesktopContextValue extends DesktopState {
  records:Dictation[];historyTotal:number;nextCursor:number|null;historyLoading:boolean;query:string;
  command:<T>(name:string,payload?:Record<string,unknown>)=>Promise<T>;refresh:()=>Promise<void>;
  searchHistory:(query:string)=>Promise<void>;loadMore:()=>Promise<void>;loadRecord:(id:string)=>Promise<Dictation>;acceptDetail:(detail:HistoryDetail)=>void;
+ acceptDictionary:(snapshot:DictionarySnapshot)=>void;
 }
 const Context=createContext<DesktopContextValue|null>(null);
 const emptyUsage:DailyUsage={date:'',count:0,sourceCharCount:0,captureDurationMs:0};
@@ -37,13 +38,14 @@ function eventIssue(event:AppEvent,current:LiveSession|null):DesktopError|null {
 export function DesktopProvider({children}:{children:ReactNode}) {
  const available=desktopAvailable();
  const recorderSurface=new URLSearchParams(location.search).get('window')==='recorder';
- const [state,setState]=useState<DesktopState>({available,status:available?'loading':'browser',error:'',errors:[],recorderModeRequest:null,preferences:{...initialPreferences},modes:[],usage:emptyUsage,provider:initialProvider,devices:[],devicesStatus:'idle',session:null,temporaryResult:null,capabilities:{}});
+ const [state,setState]=useState<DesktopState>({available,status:available?'loading':'browser',error:'',errors:[],recorderModeRequest:null,preferences:{...initialPreferences},modes:[],dictionary:null,usage:emptyUsage,provider:initialProvider,devices:[],devicesStatus:'idle',session:null,temporaryResult:null,capabilities:{}});
  const [records,setRecords]=useState<Dictation[]>([]),[historyTotal,setHistoryTotal]=useState(0),[nextCursor,setNextCursor]=useState<number|null>(null),[historyLoading,setHistoryLoading]=useState(false),[query,setQuery]=useState('');
  const queryRef=useRef(''),listRun=useRef(0),deviceReadRun=useRef(0),sequence=useRef(-1),alive=useRef(true),refreshTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
  const details=useRef(new Map<string,Dictation>());
  const sessionHead=useRef<{id:string;generation:number}|null>(null),retiredSessions=useRef(new Set<string>());
  const acceptSession=useCallback((next:LiveSession|null)=>{const id=sessionId(next),head=sessionHead.current;if(next&&id){if(retiredSessions.current.has(id)||(head?.id===id&&next.generation<head.generation))return false;if(head&&head.id!==id)retiredSessions.current.add(head.id);sessionHead.current={id,generation:next.generation};}else if(head){retiredSessions.current.add(head.id);sessionHead.current=null;}return true;},[]);
  const command=useCallback(<T,>(name:string,payload:Record<string,unknown>={})=>desktopCommand<T>(name,payload),[]);
+ const acceptDictionary=useCallback((dictionary:DictionarySnapshot)=>{setState(prev=>prev.dictionary&&prev.dictionary.version>dictionary.version?prev:{...prev,dictionary});},[]);
  const acceptDetail=useCallback((detail:HistoryDetail)=>{const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');if(!record.temporary)details.current.set(record.id,record);setRecords(prev=>prev.map(r=>r.id===record.id?record:r));setState(prev=>prev.temporaryResult?.session.id===record.id?{...prev,temporaryResult:detail}:prev);},[]);
  const loadRecord=useCallback(async(id:string)=>{const detail=await command<HistoryDetail>('history.get',{sessionId:id});const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');acceptDetail(detail);return record;},[command,acceptDetail]);
  const fetchHistory=useCallback(async(search:string,cursor:number|null=null)=>{
@@ -59,7 +61,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   if(!snap||typeof snap!=='object')return;if(typeof snap.sequence==='number'&&snap.sequence<sequence.current)return;
   sequence.current=Math.max(sequence.current,snap.sequence??0);
   const updateSession='session'in snap&&acceptSession(snap.session??null);
-  setState(prev=>{const next={...prev,...(snap.preferences?{preferences:snap.preferences}:{}),...(snap.modes?{modes:snap.modes}:{}),...(snap.usage?{usage:snap.usage}:{}),...(snap.provider?{provider:snap.provider}:{}),...(snap.devices?{devices:snap.devices}:{}),...('temporaryResult'in snap?{temporaryResult:snap.temporaryResult??null}:{}),...(snap.capabilities?{capabilities:snap.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,snap.session??null):next;});
+  setState(prev=>{const next={...prev,...(snap.preferences?{preferences:snap.preferences}:{}),...(snap.modes?{modes:snap.modes}:{}),...(snap.dictionary&&(!prev.dictionary||snap.dictionary.version>=prev.dictionary.version)?{dictionary:snap.dictionary}:{}),...(snap.usage?{usage:snap.usage}:{}),...(snap.provider?{provider:snap.provider}:{}),...(snap.devices?{devices:snap.devices}:{}),...('temporaryResult'in snap?{temporaryResult:snap.temporaryResult??null}:{}),...(snap.capabilities?{capabilities:snap.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,snap.session??null):next;});
  },[acceptSession]);
  const readFailed=useCallback((operation:string,error:unknown)=>{if(alive.current)setState(prev=>putError(prev,{scope:'transport',operation,message:errorMessage(error)}));},[]);
  const refresh=useCallback(async()=>{
@@ -108,10 +110,9 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   return()=>{active=false;alive.current=false;clearTimeout(refreshTimer.current);document.removeEventListener('visibilitychange',visible);};
  },[available,recorderSurface,command,applySnapshot,refresh,acceptSession,readFailed]);
  const searchHistory=useCallback(async(search:string)=>{queryRef.current=search;setQuery(search);await fetchHistory(search);},[fetchHistory]);
- return <Context.Provider value={{...state,records,historyTotal,nextCursor,historyLoading,query,command,refresh,searchHistory,loadMore:()=>fetchHistory(queryRef.current,nextCursor),loadRecord,acceptDetail}}>{children}</Context.Provider>;
+ return <Context.Provider value={{...state,records,historyTotal,nextCursor,historyLoading,query,command,refresh,searchHistory,loadMore:()=>fetchHistory(queryRef.current,nextCursor),loadRecord,acceptDetail,acceptDictionary}}>{children}</Context.Provider>;
 }
 export function useDesktop(){const value=useContext(Context);if(!value)throw new Error('DesktopProvider is required');return value;}
-
 
 
 

@@ -12,7 +12,7 @@
   → DeliveryAttempt 账本 → Windows 目标复核 → 一次 Ctrl+V 派发
 ```
 
-前端使用 React 19、TypeScript、Vite 和 Radix，通过 typed `app_command` / events 连接 Rust。浏览器预览使用独立 mock bridge。原生后端负责操作权限、状态、资源、凭据及持久化，录音浮层的接口范围比主窗口更小。
+前端使用 React 19、TypeScript、Vite 和 Radix，通过 typed `app_command` / events 连接 Rust。浏览器预览只展示界面，不生成示例数据，也不执行原生操作；自动化验证的模拟 bridge 仅存在于测试环境。原生后端负责操作权限、状态、资源、凭据及持久化，录音浮层的接口范围比主窗口更小。
 
 ## 会话、取消与提交
 
@@ -31,3 +31,9 @@ SQLite 由专用 worker 独占，使用有界队列、提交 guard 和最终 COM
 `cloud` 使用 Rust WebSocket / reqwest，服务 host 由已验证的地域与业务空间生成。密钥经 Windows Credential Manager 获取，只在原生请求中使用。SourceRevision 与 OutputRevision 分别保留识别稿、输出 block 和来源引用，前端显示/复制同一成稿文本。
 
 默认 debug 数据目录是项目内 `runtime/desktop`。显式 `SPEAKMODE_DATA_DIR` 必须是应用专用绝对目录。运行资料、数据库、音频、配置和临时测试数据都不提交 Git；分发包第三方材料保持独立冻结快照。
+
+## 0.1.5 词典与采音
+
+词典由 SQLite worker 持久化，主窗口 RPC 使用版本比较和提交 guard。一次录音开始时冻结词库，ASR 重试仍使用该版本；非空词库经 `session.update.input_audio_transcription.corpus.text` 作为识别上下文发送，不做来源字符串替换，也不改变 Mode prompt。录音浮层快照不包含完整词条。
+
+CPAL 输入回调复用启动时预分配的 mono 缓存；非阻塞地收取空缓存、downmix、交给 worker。worker 重采样后返还缓存。2 秒原始样本预算、64 块上限、明确 overflow 故障、停止 cutoff 与 stream 销毁后的尾音排空继续生效；完整管线的其他线程仍可分配内存。具体增量与实测边界见[版本计划](plans/voice-0.1.5.md)。

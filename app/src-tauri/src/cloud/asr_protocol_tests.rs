@@ -16,9 +16,49 @@ async fn receive(socket:&mut WebSocketStream<TcpStream>)->Value {
 async fn emit(socket:&mut WebSocketStream<TcpStream>,value:Value){socket.send(Message::Text(value.to_string())).await.unwrap();}
 fn short_timeouts()->Timeouts {Timeouts{establishment:Duration::from_secs(2),send:Duration::from_secs(1),finish:Duration::from_secs(1)}}
 async fn run_local(url:String,audio:mpsc::Receiver<AsrInput>,cancel:CancellationToken,callback:Arc<dyn Fn(AsrProgress)+Send+Sync>,timeouts:Timeouts)->Result<Vec<SourceItem>,CloudError> {
-    run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"auto".into(),"test-attempt".into(),audio,cancel,callback,url,timeouts).await
+    run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"auto".into(),DictionarySnapshot::default(),"test-attempt".into(),audio,cancel,callback,url,timeouts).await
 }
 fn ignored()->Arc<dyn Fn(AsrProgress)+Send+Sync>{Arc::new(|_|{})}
+
+#[tokio::test]
+async fn frozen_dictionary_is_sent_once_as_corpus_context_without_replacing_provider_words() {
+    let mut store=crate::core::Store::in_memory().unwrap();
+    let frozen=store.import_dictionary(vec!["SpeakMode".into(),"百炼".into()],1).unwrap();
+    let expected_context=frozen.asr_context().unwrap();
+    store.import_dictionary(vec!["ChangedAfterCapture".into()],frozen.version).unwrap();
+    let (url,server)=server(move|mut socket|async move{
+        let update=receive(&mut socket).await;
+        assert_eq!(update["session"]["input_audio_transcription"]["language"],"en");
+        assert_eq!(update["session"]["input_audio_transcription"]["corpus"]["text"],expected_context);
+        assert!(!update.to_string().contains("ChangedAfterCapture"));
+        emit(&mut socket,json!({"type":"session.updated"})).await;
+        assert_eq!(receive(&mut socket).await["type"],"session.finish");
+        emit(&mut socket,json!({"type":"input_audio_buffer.committed","item_id":"a","previous_item_id":null})).await;
+        emit(&mut socket,json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"a","transcript":"provider spelling remains untouched"})).await;
+        emit(&mut socket,json!({"type":"session.finished"})).await;
+    }).await;
+    let (tx,rx)=mpsc::channel(1);tx.send(AsrInput::Finish{next_sequence:0}).await.unwrap();
+    let rows=run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"en".into(),frozen,"dictionary-attempt".into(),rx,CancellationToken::new(),ignored(),url,short_timeouts()).await.unwrap();
+    assert_eq!(rows[0].text,"provider spelling remains untouched");server.await.unwrap();
+}
+
+#[test]
+fn empty_dictionary_omits_corpus_and_does_not_change_audio_or_vad_settings() {
+    let update=session_update("auto",&DictionarySnapshot::default()).unwrap();
+    assert!(update["session"]["input_audio_transcription"].get("corpus").is_none());
+    assert!(update["session"]["input_audio_transcription"].get("language").is_none());
+    assert_eq!(update["session"]["input_audio_format"],"pcm");assert_eq!(update["session"]["sample_rate"],16000);
+    assert_eq!(update["session"]["turn_detection"]["silence_duration_ms"],400);
+}
+
+#[tokio::test]
+async fn invalid_dictionary_is_rejected_before_opening_a_provider_connection() {
+    let entries=(0..20).map(|index|crate::core::DictionaryEntry{id:format!("entry-{index}"),term:format!("{}-{index}","术".repeat(70)),created_at:"test".into(),updated_at:"test".into()}).collect();
+    let oversized=DictionarySnapshot{version:1,entries};assert!(oversized.asr_context().unwrap().len()>4000);
+    let (_tx,rx)=mpsc::channel(1);
+    let error=run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"auto".into(),oversized,"invalid-context".into(),rx,CancellationToken::new(),ignored(),"not-a-websocket-url".into(),short_timeouts()).await.unwrap_err();
+    assert_eq!(error.code,"dictionary_invalid");assert_eq!(error.stage,"configuration");
+}
 
 #[tokio::test]
 async fn frames_wait_for_config_ack_then_finish_follows_every_audio_byte() {

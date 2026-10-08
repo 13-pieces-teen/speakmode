@@ -1,5 +1,41 @@
 use serde::{Deserialize, Serialize};
 
+pub const DICTIONARY_MAX_ENTRIES: usize = 200;
+pub const DICTIONARY_MAX_TERM_CHARS: usize = 80;
+pub const DICTIONARY_MAX_CONTEXT_BYTES: usize = 4000;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DictionaryEntry {
+    pub id: String,
+    pub term: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A personal recognition vocabulary, never a transcript replacement table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DictionarySnapshot {
+    pub version: u64,
+    pub entries: Vec<DictionaryEntry>,
+}
+impl Default for DictionarySnapshot {
+    fn default() -> Self { Self { version: 1, entries: Vec::new() } }
+}
+impl DictionarySnapshot {
+    /// Stable plain context for the ASR adapter. Empty dictionaries omit corpus entirely.
+    pub fn asr_context(&self) -> Option<String> {
+        if self.entries.is_empty() { return None; }
+        let terms = self.entries.iter().map(|entry| entry.term.as_str()).collect::<Vec<_>>();
+        Some(format!("常用词汇：{}", serde_json::to_string(&terms).expect("string lists serialize")))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DictionaryDraft { pub id: Option<String>, pub term: String }
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BaseMode { Auto, Light, Structure }

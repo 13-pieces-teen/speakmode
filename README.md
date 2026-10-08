@@ -2,13 +2,14 @@
 
 SpeakMode 是一个 Windows 语音输入 MVP：按右 Alt 开始口述，再按一次结束，将识别结果按所选 Mode 整理后输入到结束口述时的文本位置。录音中可以停顿、翻阅资料或移动光标。
 
-当前桌面源码版本为 **0.1.4**，前端 package 版本为 **0.3.0**。仓库包含实际 React/Tauri/Rust 实现、锁定依赖、测试和构建所需的第三方材料；不包含个人配置、API Key、历史数据库、录音、安装包或本机工具链。
+当前桌面源码版本为 **0.1.5**，前端 package 版本为 **0.3.1**。仓库包含实际 React/Tauri/Rust 实现、锁定依赖、测试和构建所需的第三方材料；不包含个人配置、API Key、历史数据库、录音、安装包或本机工具链。
 
 ## 功能
 
 - 全局录音快捷键、Windows 原生悬浮栏、真实音量反馈和流式字幕。
 - Auto、轻整理、结构与个人 Mode；个人规则控制格式，不能覆盖来源和输出契约。
 - 云端语音识别与文字整理，目前支持阿里云百炼北京/新加坡地域。
+- 个人词典支持新增、编辑、删除、搜索及批量添加，作为下一次录音的 ASR 词汇上下文。
 - 历史记录、今日使用量、识别稿对照、局部恢复及撤销。
 - 整理后尝试一次自动输入；目标改变或无法验证时保留成稿并明确提示，支持手动复制。
 - 快捷键、麦克风、语言、默认 Mode、输入方式、历史保存与云端配置设置。
@@ -28,7 +29,7 @@ npm run tauri -- dev --target x86_64-pc-windows-msvc
 
 在应用“设置 → 云端服务”中配置自己的 Key 和所属地域。默认模型为 `qwen3-asr-flash-realtime` 和 `qwen-flash`；模型可用性、额度和地域取决于你的账号。Key 通过 Windows Credential Manager 保存，不写入 Git 文件或发送到前端日志。
 
-浏览器单独运行 `npm run dev` 可检查界面，但它使用 mock bridge，不能代替桌面语音、系统快捷键或跨应用输入验收。
+浏览器单独运行 `npm run dev` 可检查界面，但不生成示例数据或执行原生操作，不能代替桌面语音、系统快捷键或跨应用输入验收。
 
 ## 验证和打包
 
@@ -39,6 +40,7 @@ node scripts/caption-helper-check.mjs
 node scripts/waveform-helper-check.mjs
 node scripts/live-level-check.mjs
 node scripts/delivery-feedback-helper-check.mjs
+node scripts/dictionary-helper-check.mjs
 ```
 
 从 `app/` 运行 Windows 桌面库测试和安装包构建：
@@ -53,6 +55,8 @@ npm.cmd run desktop:build -- --ci -- --locked
 PowerShell 中带 `--` 分隔的打包命令使用 `npm.cmd`，避免 `npm.ps1` 吞掉参数分隔符。
 
 验证状态与实际验收边界见 [docs/validation.md](docs/validation.md)。安装包构建、真实口述、实际宿主输入及安装/升级/卸载是不同的验证范围，不把源码测试等同于整体产品验收。
+
+0.1.5 的词典规则、采音改动、测量口径与实际口述对比见 [语音增量计划](docs/plans/voice-0.1.5.md)。
 
 ## 目录
 

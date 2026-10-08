@@ -1,7 +1,7 @@
 //! Qwen wire adapter: final order is based on capture metadata/previous-item chain,
 //! never on completion arrival. Partial revisions are for display only.
 use super::{CloudError, endpoints};
-use crate::core::{ProviderConfig, SourceItem};
+use crate::core::{DictionarySnapshot, ProviderConfig, SourceItem};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
@@ -186,9 +186,19 @@ impl Assembler {
 
 fn event(kind:&str)->Value { json!({"type":kind,"event_id":Uuid::new_v4().to_string()}) }
 
-pub async fn run(config:ProviderConfig, secret:String, language:String, attempt:String, audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Result<Vec<SourceItem>,CloudError> {
+fn session_update(language:&str,dictionary:&DictionarySnapshot)->Result<Value,CloudError> {
+    // Validate again at the adapter boundary, before opening a provider socket.
+    crate::core::store::validate_dictionary(dictionary).map_err(|_|CloudError::new("dictionary_invalid","configuration","个人词典无效或超过识别上下文容量，请在词典页检查"))?;
+    let mut update=event("session.update");
+    update["session"]=json!({"input_audio_format":"pcm","sample_rate":16000,"turn_detection":{"type":"server_vad","threshold":0.0,"silence_duration_ms":400},"input_audio_transcription":{}});
+    if language=="zh" || language=="en" {update["session"]["input_audio_transcription"]["language"]=json!(language);}
+    if let Some(context)=dictionary.asr_context() {update["session"]["input_audio_transcription"]["corpus"]=json!({"text":context});}
+    Ok(update)
+}
+
+pub async fn run(config:ProviderConfig, secret:String, language:String, dictionary:DictionarySnapshot, attempt:String, audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Result<Vec<SourceItem>,CloudError> {
     let url=endpoints(&config)?.asr;
-    run_at(config,secret,language,attempt,audio,cancel,callback,url,Timeouts::default()).await
+    run_at(config,secret,language,dictionary,attempt,audio,cancel,callback,url,Timeouts::default()).await
 }
 
 #[derive(Clone,Copy)]
@@ -196,7 +206,8 @@ struct Timeouts { establishment:Duration,send:Duration,finish:Duration }
 impl Default for Timeouts {fn default()->Self {Self{establishment:Duration::from_secs(10),send:Duration::from_secs(5),finish:Duration::from_secs(15)}}}
 
 // Private transport seam: only run() can select a production URL; localhost injection lives in tests.
-async fn run_at(config:ProviderConfig, secret:String, language:String, attempt:String, mut audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>, url:String, timeouts:Timeouts)->Result<Vec<SourceItem>,CloudError> {
+async fn run_at(config:ProviderConfig, secret:String, language:String, dictionary:DictionarySnapshot, attempt:String, mut audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>, url:String, timeouts:Timeouts)->Result<Vec<SourceItem>,CloudError> {
+    let update=session_update(&language,&dictionary)?;
     let connect_deadline=tokio::time::Instant::now()+timeouts.establishment;
     let request=authorized_request(&url,&secret,config.workspace.as_deref())?;
     let mut ws_config=WebSocketConfig::default();
@@ -206,9 +217,6 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, attempt:S
         _=cancel.cancelled()=>return Err(CloudError::new("cancelled","asr","已取消识别")),
         r=tokio::time::timeout_at(connect_deadline,connect)=>r.map_err(|_|CloudError::new("asr_connect_timeout","asr","语音服务连接超时"))?.map_err(|_|CloudError::new("asr_connect_failed","asr","语音服务连接失败，请检查地域与 Key"))?,
     };
-    let mut update=event("session.update");
-    update["session"]=json!({"input_audio_format":"pcm","sample_rate":16000,"turn_detection":{"type":"server_vad","threshold":0.0,"silence_duration_ms":400},"input_audio_transcription":{}});
-    if language=="zh" || language=="en" {update["session"]["input_audio_transcription"]["language"]=json!(language);}
     send_message(&mut socket,Message::Text(update.to_string()),&cancel,connect_deadline.min(tokio::time::Instant::now()+timeouts.send)).await?;
     let mut assembler=Assembler::default();
     let mut audio_sequence=AudioSequence::default();

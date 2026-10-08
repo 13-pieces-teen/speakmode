@@ -68,7 +68,7 @@ fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
     let mut i=hub.inner.lock().unwrap();i.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),7)));
     i.active = Some(ActiveSession {
         diagnostic_trace:None,caption_render_token:None,
-        id: id.into(), generation: 7, phase, prefs, config, mode,
+        id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
         started_at: "2026-10-04T10:00:00+08:00".into(),
         ended_at: Some("2026-10-04T10:00:12+08:00".into()), capture_duration_ms: 12_000, recording_limit_remaining_ms:None,
         first_samples: true, provider_ready: true, level: 0.0, captions: vec![], error: None,
@@ -123,6 +123,56 @@ fn usage_count(hub: &AppHub) -> u64 { hub.db.usage_today("2026-10-04").unwrap().
 fn fault(hub: &AppHub, sql: &str) { hub.db.test_sql(sql).unwrap(); }
 async fn command(hub: &Arc<AppHub>, name: &str, payload: Value) -> Result<Value> {
     hub.command("main", CommandRequest { name: name.into(), payload }).await
+}
+
+#[tokio::test]
+async fn dictionary_ipc_lists_without_request_id_and_mutations_return_authoritative_snapshots() {
+    let h=hub();let empty=command(&h,"dictionary.list",json!({})).await.unwrap();
+    assert_eq!(empty["version"],1);assert_eq!(empty["entries"],json!([]));
+    let saved=command(&h,"dictionary.save",json!({"draft":{"term":"SpeakMode"},"expectedVersion":1,"requestId":"dictionary-save"})).await.unwrap();
+    assert_eq!(saved["version"],2);assert_eq!(saved["entries"][0]["term"],"SpeakMode");
+    assert_eq!(h.snapshot("main").unwrap()["dictionary"],saved);
+    assert!(h.snapshot("recording").unwrap().get("dictionary").is_none());
+    let rejected=h.command("recording",CommandRequest{name:"dictionary.list".into(),payload:json!({})}).await.unwrap_err();assert_eq!(rejected.code,"forbidden");
+    let duplicate=command(&h,"dictionary.import",json!({"terms":["ＳＰＥＡＫＭＯＤＥ"],"expectedVersion":2,"requestId":"dictionary-duplicate"})).await.unwrap();
+    assert_eq!(duplicate,saved);
+    let deleted=command(&h,"dictionary.delete",json!({"entryId":saved["entries"][0]["id"],"expectedVersion":2,"requestId":"dictionary-delete"})).await.unwrap();
+    assert_eq!(deleted["version"],3);assert_eq!(deleted["entries"],json!([]));
+}
+
+#[tokio::test]
+async fn dictionary_conflicts_and_capacity_errors_are_specific_and_do_not_apply_a_draft() {
+    let h=hub();command(&h,"dictionary.import",json!({"terms":["PolyU"],"expectedVersion":1,"requestId":"dictionary-seed"})).await.unwrap();
+    let stale=command(&h,"dictionary.save",json!({"draft":{"term":"StaleDraft"},"expectedVersion":1,"requestId":"dictionary-stale"})).await.unwrap_err();
+    assert_eq!(stale.code,"revisionConflict");assert_eq!(stale.stage,"dictionary");
+    let invalid=command(&h,"dictionary.save",json!({"draft":{"term":"x".repeat(81)},"expectedVersion":2,"requestId":"dictionary-long"})).await.unwrap_err();
+    assert_eq!(invalid.code,"dictionary_term_limit");assert_eq!(invalid.stage,"dictionary");
+    let duplicate=command(&h,"dictionary.save",json!({"draft":{"term":"ＰＯＬＹＵ"},"expectedVersion":2,"requestId":"dictionary-existing"})).await.unwrap_err();
+    assert_eq!(duplicate.code,"dictionary_duplicate");assert_eq!(h.db.snapshot().dictionary.entries[0].term,"PolyU");assert_eq!(h.db.snapshot().dictionary.version,2);
+}
+
+#[tokio::test]
+async fn dictionary_replay_never_resurrects_deleted_terms_or_repeats_an_import() {
+    let h=hub();let request=json!({"terms":["PrivateTerm"],"expectedVersion":1,"requestId":"dictionary-replay"});
+    let saved=command(&h,"dictionary.import",request.clone()).await.unwrap();
+    assert_eq!(command(&h,"dictionary.import",request.clone()).await.unwrap(),saved);assert_eq!(h.db.snapshot().dictionary.version,2);
+    assert!(matches!(h.inner.lock().unwrap().requests["main:dictionary-replay"].outcome.lock().unwrap().as_ref().unwrap(),Ok(ReplayValue::Dictionary(2))));
+    command(&h,"dictionary.delete",json!({"entryId":saved["entries"][0]["id"],"expectedVersion":2,"requestId":"dictionary-delete-replay"})).await.unwrap();
+    assert_eq!(command(&h,"dictionary.import",request).await.unwrap_err().code,"request_already_processed");
+    assert!(h.db.snapshot().dictionary.entries.is_empty());
+}
+
+#[tokio::test]
+async fn dictionary_changes_during_capture_only_apply_to_the_next_session() {
+    let h=hub();let saved=command(&h,"dictionary.import",json!({"terms":["FrozenVocabulary"],"expectedVersion":1,"requestId":"dictionary-before-capture"})).await.unwrap();
+    install(&h,"dictionary-frozen",SessionPhase::Recording,true);
+    let (frozen,mode)={let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();(active.dictionary.clone(),active.mode.clone())};
+    command(&h,"dictionary.delete",json!({"entryId":saved["entries"][0]["id"],"expectedVersion":2,"requestId":"dictionary-while-capture"})).await.unwrap();
+    command(&h,"dictionary.import",json!({"terms":["NextVocabulary"],"expectedVersion":3,"requestId":"dictionary-next-capture"})).await.unwrap();
+    {let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();assert_eq!(active.dictionary,frozen);assert_eq!(active.mode,mode);assert_eq!(active.phase,SessionPhase::Recording);}
+    assert!(!h.db.snapshot().dictionary.asr_context().unwrap().contains("FrozenVocabulary"));
+    install(&h,"dictionary-next",SessionPhase::Recording,true);
+    let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();assert_eq!(active.dictionary.version,4);assert!(active.dictionary.asr_context().unwrap().contains("NextVocabulary"));
 }
 fn events(hub: &AppHub) -> Arc<Mutex<Vec<AppEvent>>> {
     let values = Arc::new(Mutex::new(vec![])); let target = values.clone();

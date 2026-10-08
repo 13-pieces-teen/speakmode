@@ -52,6 +52,26 @@ fn id() -> String { Uuid::new_v4().to_string() }
 fn invalid(message: &str) -> StoreError { StoreError::Invalid(message.into()) }
 fn i64_checked(value: u64) -> StoreResult<i64> { i64::try_from(value).map_err(|_| invalid("integer exceeds SQLite range")) }
 fn folded(text: &str) -> String { text.nfkc().case_fold().collect() }
+fn dictionary_term(raw: &str) -> StoreResult<String> {
+    // Check before trimming: pasted newlines/tabs must not become silent word edits.
+    if raw.chars().any(|c| c.is_control() || c.is_other_format() || c=='\u{2028}' || c=='\u{2029}') { return Err(invalid("dictionary_control")); }
+    let term=raw.trim().to_owned();
+    if term.is_empty() { return Err(invalid("dictionary_empty")); }
+    if term.chars().count()>DICTIONARY_MAX_TERM_CHARS { return Err(invalid("dictionary_term_limit")); }
+    Ok(term)
+}
+pub(crate) fn validate_dictionary(snapshot: &DictionarySnapshot) -> StoreResult<()> {
+    if snapshot.version==0 { return Err(invalid("dictionary_version")); }
+    if snapshot.entries.len()>DICTIONARY_MAX_ENTRIES { return Err(invalid("dictionary_entry_limit")); }
+    let mut terms=HashSet::new();let mut ids=HashSet::new();
+    for entry in &snapshot.entries {
+        valid_id(&entry.id)?;
+        if dictionary_term(&entry.term)?!=entry.term { return Err(invalid("dictionary_whitespace")); }
+        if !terms.insert(folded(&entry.term)) || !ids.insert(entry.id.as_str()) { return Err(invalid("dictionary_duplicate")); }
+    }
+    if snapshot.asr_context().is_some_and(|context|context.len()>DICTIONARY_MAX_CONTEXT_BYTES) { return Err(invalid("dictionary_context_limit")); }
+    Ok(())
+}
 fn valid_id(value: &str) -> StoreResult<()> {
     if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) { Err(invalid("invalid opaque ID")) } else { Ok(()) }
 }
@@ -82,6 +102,13 @@ CREATE TRIGGER usage_no_update BEFORE UPDATE ON usage_events BEGIN SELECT RAISE(
 PRAGMA user_version=1;
 "#;
 
+const MIGRATION_V2: &str = r#"
+CREATE TABLE dictionary_meta (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL CHECK(version>0));
+INSERT INTO dictionary_meta(singleton,version) VALUES(1,1);
+CREATE TABLE dictionary_entries (id TEXT PRIMARY KEY, normalized_term TEXT NOT NULL UNIQUE, term TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+PRAGMA user_version=2;
+"#;
+
 #[derive(Clone)]
 struct MemorySession {
     record: SessionRecord,
@@ -107,12 +134,17 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 1 { return Err(invalid("database schema is newer than this application")); }
+        if version > 2 { return Err(invalid("database schema is newer than this application")); }
         if version == 0 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V1)?;
             tx.execute("INSERT INTO preferences(singleton,version,data) VALUES(1,1,?1)", [json(&Preferences::default())?])?;
             tx.execute("INSERT INTO provider_config(singleton,version,data) VALUES(1,1,?1)", [json(&ProviderConfig::default())?])?;
+            tx.commit()?;
+        }
+        if version < 2 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V2)?;
             tx.commit()?;
         }
         Ok(Self { connection, memory_sessions: HashMap::new(), latest_memory_ready: None,commit_guard:None,health })
@@ -149,6 +181,81 @@ impl Store {
         Ok(next)
     }
     pub fn reset_preferences(&mut self, expected_version: u64) -> StoreResult<Preferences> { self.save_preferences(Preferences::default(), expected_version) }
+
+    pub fn dictionary(&self) -> StoreResult<DictionarySnapshot> {
+        let version = self.connection.query_row("SELECT version FROM dictionary_meta WHERE singleton=1", [], |row| row.get(0))?;
+        let mut statement = self.connection.prepare("SELECT id,term,created_at,updated_at FROM dictionary_entries ORDER BY normalized_term,id")?;
+        let entries = statement.query_map([], |row| Ok(DictionaryEntry { id: row.get(0)?, term: row.get(1)?, created_at: row.get(2)?, updated_at: row.get(3)? }))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let snapshot = DictionarySnapshot { version, entries };
+        validate_dictionary(&snapshot)?;
+        Ok(snapshot)
+    }
+    fn checked_dictionary(&self, expected_version: u64) -> StoreResult<DictionarySnapshot> {
+        let snapshot = self.dictionary()?;
+        if snapshot.version != expected_version { return Err(StoreError::Conflict { current: snapshot.version.to_string() }); }
+        Ok(snapshot)
+    }
+    pub fn save_dictionary_entry(&mut self, draft: DictionaryDraft, expected_version: u64) -> StoreResult<DictionarySnapshot> {
+        let mut next = self.checked_dictionary(expected_version)?;
+        let term = dictionary_term(&draft.term)?;
+        let normalized = folded(&term);
+        if next.entries.iter().any(|entry| folded(&entry.term)==normalized && draft.id.as_deref()!=Some(entry.id.as_str())) {
+            return Err(invalid("dictionary_duplicate"));
+        }
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        if let Some(entry_id) = draft.id {
+            valid_id(&entry_id)?;
+            let entry = next.entries.iter_mut().find(|entry| entry.id==entry_id).ok_or(StoreError::NotFound)?;
+            if entry.term==term { return self.publish_dictionary(next,expected_version,false); }
+            entry.term=term;entry.updated_at=timestamp;
+        } else {
+            next.entries.push(DictionaryEntry { id: id(), term, created_at: timestamp.clone(), updated_at: timestamp });
+        }
+        self.publish_dictionary(next,expected_version,true)
+    }
+    /// Atomic append: normalize for deduplication, preserve the first user spelling.
+    pub fn import_dictionary(&mut self, terms: Vec<String>, expected_version: u64) -> StoreResult<DictionarySnapshot> {
+        if terms.is_empty() || terms.len()>DICTIONARY_MAX_ENTRIES { return Err(invalid("dictionary_import_limit")); }
+        let mut next = self.checked_dictionary(expected_version)?;
+        let mut normalized = next.entries.iter().map(|entry| folded(&entry.term)).collect::<HashSet<_>>();
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let mut changed = false;
+        for raw in terms {
+            let term = dictionary_term(&raw)?;
+            if normalized.insert(folded(&term)) {
+                next.entries.push(DictionaryEntry { id:id(),term,created_at:timestamp.clone(),updated_at:timestamp.clone() });changed=true;
+            }
+        }
+        self.publish_dictionary(next,expected_version,changed)
+    }
+    pub fn delete_dictionary_entry(&mut self, entry_id: &str, expected_version: u64) -> StoreResult<DictionarySnapshot> {
+        valid_id(entry_id)?;
+        let mut next=self.checked_dictionary(expected_version)?;
+        let position=next.entries.iter().position(|entry|entry.id==entry_id).ok_or(StoreError::NotFound)?;
+        next.entries.remove(position);
+        self.publish_dictionary(next,expected_version,true)
+    }
+    fn publish_dictionary(&mut self, mut next: DictionarySnapshot, expected_version: u64, changed: bool) -> StoreResult<DictionarySnapshot> {
+        next.entries.sort_by_cached_key(|entry|(folded(&entry.term),entry.id.clone()));
+        validate_dictionary(&next)?;
+        let guard=self.commit_guard.clone();
+        let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;
+        if changed { next.version=expected_version.checked_add(1).ok_or_else(||invalid("version overflow"))?; }
+        // Acquire the writer directly instead of upgrading a read transaction,
+        // which SQLite can reject immediately while another writer is waiting.
+        let updated=tx.execute("UPDATE dictionary_meta SET version=?1 WHERE singleton=1 AND version=?2",params![i64_checked(next.version)?,i64_checked(expected_version)?])?;
+        if updated!=1 { let current:u64=tx.query_row("SELECT version FROM dictionary_meta WHERE singleton=1",[],|row|row.get(0))?;return Err(StoreError::Conflict{current:current.to_string()}); }
+        if changed {
+            tx.execute("DELETE FROM dictionary_entries",[])?;
+            for entry in &next.entries {
+                tx.execute("INSERT INTO dictionary_entries(id,normalized_term,term,created_at,updated_at) VALUES(?1,?2,?3,?4,?5)",params![entry.id,folded(&entry.term),entry.term,entry.created_at,entry.updated_at])?;
+            }
+        }
+        // A no-op is still arbitrated at completion, so accepted cancellation cannot
+        // masquerade as a successful dictionary operation.
+        tx.commit_guarded(guard.as_deref(),CommitKind::Revision,||{})?;
+        Ok(next)
+    }
     pub fn provider_config(&self) -> StoreResult<ProviderConfig> {
         decode(self.connection.query_row("SELECT data FROM provider_config WHERE singleton=1", [], |r| r.get(0))?)
     }

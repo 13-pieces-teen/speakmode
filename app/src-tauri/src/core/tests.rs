@@ -23,10 +23,99 @@ fn path() -> PathBuf {
 fn draft(name:&str) -> ModeDraft {ModeDraft{id:None,name:name.into(),base_mode:BaseMode::Light,rules:"保留条件，用简洁段落。".into(),expected_revision:None}}
 
 #[test]
+fn dictionary_v2_migration_preserves_v1_preferences_modes_history_sources_and_usage() {
+    let file=path();
+    let expected_detail;let expected_preferences;let expected_mode;
+    {
+        let mut store=Store::open(&file).unwrap();
+        expected_mode=store.save_mode(draft("迁移保留的 Mode")).unwrap();
+        let mut preferences=store.preferences().unwrap();preferences.language="zh".into();preferences.default_mode_id=expected_mode.id.clone();
+        expected_preferences=store.save_preferences(preferences,1).unwrap();
+        expected_detail=ready(&mut store,"v1-preserved",StoragePolicy::History);
+        // This is precisely the pre-dictionary v1 schema and existing bodies.
+        store.test_connection().execute_batch("DROP TABLE dictionary_entries;DROP TABLE dictionary_meta;PRAGMA user_version=1;").unwrap();
+    }
+    let store=Store::open(&file).unwrap();
+    assert_eq!(store.preferences().unwrap(),expected_preferences);
+    assert!(store.list_modes().unwrap().contains(&expected_mode));
+    assert_eq!(store.get_result("v1-preserved").unwrap(),expected_detail);
+    assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
+    assert_eq!(store.dictionary().unwrap(),DictionarySnapshot::default());
+    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),2);
+    assert!(store.test_connection().execute("UPDATE sources SET data='changed'",[]).is_err());
+    drop(store);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn dictionary_survives_reopen_edit_and_delete_keep_stable_identity() {
+    let file=path();let first;
+    {
+        let mut store=Store::open(&file).unwrap();
+        let saved=store.import_dictionary(vec!["SpeakMode".into(),"PolyU".into()],1).unwrap();
+        first=saved.entries.iter().find(|entry|entry.term=="SpeakMode").unwrap().clone();
+    }
+    let mut store=Store::open(&file).unwrap();let saved=store.dictionary().unwrap();assert_eq!(saved.version,2);
+    let edited=store.save_dictionary_entry(DictionaryDraft{id:Some(first.id.clone()),term:"Speak Mode".into()},saved.version).unwrap();
+    let edited_entry=edited.entries.iter().find(|entry|entry.id==first.id).unwrap();
+    assert_eq!(edited_entry.created_at,first.created_at);assert_eq!(edited_entry.term,"Speak Mode");assert_eq!(edited.version,3);
+    let deleted=store.delete_dictionary_entry(&first.id,edited.version).unwrap();assert_eq!(deleted.version,4);
+    assert_eq!(deleted.entries.iter().map(|entry|entry.term.as_str()).collect::<Vec<_>>(),["PolyU"]);
+    drop(store);assert_eq!(Store::open(&file).unwrap().dictionary().unwrap(),deleted);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn dictionary_nfkc_casefold_deduplicates_without_replacing_the_first_spelling() {
+    let mut store=Store::in_memory().unwrap();
+    let terms=["Ｆｏｏ","foo","Straße","STRASSE","é","e\u{301}"];
+    let saved=store.import_dictionary(terms.iter().map(|term|term.to_string()).collect(),1).unwrap();
+    assert_eq!(saved.entries.len(),3);assert!(saved.entries.iter().any(|entry|entry.term=="Ｆｏｏ"));assert!(saved.entries.iter().any(|entry|entry.term=="Straße"));
+    let duplicate=store.import_dictionary(vec!["FOO".into(),"strasse".into()],saved.version).unwrap();assert_eq!(duplicate,saved);
+    let entry=saved.entries.iter().find(|entry|entry.term=="Straße").unwrap();
+    assert_eq!(store.save_dictionary_entry(DictionaryDraft{id:Some(entry.id.clone()),term:entry.term.clone()},saved.version).unwrap(),saved);
+    assert!(matches!(store.save_dictionary_entry(DictionaryDraft{id:None,term:"strasse".into()},saved.version),Err(StoreError::Invalid(reason)) if reason=="dictionary_duplicate"));
+}
+
+#[test]
+fn dictionary_invalid_batch_and_capacity_fail_without_partial_commit() {
+    let mut store=Store::in_memory().unwrap();let original=store.dictionary().unwrap();
+    for bad in ["", " \t ", "bad\nword", "hidden\u{200b}word", "separator\u{2028}word"] {
+        assert!(store.import_dictionary(vec!["ValidFirst".into(),bad.into()],original.version).is_err());assert_eq!(store.dictionary().unwrap(),original);
+    }
+    assert!(store.import_dictionary(vec!["x".repeat(81)],original.version).is_err());
+    let multibyte=(0..20).map(|index|format!("{}-{index}","术".repeat(70))).collect::<Vec<_>>();
+    assert!(matches!(store.import_dictionary(multibyte,original.version),Err(StoreError::Invalid(reason)) if reason=="dictionary_context_limit"));
+    assert_eq!(store.dictionary().unwrap(),original);
+    let full=store.import_dictionary((0..200).map(|index|format!("term{index:03}")).collect(),original.version).unwrap();
+    assert!(full.asr_context().unwrap().len()<=4000);
+    assert!(matches!(store.save_dictionary_entry(DictionaryDraft{id:None,term:"one-more".into()},full.version),Err(StoreError::Invalid(reason)) if reason=="dictionary_entry_limit"));
+    assert_eq!(store.dictionary().unwrap(),full);
+}
+
+#[test]
+fn dictionary_edit_collision_and_stale_writes_never_overwrite_newer_words() {
+    let mut store=Store::in_memory().unwrap();let saved=store.import_dictionary(vec!["Alpha".into(),"Beta".into()],1).unwrap();
+    let alpha=saved.entries.iter().find(|entry|entry.term=="Alpha").unwrap();
+    assert!(matches!(store.save_dictionary_entry(DictionaryDraft{id:Some(alpha.id.clone()),term:"ＢＥＴＡ".into()},saved.version),Err(StoreError::Invalid(reason)) if reason=="dictionary_duplicate"));
+    assert!(matches!(store.save_dictionary_entry(DictionaryDraft{id:Some(alpha.id.clone()),term:"Changed".into()},1),Err(StoreError::Conflict{..})));
+    assert!(matches!(store.import_dictionary(vec!["Gamma".into()],1),Err(StoreError::Conflict{..})));
+    assert!(matches!(store.delete_dictionary_entry(&alpha.id,1),Err(StoreError::Conflict{..})));
+    assert_eq!(store.dictionary().unwrap(),saved);
+}
+
+#[test]
+fn cancelled_dictionary_transaction_rolls_back_version_and_entire_batch() {
+    let mut store=Store::in_memory().unwrap();let saved=store.import_dictionary(vec!["Existing".into()],1).unwrap();
+    let guard=std::sync::Arc::new(CommitGuard::new("dictionary-cancel".into(),0)).operation();assert_eq!(guard.cancel(),CancelDecision::Accepted);
+    assert!(matches!(store.with_commit_guard(guard,|store|store.import_dictionary(vec!["NeverCommitted".into()],saved.version)),Err(StoreError::Cancelled)));
+    assert_eq!(store.dictionary().unwrap(),saved);
+    assert!(store.test_connection().is_autocommit());
+}
+
+#[test]
 fn migrations_and_preferences_survive_reopen_without_mode_or_key_fields() {
     let path=path();
     {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),3);}
-    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),1);
+    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),2);
     drop(store);fs::remove_file(path).unwrap();
 }
 #[test]
