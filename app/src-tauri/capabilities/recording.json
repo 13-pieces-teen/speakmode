@@ -1,0 +1,8 @@
+{
+  "identifier": "recording",
+  "description": "Recording surface: the native RPC permits only current-session controls.",
+  "windows": [
+    "recording"
+  ],
+  "permissions": []
+}

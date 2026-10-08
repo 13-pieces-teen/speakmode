@@ -1,0 +1,23 @@
+{
+  "scope": "Synthetic expected outputs for protocol testing; no model inference or user transcript",
+  "items": [
+    {"id": "attempt-mode:1", "text": "嗯，那个，"},
+    {"id": "attempt-mode:2", "text": "预算先五千，不对，三千五百元，不是五千元。"},
+    {"id": "attempt-mode:3", "text": "然后邀请，如果时间还没确认，先不要发。"},
+    {"id": "attempt-mode:4", "text": "场地可能周五才有回复，可能啊，还没有确定。"}
+  ],
+  "light": {
+    "resolvedMode": "light",
+    "blocks": [
+      {"text": "预算是三千五百元，不是五千元。如果时间还没确认，先不要发邀请。场地可能周五才有回复，目前还没有确定。", "sourceRefs": ["attempt-mode:1", "attempt-mode:2", "attempt-mode:3", "attempt-mode:4"]}
+    ]
+  },
+  "structure": {
+    "resolvedMode": "structure",
+    "blocks": [
+      {"text": "预算\n• 三千五百元，不是五千元。", "sourceRefs": ["attempt-mode:1", "attempt-mode:2"]},
+      {"text": "邀请\n• 如果时间还没确认，先不要发邀请。", "sourceRefs": ["attempt-mode:3"]},
+      {"text": "场地\n• 可能周五才有回复，目前还没有确定。", "sourceRefs": ["attempt-mode:4"]}
+    ]
+  }
+}

@@ -1,0 +1,118 @@
+/* Typeless-inspired settings rhythm, using SpeakMode's existing tokens and controls. */
+.app-main[data-view='settings'] { background: #fff; }
+.settings-page { container: settings / inline-size; min-width: 0; margin: 0; padding: 0 0 8px; --accent-9: var(--sm-accent); --accent-a9: var(--sm-accent); --accent-track: var(--sm-accent); }
+.settings-page .page-heading { margin-bottom: 10px; }
+.settings-page .page-heading h1 { font-size: 28px; letter-spacing: -.6px; }
+.settings-page .page-heading p { margin-top: 10px; font-size: 14px; }
+.settings-preview-note { margin: 0 0 26px; color: var(--sm-muted); font-size: 12px; line-height: 1.8; }
+.settings-preview-note p { margin: 0; }
+.settings-sections { display: grid; grid-template-columns: minmax(0,1fr); gap: 24px; }
+.settings-section { min-width: 0; }
+.settings-section-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid #e7ebf0; }
+.settings-section-heading h2 { font-size: 15px; font-weight: 600; line-height: 26px; margin: 0; color: var(--sm-secondary); }
+.settings-section-icon { color: #7d8997; display: grid; place-items: center; flex-shrink: 0; }
+.settings-section-icon svg { width: 19px; height: 19px; }
+.setting-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,320px); align-items: start; gap: 14px 30px; padding: 16px 0; min-width: 0; }
+.setting-row:last-child { padding-bottom: 8px; }
+.setting-row-copy { min-width: 0; padding-top: 2px; }
+.setting-row-copy h3, .setting-row-copy label { display: block; margin: 0; color: var(--sm-ink); font-size: 15px; line-height: 23px; font-weight: 500; }
+.setting-row-copy p { margin: 7px 0 0; font-size: 13px; line-height: 22px; color: var(--sm-muted); overflow-wrap: anywhere; }
+.setting-row-control { display: flex; justify-content: flex-end; min-width: 0; max-width: 100%; }
+.setting-row-control > .rt-SwitchRoot { margin-top: 7px; }
+.settings-select.rt-SelectTrigger { width: 100%; min-width: 0; height: 45px; border-radius: 10px; padding: 0 14px; box-shadow: inset 0 0 0 1px var(--sm-control-line); color: var(--sm-secondary); font-size: 14px; }
+.settings-select.rt-SelectTrigger:hover { box-shadow: inset 0 0 0 1px #bdcce0; }
+.settings-device { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 45px; padding: 10px 14px; border: 1px solid #e7ebf1; border-radius: 10px; background: #fcfdfe; color: #576a81; font-size: 14px; }
+.settings-device small { color: var(--sm-muted); font-size: 11px; line-height: 18px; }
+.settings-mode-control, .settings-delivery-control { width: 100%; min-width: 0; }
+.settings-mode-control .mode-selector { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.settings-mode-control .mode-option.rt-RadioCardsItem { min-width: 0; height: auto; min-height: 45px; padding: 9px 7px; gap: 6px; align-items: center; justify-content: center; border-radius: 8px; }
+.settings-mode-control .mode-option-icon { width: 17px; height: 20px; }
+.settings-mode-control .mode-option-icon svg { width: 16px; height: 16px; }
+.settings-mode-control .mode-option-copy { flex: 0 1 auto; }
+.settings-mode-control .mode-option-copy strong { font-size: 13px; white-space: nowrap; }
+.settings-mode-control .mode-option[data-personal=true] { grid-column: 1/-1; justify-content: flex-start; padding: 10px; }
+.settings-mode-control .mode-option[data-personal=true] .mode-option-copy strong { white-space: normal; }
+.settings-mode-control > .rt-Button { margin: 12px 0 0; }
+.settings-mode-control .mode-option-copy > span, .settings-mode-control .mode-option-check { display: none; }
+.settings-control-hint { font-size: 12px; line-height: 21px; color: var(--sm-muted); margin: 9px 0 0; overflow-wrap: anywhere; }
+.settings-mode-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.settings-example { margin-top: -7px; margin-bottom: 7px; }
+.settings-example summary { list-style: none; width: fit-content; max-width: 100%; margin-left: auto; display: flex; align-items: center; gap: 15px; color: #5c7390; font-size: 12px; cursor: pointer; min-height: 32px; border-radius: 4px; }
+.settings-example summary::-webkit-details-marker { display: none; }
+.settings-example summary > span { display: flex; align-items: center; gap: 7px; }
+.settings-example summary > svg { transition: transform .15s; }
+.settings-example[open] summary > svg { transform: rotate(180deg); }
+.settings-example summary:focus-visible { outline: 3px solid #85aff5; outline-offset: 3px; }
+.settings-example-content { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 14px 0 3px; }
+.settings-example-source, .settings-example-output { padding: 16px 18px; border-radius: 9px; background: #f6f8fb; font-size: 13px; line-height: 1.9; min-width: 0; overflow-wrap: anywhere; }
+.settings-example-output { background: #f0f5fc; }
+.settings-example-content span { font-size: 12px; font-weight: 500; color: #5e7490; }
+.settings-example-content p { margin: 7px 0 0; }
+.settings-example-content ol { padding-left: 21px; margin: 7px 0 0; }
+.settings-example-content .settings-example-note { grid-column: 1/-1; font-size: 12px; color: var(--sm-muted); line-height: 1.8; margin: 0; }
+.settings-inline-note { font-size: 12px; line-height: 22px; color: #627992; margin: -8px 0 10px; padding: 12px 15px; border-left: 2px solid #b6ccee; background: #f7f9fc; }
+.settings-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 26px; margin-top: 28px; border-top: 1px solid #e7ebf0; }
+.settings-footer p { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--sm-muted); font-size: 12px; line-height: 22px; }
+.settings-footer p svg { margin-top: 3px; }
+.settings-footer p:empty { display: none; }
+.settings-footer > .rt-Button:last-child { margin-left: auto; }
+.settings-footer .rt-Button { margin: 0; flex-shrink: 0; }
+.settings-control-fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+.settings-control-fieldset:disabled { opacity: .55; }
+.settings-feedback { display: grid; gap: 6px; min-width: 0; }
+.settings-footer .settings-error, .settings-error { color: #a33737; font-size: 12px; line-height: 1.8; margin: 0; overflow-wrap: anywhere; }
+.settings-provider-intro { margin: 16px 0 12px; font-size: 13px; line-height: 1.85; color: var(--sm-muted); }
+.settings-provider-status { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--sm-secondary); font-size: 12px; line-height: 22px; }
+.settings-text-input { width: 100%; min-width: 0; min-height: 45px; padding: 10px 14px; border: 1px solid var(--sm-control-line); border-radius: 10px; color: var(--sm-secondary); background: #fff; font: inherit; font-size: 14px; line-height: 23px; }
+.settings-text-input::placeholder { color: var(--sm-muted); }
+.settings-text-input:focus-visible { outline: 3px solid #85aff5; outline-offset: 2px; }
+.settings-text-input:disabled { color: var(--sm-muted); background: #f6f8fb; cursor: not-allowed; opacity: .7; }
+.settings-provider-actions, .settings-key-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
+.settings-provider-actions { padding: 4px 0 18px; }
+.settings-provider-actions .settings-control-hint { margin: 0 auto 0 0; }
+.settings-key-actions { margin-top: 14px; }
+.settings-credential-form { border-top: 1px solid #e7ebf0; }
+.settings-provider-feedback { display: grid; gap: 7px; }
+.settings-provider-notice { display: flex; gap: 7px; align-items: flex-start; color: var(--sm-muted); font-size: 12px; line-height: 22px; margin: 0; }
+.settings-provider-notice svg { flex-shrink: 0; margin-top: 3px; }
+.settings-provider-notice:empty { display: none; }
+/* The shortcut editor participates in the row grid; expanded content spans both columns. */
+.settings-shortcut-row .shortcut-editor { display: contents; }
+.shortcut-current { grid-column: 2; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 0; }
+.shortcut-change.rt-Button { width: 100%; min-width: 0; height: auto; min-height: 45px; display: flex; justify-content: space-between; align-items: center; padding: 5px 11px 5px 6px; border-radius: 10px; background: #fff; box-shadow: inset 0 0 0 1px var(--sm-control-line); color: #8491a1; }
+.shortcut-change.rt-Button:hover { box-shadow: inset 0 0 0 1px #bdcce0; background: #fafcfe; }
+.shortcut-change.rt-Button:disabled { opacity: .6; }
+.shortcut-value.rt-Kbd { max-width: calc(100% - 26px); height: auto; min-height: 32px; padding: 3px 10px; border-radius: 6px; font-size: 13px; line-height: 22px; box-shadow: inset 0 0 0 1px #e9edf2, 0 1px 1px #1c2d4312; background: #fff; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.shortcut-reset.rt-Button { margin: 0; font-size: 12px; }
+.shortcut-panel { grid-column: 1/-1; min-width: 0; padding: 18px; margin: 2px 0 0; border: 1px solid #dce6f5; background: #f7faff; border-radius: 10px; }
+.shortcut-help, .shortcut-boundary, .shortcut-error, .shortcut-status { margin: 0; font-size: 12px; line-height: 1.8; }
+.shortcut-help, .shortcut-boundary { color: var(--sm-muted); }
+.shortcut-capture.rt-Button { display: flex; width: 100%; height: auto; min-height: 58px; margin: 13px 0 10px; padding: 12px; background: #fff; border: 1px dashed #8fb1e6; box-shadow: none; white-space: normal; }
+.shortcut-capture:focus-visible { outline-offset: 2px; }
+.shortcut-candidate.rt-Kbd { max-width: 100%; height: auto; white-space: normal; overflow-wrap: anywhere; }
+.shortcut-error { color: #a33737; margin-top: 10px; }
+.shortcut-actions { display: flex; justify-content: flex-end; gap: 9px; flex-wrap: wrap; margin-top: 15px; }
+.shortcut-status { grid-column: 1/-1; text-align: right; color: #627992; }
+.shortcut-status:empty { display: none; }
+@container settings (max-width: 640px) {
+  .setting-row { grid-template-columns: minmax(0,1fr); gap: 13px; padding: 16px 0; }
+  .setting-row-control { justify-content: flex-start; }
+  .setting-row:has(.rt-SwitchRoot) { grid-template-columns: minmax(0,1fr) auto; }
+  .setting-row-control > .rt-SwitchRoot { margin-top: 4px; }
+  .shortcut-current { grid-column: 1; }
+  .shortcut-panel, .shortcut-status { grid-column: 1/-1; }
+  .settings-example summary { margin-left: 0; }
+  .settings-example-content { grid-template-columns: minmax(0,1fr); }
+  .settings-sections { gap: 24px; }
+  .settings-preview-note { margin-bottom: 24px; }
+}
+@media (max-width: 740px) {
+  .settings-page { padding: 0; }
+  .settings-page .page-heading h1 { font-size: 26px; }
+}
+@container settings (max-width: 310px) {
+  .settings-mode-control .mode-option-icon { display: none; }
+  .shortcut-panel { padding: 12px; }
+  .shortcut-actions { justify-content: flex-start; }
+  .settings-device { flex-wrap: wrap; gap: 4px 10px; }
+}

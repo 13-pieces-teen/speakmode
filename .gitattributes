@@ -1,0 +1,12 @@
+* text=auto
+
+# Preserve the byte-level third-party snapshot and license materials.
+docs/third-party/nsis-resources/** -text
+docs/third-party/supplements/** -text
+app/src-tauri/src/platform/vendor/handy-keys/LICENSE -text
+app/src-tauri/src/platform/HANDY-LICENSE.txt -text
+app/public/fonts/OFL.txt -text
+*.png -text
+*.ico -text
+*.woff2 -text
+*.crate -text

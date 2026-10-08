@@ -1,0 +1,8 @@
+{
+  "identifier": "main",
+  "description": "Main panel: management commands are additionally checked by native window label.",
+  "windows": [
+    "main"
+  ],
+  "permissions": []
+}

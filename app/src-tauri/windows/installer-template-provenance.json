@@ -1,0 +1,7 @@
+{
+  "cliVersion": "2.12.1",
+  "url": "https://raw.githubusercontent.com/tauri-apps/tauri/tauri-cli-v2.12.1/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi",
+  "originalSha256": "dabed59013b1d78b879a1a85bc7f2eed2993b33a9a90cdabe5946de3d3950597",
+  "modifiedSha256": "46c267f57042e949ae3cfa54f2d198522764e44a513753ef13fd54feafa800f8",
+  "modification": "In GUI version-changing upgrades, pass /UPDATE to prior uninstaller to preserve profile, current Key, and autostart. Unchanged version explicit uninstall remains ordinary uninstall."
+}

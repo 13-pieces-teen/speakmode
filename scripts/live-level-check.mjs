@@ -1,0 +1,20 @@
+// Synthetic production helper check. No microphone, cloud, credential or profile access.
+import assert from 'node:assert/strict';
+import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {pathToFileURL,fileURLToPath} from 'node:url';
+import ts from '../app/node_modules/typescript/lib/typescript.js';
+const root=fileURLToPath(new URL('../',import.meta.url)),out=root+'/.validation/waveform';
+await mkdir(out,{recursive:true});const source=await readFile(root+'/app/src/services/liveLevel.ts','utf8');
+await writeFile(out+'/live-level-check.mjs',ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);
+const {receiveLevel,mergeLiveLevel}=await import(pathToFileURL(out+'/live-level-check.mjs'));
+const tests=[],test=(name,run)=>{try{run();tests.push({name,status:'PASS'});}catch(e){tests.push({name,status:'FAIL',error:String(e)});}};
+const current=()=>({sessionId:'synthetic',generation:7,state:'recording',level:0});
+test('Constant raw RMS still advances the receipt heartbeat',()=>{const first=receiveLevel(current(),{sessionId:'synthetic',generation:7,level:.01},100);const second=receiveLevel(first,{sessionId:'synthetic',generation:7,level:.01},150);assert.equal(second.level,.01);assert.equal(second.levelReceivedAt,150);});
+test('Caption and Mode snapshots preserve the measured level and never forge receipt time',()=>{const first=receiveLevel(current(),{sessionId:'synthetic',generation:7,level:.02},100);const next=mergeLiveLevel(first,{...current(),partial:'known synthetic caption',modeId:'structure',level:0});assert.equal(next.level,.02);assert.equal(next.levelReceivedAt,100);assert.equal(next.partial,'known synthetic caption');assert.equal(next.modeId,'structure');});
+test('New session identity and generation cannot inherit old voice or heartbeat',()=>{const first=receiveLevel(current(),{sessionId:'synthetic',generation:7,level:.02},100);for(const next of [{...current(),sessionId:'other'},{...current(),generation:8}]){const merged=mergeLiveLevel(first,next);assert.equal(merged.level,0);assert.equal(merged.levelReceivedAt,undefined);}});
+test('Stale, invalid and terminal level events leave the current state object untouched',()=>{const first=current();for(const event of [{sessionId:'old',generation:7,level:1},{sessionId:'synthetic',generation:6,level:1},{sessionId:'synthetic',generation:7,level:NaN}])assert.equal(receiveLevel(first,event,100),first);assert.equal(receiveLevel(first,{sessionId:'synthetic',generation:7,level:.1},Infinity),first);const ready={...first,state:'ready'};assert.equal(receiveLevel(ready,{sessionId:'synthetic',generation:7,level:.1},100),ready);});
+test('Terminal snapshot clears active display; no-session remains null',()=>{const first=receiveLevel(current(),{sessionId:'synthetic',generation:7,level:.02},100);const ready=mergeLiveLevel(first,{...current(),state:'ready',level:.02});assert.equal(ready.level,0);assert.equal(ready.levelReceivedAt,undefined);assert.equal(mergeLiveLevel(first,null),null);});
+test('Display input is bounded while initial snapshot has no fabricated heartbeat',()=>{assert.equal(receiveLevel(current(),{sessionId:'synthetic',generation:7,level:5},100).level,1);assert.equal(receiveLevel(current(),{sessionId:'synthetic',generation:7,level:-1},100).level,0);assert.equal(mergeLiveLevel(null,{...current(),level:.01}).levelReceivedAt,undefined);});
+const receipt={status:tests.every(t=>t.status==='PASS')?'PASS':'FAIL',scope:'Synthetic production renderer level/snapshot reconciliation only',sourceSha256:createHash('sha256').update(source).digest('hex'),tests};
+await writeFile(out+'/live-level-receipt.json',JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt));process.exitCode=receipt.status==='PASS'?0:1;

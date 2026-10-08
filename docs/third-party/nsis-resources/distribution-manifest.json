@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "hashAlgorithm": "SHA256",
+  "inputs": {
+    "app/src-tauri/Cargo.toml": "41c443684ac8076a6c72236623d59198cec611d76d0c0009d8acfe6a4ec1e0b4",
+    "app/src-tauri/Cargo.lock": "43125f7f5877683e531b7a7587efa741442cc1808ce79841b090c39238fb9107",
+    "app/package.json": "43131ff5b0a9ba0fd9da716465ca867cb54751487dbdf910044cafad41055f00",
+    "app/package-lock.json": "40ed5342a8adc9a2beb059839634b5d002e7c8f20ded479757ba3435697fe60a"
+  },
+  "files": [
+    {
+      "path": "LOCAL-SOURCE-MODIFICATIONS.md",
+      "sha256": "a999e5aba6816bab7a45ae845b8dc5ba796bb17a2e6f6a04ce8c91414587577c",
+      "bytes": 4362
+    },
+    {
+      "path": "THIRD_PARTY_DEPENDENCIES.csv",
+      "sha256": "1f122c44a4c57f95fff6e0f8b13fbdc607c1640edd7fbe9e975c67b10918b8fa",
+      "bytes": 100327
+    },
+    {
+      "path": "THIRD_PARTY_INVENTORY.json",
+      "sha256": "239adcdb0637324e15d9746dfb101c05594ac0e48e9b94409cc94aeed935f35e",
+      "bytes": 736927
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.txt",
+      "sha256": "ddb833d91d842deaecb3af6da5d3613a9e6aea43946d7d5615ac7965d5cd0672",
+      "bytes": 4617169
+    },
+    {
+      "path": "THIRD_PARTY_REVIEW.md",
+      "sha256": "b705094009b701a5f23daa1a7499f05f35b6b71fcba9773859b961f99a812139",
+      "bytes": 6166
+    },
+    {
+      "path": "external/Rust-COPYRIGHT-library.html",
+      "sha256": "5647be074c8edf7339fd863055923a8fc80bc5610a8d4661ec3b767b9d392c27",
+      "bytes": 1499465
+    },
+    {
+      "path": "external/Rust-MSVC-COPYRIGHT-library.html",
+      "sha256": "5647be074c8edf7339fd863055923a8fc80bc5610a8d4661ec3b767b9d392c27",
+      "bytes": 1499465
+    },
+    {
+      "path": "source-archives/cssparser-0.37.0.crate",
+      "sha256": "8c9cdaae01d5ed7882b04d795e7f752f46ff52d2fa3b50a20d28c464510bba98",
+      "bytes": 56860
+    },
+    {
+      "path": "source-archives/cssparser-macros-0.7.1.crate",
+      "sha256": "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a",
+      "bytes": 8197
+    },
+    {
+      "path": "source-archives/dtoa-short-0.3.5.crate",
+      "sha256": "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87",
+      "bytes": 8287
+    },
+    {
+      "path": "source-archives/inventory.json",
+      "sha256": "b0c82f8a5ce245ae82e3e117d6918897fc3755159a596d965af7b0daec623c0e",
+      "bytes": 1487
+    },
+    {
+      "path": "source-archives/option-ext-0.2.0.crate",
+      "sha256": "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d",
+      "bytes": 7345
+    },
+    {
+      "path": "source-archives/selectors-0.38.0.crate",
+      "sha256": "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d",
+      "bytes": 69601
+    }
+  ]
+}

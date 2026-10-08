@@ -1,0 +1,84 @@
+/* Content-rich navigation rows own their sizing, independently of action buttons. */
+.history-record-button {
+  box-sizing: border-box;
+  appearance: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--sm-ink);
+  text-align: left;
+  white-space: normal;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.history-record-button:hover { background: var(--sm-mist); }
+.history-record-button[data-selected='true'] { background: var(--sm-accent-wash); border-color: #cbdaf1; box-shadow: inset 2px 0 0 #7b9edb; }
+.history-record-button[data-selected='true'] .history-record-title { color: #2c5eb5; }
+.history-record-button:focus-visible { outline: 2px solid var(--sm-accent); outline-offset: 2px; }
+.history-record-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 22px;
+}
+.history-record-preview {
+  display: -webkit-box;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: var(--sm-muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 21px;
+}
+.history-record-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 5px 8px;
+  margin-top: 3px;
+  color: var(--sm-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 18px;
+}
+.history-record-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.history-record-modified { color: var(--sm-secondary); white-space: nowrap; }
+.history-record-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #f0f3f8;
+  color: var(--sm-muted);
+  white-space: nowrap;
+}
+.history-record-mode svg { width: 12px; height: 12px; }
+.history-record-mode { min-width: 0; max-width: 64%; flex-shrink: 1; }
+.history-record-mode svg { flex: none; }
+.history-record-mode > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.history-record-button[data-selected='true'] .history-record-mode { background: #e0ebfc; color: #446da8; }
+@media (prefers-reduced-motion: reduce) {
+  .history-record-button { transition: none; }
+}

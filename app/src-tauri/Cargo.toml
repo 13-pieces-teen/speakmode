@@ -1,0 +1,66 @@
+[package]
+name = "speakmode"
+version = "0.1.4"
+edition = "2024"
+publish = false
+description = "SpeakMode Windows voice input"
+
+[lib]
+name = "speakmode_lib"
+# Windows desktop links this library into the executable. Mobile/FFI libraries
+# are outside this MVP and would export thousands of unrelated Rust symbols.
+crate-type = ["rlib"]
+
+[[bin]]
+name = "SpeakMode"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-autostart"]
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true, features = [] }
+
+[dependencies]
+anyhow = "=1.0.101"
+async-trait = "=0.1.89"
+base64 = "=0.22.1"
+chrono = { version = "0.4", features = ["serde"] }
+cpal = "=0.16.0"
+crossbeam-channel = "0.5"
+futures-util = "=0.3.31"
+handy-keys = "=0.3.4"
+hound = "=3.5.1"
+keyring = { version = "=3.6.3", features = ["windows-native"] }
+log = "=0.4.29"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rubato = "=0.16.2"
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+sha2 = "0.10"
+thiserror = "=2.0.18"
+tokio = { version = "=1.49.0", features = ["full", "test-util"] }
+tokio-tungstenite = { version = "=0.24.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+unicode-normalization = "0.1"
+unicode-casefold = "0.2"
+unicode_categories = "0.1"
+uuid = { version = "=1.20.0", features = ["v4", "serde"] }
+tauri = { version = "2", optional = true, features = ["tray-icon"] }
+tauri-plugin-single-instance = { version = "2", optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Foundation", "Win32_Foundation", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_System_Memory", "Win32_System_DataExchange", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Diagnostics_ToolHelp", "Win32_System_SystemServices"] }
+
+[patch.crates-io]
+handy-keys = { path = "src/platform/vendor/handy-keys" }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,19 @@
+/* Radix Card, themed with the existing SpeakMode surface tokens. */
+.home-section-card.rt-Card {
+  --card-padding: 22px;
+  --card-border-radius: var(--sm-radius);
+  --card-background-color: var(--sm-paper);
+  --base-card-surface-box-shadow: 0 0 0 1px var(--sm-line), var(--sm-shadow);
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
+  contain: none;
+  isolation: isolate;
+}
+.home-section-heading { min-width: 0; }
+.home-section-heading .section-title { min-width: 0; overflow-wrap: anywhere; }
+.home-section-action { display: flex; align-items: center; flex-shrink: 0; }
+.home-section-action > .rt-Button { margin: 0; }
+@media (max-width: 380px) {
+  .home-section-card.rt-Card { --card-padding: 16px; }
+}

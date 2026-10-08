@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SpeakMode",
+  "version": "0.1.4",
+  "identifier": "dev.speakmode.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --host 127.0.0.1 --port 1420 --strictPort",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist",
+    "features": [
+      "desktop"
+    ]
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SpeakMode",
+        "width": 1220,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 560,
+        "decorations": false,
+        "resizable": true,
+        "maximizable": true,
+        "center": true,
+        "create": false
+      },
+      {
+        "label": "recording",
+        "title": "SpeakMode 录音",
+        "url": "index.html?window=recorder",
+        "width": 440,
+        "height": 86,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "visible": false,
+        "focus": false,
+        "create": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost; font-src 'self' data:",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "shortDescription": "按自己的方式整理语音输入",
+    "resources": {
+      "../../docs/third-party/nsis-resources/": "third-party/"
+    },
+    "windows": {
+      "nsis": {
+        "template": "windows/installer-template.nsi",
+        "installerHooks": "windows/installer-hooks.nsh",
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+# Dependencies and generated builds
+node_modules/
+target/
+dist/
+gen/
+output/
+.validation/
+.test-data/
+test-data/
+test-results/
+playwright-report/
+
+# Local application state and credentials
+runtime/
+logs/
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+*.db
+*.wav
+*.mp3
+*.m4a
+*.log
+*.pfx
+*.pem
+*.key
+
+# Machine-local research and build infrastructure
+cache/
+toolchains/
+upstream/
+tmp/
+.DS_Store
+Thumbs.db
