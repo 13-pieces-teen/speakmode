@@ -47,7 +47,7 @@ pub(super) fn hub() -> Arc<AppHub> {
     Arc::new(AppHub {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
-            guards: Default::default(), sequence: 0, active: None,
+            guards: Default::default(), sequence: 0, active: None, recovery: None,
             candidate: None, preview: None, shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, requests: Default::default(),
             request_order: Default::default(),settings_pending:None,

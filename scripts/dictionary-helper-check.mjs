@@ -8,7 +8,7 @@ const root=fileURLToPath(new URL('../',import.meta.url)),out=root+'/.validation/
 await mkdir(out,{recursive:true});
 const source=await readFile(root+'/app/src/dictionary.ts','utf8');
 await writeFile(out+'/dictionary-check.mjs',ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);
-const {dictionaryTermError,parseDictionaryLines,dictionarySearchKey,isDictionarySnapshot,dictionaryConflict}=await import(pathToFileURL(out+'/dictionary-check.mjs'));
+const {dictionaryTermError,parseDictionaryLines,dictionarySearchKey,isDictionarySnapshot,dictionaryConflict,dictionaryContextBytes,dictionaryDraftCapacity}=await import(pathToFileURL(out+'/dictionary-check.mjs'));
 const tests=[];
 const test=(name,run)=>{try{run();tests.push({name,status:'PASS'});}catch(error){tests.push({name,status:'FAIL',error:String(error)});}};
 test('Valid terms preserve case, punctuation and Unicode spellings',()=>{for(const term of ['SpeakMode','人机交互','C++','PolyU',' José ','👩🏽‍💻'])assert.equal(dictionaryTermError(term),'');});
@@ -24,6 +24,29 @@ test('Oversized pastes are rejected rather than silently truncated',()=>{const p
 test('Search normalizes compatibility width and case without changing original values',()=>{const spelling='ＳｐｅａｋＭｏｄｅ';assert.equal(dictionarySearchKey(spelling),dictionarySearchKey('speakmode'));assert.equal(spelling,'ＳｐｅａｋＭｏｄｅ');});
 test('Snapshots reject malformed identity, version and entry fields',()=>{const entry={id:'d1',term:'PolyU',createdAt:'2026-10-08',updatedAt:'2026-10-08'};assert(isDictionarySnapshot({version:1,entries:[entry]}));for(const value of [null,{version:0,entries:[]},{version:1.5,entries:[]},{version:1,entries:[{term:'a'}]},{version:1,entries:null}])assert(!isDictionarySnapshot(value));});
 test('CAS conflict detection accepts the native object and serialized error only',()=>{assert(dictionaryConflict({code:'revisionConflict'}));assert(dictionaryConflict('{"code":"revisionConflict"}'));for(const error of ['failed',new Error('revisionConflict'),{code:'dictionary_duplicate'},null])assert(!dictionaryConflict(error));});
+test('Context budget includes the UTF8 prefix and serialized spelling, while an empty dictionary sends no context',()=>{
+ assert.equal(dictionaryContextBytes([]),0);
+ assert.equal(dictionaryContextBytes(['A']),20);
+ assert.equal(dictionaryContextBytes(['术语']),25);
+ assert.equal(dictionaryContextBytes(['😀']),23);
+ assert.equal(dictionaryContextBytes(['"\\']),23);
+ assert.equal(dictionaryContextBytes(['A','B']),24);
+});
+test('Editing subtracts the replaced spelling and counts a one-byte UTF8 change across the inclusive 4000-byte boundary',()=>{
+ const entries=Array.from({length:48},(_,i)=>({id:String(i),term:'x'.repeat(78)+String(i).padStart(2,'0')}));
+ assert.equal(dictionaryContextBytes(entries.map(entry=>entry.term)),4000);
+ assert.deepEqual(dictionaryDraftCapacity(entries,{kind:'single',id:'47',text:'x'.repeat(78)+'4é'}),{bytes:4001,entries:48,remainingBytes:-1});
+ assert.deepEqual(dictionaryDraftCapacity(entries,{kind:'single',id:'47',text:'Short'}),{bytes:3925,entries:48,remainingBytes:75});
+ assert.equal(entries[47].term,'x'.repeat(78)+'47');
+});
+test('Bulk capacity is a conservative upper bound, without pretending locale lowercase is native Unicode casefold',()=>{
+ const entries=[{id:'first',term:'Straße'},{id:'wide',term:'Ｆｏｏ'}],terms=['STRASSE','foo','Straße'];
+ const before=JSON.stringify({entries,terms});
+ const capacity=dictionaryDraftCapacity(entries,{kind:'bulk',terms});
+ assert.equal(capacity.entries,5);assert.equal(capacity.bytes,dictionaryContextBytes(['Straße','Ｆｏｏ','STRASSE','foo','Straße']));
+ assert.notEqual(dictionarySearchKey('Straße'),dictionarySearchKey('STRASSE'));
+ assert.equal(JSON.stringify({entries,terms}),before);
+});
 const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Frontend Unicode, validation, search and error parsing only; not ASR accuracy, database or native UI evidence.',sourceSha256:createHash('sha256').update(source).digest('hex'),tests};
 await writeFile(out+'/helper-receipt.json',JSON.stringify(receipt,null,2)+'\n');
 console.log(JSON.stringify(receipt,null,2));process.exitCode=receipt.status==='PASS'?0:1;

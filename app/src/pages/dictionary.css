@@ -28,6 +28,17 @@
 .dictionary-list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
 .dictionary-search { display: flex; align-items: center; gap: 10px; width: min(100%, 280px); min-width: 0; }
 .dictionary-search .rt-TextFieldRoot { width: 100%; min-width: 0; }
+.dictionary-capacity { margin-bottom: 16px; }
+.dictionary-capacity-label { display: flex; justify-content: space-between; gap: 6px 16px; flex-wrap: wrap; color: var(--sm-muted); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.8; }
+.dictionary-capacity meter { display: block; width: 100%; height: 6px; margin-top: 8px; border: 0; border-radius: 8px; background: var(--sm-line); }
+.dictionary-capacity meter::-webkit-meter-bar { height: 6px; border: 0; border-radius: 8px; background: var(--sm-line); }
+.dictionary-capacity meter::-webkit-meter-optimum-value { border-radius: 8px; background: #86a9d9; }
+.dictionary-capacity meter::-webkit-meter-suboptimum-value, .dictionary-capacity meter::-webkit-meter-even-less-good-value { border-radius: 8px; background: #b38b55; }
+.dictionary-capacity meter::-moz-meter-bar { border-radius: 8px; background: #86a9d9; }
+.dictionary-draft-capacity { margin-top: 14px; padding: 12px 14px; border-radius: 10px; background: var(--sm-mist); }
+.dictionary-draft-capacity p { margin: 5px 0 0; color: var(--sm-muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.dictionary-draft-capacity.is-warning { background: #faf5ed; }
+.dictionary-draft-capacity.is-warning .dictionary-capacity-label { color: #8c6536; }
 .dictionary-list { list-style: none; margin: 0; padding: 0; }
 .dictionary-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 14px 0; min-width: 0; }
 .dictionary-row + .dictionary-row { border-top: 1px solid var(--sm-line); }
