@@ -246,6 +246,12 @@ mod native {
         if count == 0 { return Err(fail("invalid process integrity SID")); }
         Ok(unsafe { *GetSidSubAuthority(label.Label.Sid, u32::from(count - 1)) })
     }
+    unsafe fn ensure_delivery_integrity(process: HANDLE) -> Result<()> {
+        if unsafe { integrity_level(process)? > integrity_level(GetCurrentProcess())? } {
+            return Err(PlatformError::TargetHigherIntegrity);
+        }
+        Ok(())
+    }
 
     unsafe fn process_created_at(process: HANDLE) -> Result<u64> {
         let mut creation = FILETIME::default(); let mut exit = FILETIME::default();
@@ -305,6 +311,9 @@ mod native {
             if process_id == 0 { return Err(fail("foreground process identity unavailable at stop intent")); }
             let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).map_err(fail)?;
             let _process = HandleGuard(process);
+            // Preserve the typed permission reason before EM_GETSEL or UIA can
+            // fail with a generic error on a higher-integrity host.
+            ensure_delivery_integrity(process)?;
             let process_created_at = process_created_at(process)?;
             let mut gui = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
             GetGUIThreadInfo(thread_id, &mut gui).map_err(fail)?;
@@ -340,9 +349,7 @@ mod native {
             if process_id == 0 || process_id == GetCurrentProcessId() { return Err(fail("own/unknown window is not an external input target")); }
             let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).map_err(fail)?;
             let _process = HandleGuard(process);
-            if integrity_level(process)? > integrity_level(GetCurrentProcess())? {
-                return Err(fail("target has higher integrity; use explicit copy/manual paste"));
-            }
+            ensure_delivery_integrity(process)?;
             let mut gui = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
             GetGUIThreadInfo(thread_id, &mut gui).map_err(fail)?;
             if let Some((runtime_id, selection)) = native_edit_selection(hwnd, gui.hwndFocus, process_id)? {

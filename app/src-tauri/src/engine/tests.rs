@@ -43,7 +43,7 @@ fn test_data_directory() -> PathBuf {
     assert_eq!(path.canonicalize().unwrap(), path, "fixture directory must not be redirected");
     path
 }
-fn hub() -> Arc<AppHub> {
+pub(super) fn hub() -> Arc<AppHub> {
     Arc::new(AppHub {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
@@ -60,7 +60,7 @@ fn hub() -> Arc<AppHub> {
     })
 }
 
-fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
+pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
     let prefs = hub.db.preferences().unwrap();
     let config = hub.db.provider_config().unwrap();
     assert!(config.region.is_none(), "configuration must fail before any credential lookup");
@@ -75,7 +75,7 @@ fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,
         processing_worker_released: true,db_pending:0,cancel_pending:false,
         source: None, output: None, pending: None, cache: None, cache_complete: false,
-        cache_created: None, target: None, target_capture_pending:false, delivery_failure_reason:None, delivery: None,
+        cache_created: None, target: None, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
         original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,
         reason: CreationReason::NormalInitial, asr_attempt_id: Some(format!("attempt-{id}")),
@@ -1418,6 +1418,62 @@ fn delivery_missing_or_changed_target_records_skip_without_focus_steal_or_retry(
         assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
         assert_eq!(usage_count(&h),1);assert!(view(&h).can_copy_recovery);assert!(view(&h).worker_released);
     }
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_stop_permission_failure_preserves_reason_and_once_only_skip(){
+    for fail_anchor in [false,true] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+        h.stop_session_at_with_target_result(&identity("s"),Instant::now(),
+            ||if fail_anchor{Err(platform::PlatformError::TargetHigherIntegrity)}else{Ok(Some(delivery_anchor_fixture()))},
+            move |_|{assert!(!fail_anchor,"anchor failure must not inspect another surface");Err(platform::PlatformError::TargetHigherIntegrity)}).await.unwrap();
+        {let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(s.stop.load(Ordering::SeqCst));assert!(!s.target_capture_pending);assert!(s.target.is_none());assert_eq!(s.target_capture_failure_reason.as_deref(),Some("targetHigherIntegrity"));}
+        ready(&h,"s");
+        h.initial_delivery_with("s",7,|_|panic!("failed capture cannot validate a target"),|_,_,_,_|panic!("permission failure cannot mutate clipboard or inject input"));
+        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some("targetHigherIntegrity"));
+        assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some("targetHigherIntegrity"));
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);assert!(view(&h).can_copy_recovery);
+        h.initial_delivery_with("s",7,|_|panic!("terminal skip must not inspect again"),|_,_,_,_|panic!("terminal skip must not dispatch again"));
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+    }
+}
+
+#[test]
+fn late_stop_permission_error_cannot_pollute_a_new_generation(){
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+    let(id,generation)=h.begin_stop_target(&identity("s"),Instant::now()).unwrap().unwrap();
+    h.resolve_stop_target_result(&id,generation,||{
+        install(&h,"new",SessionPhase::Recording,true);
+        Err(platform::PlatformError::TargetHigherIntegrity)
+    });
+    let i=h.inner.lock().unwrap();let current=i.active.as_ref().unwrap();
+    assert_eq!(current.id,"new");assert!(current.target_capture_failure_reason.is_none());assert!(current.delivery_failure_reason.is_none());
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_stop_mode_return_preserves_permission_reason_without_target_inspection(){
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+    h.set_stop_target_control(Arc::new(|_|Err(platform::PlatformError::TargetHigherIntegrity.into())));
+    h.stop_session_at_with_target_result(&identity("s"),Instant::now(),||Ok(Some(delivery_anchor_fixture())),
+        |_|panic!("failed mode return must not inspect another input target")).await.unwrap();
+    ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("unverified target cannot validate"),|_,_,_,_|panic!("unverified target cannot inject"));
+    assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);assert_eq!(current_delivery(&h).reason.as_deref(),Some("targetHigherIntegrity"));
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);assert!(view(&h).can_copy_recovery);
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn restore_at_scalar_caret_after_emoji_preserves_other_text_and_undo(){
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");
+    let original_source=serde_json::to_value(h.db.get_result("s").unwrap().source).unwrap();
+    let edited:HistoryDetail=serde_json::from_value(command(&h,"revision.edit",edit_payload("s","output-s","😀订机票前核对会议。")).await.unwrap()).unwrap();
+    let edited_id=edited.output.unwrap().id;
+    let restored:HistoryDetail=serde_json::from_value(command(&h,"revision.restore",json!({"sessionId":"s","expectedCurrentRevisionId":edited_id,"requestId":"caret-after-emoji","patch":{"blockId":"block-0","start":1,"end":1,"sourceSelections":[{"itemId":"item-s-0","start":8,"end":10}]}})).await.unwrap()).unwrap();
+    let result=restored.output.unwrap();assert_eq!(result.blocks[0].text,"😀不要订机票前核对会议。");
+    assert_eq!(serde_json::to_value(restored.source).unwrap(),original_source);assert!(restored.can_undo);
+    let undone:HistoryDetail=serde_json::from_value(command(&h,"revision.undo",json!({"sessionId":"s","expectedCurrentRevisionId":result.id,"requestId":"caret-undo"})).await.unwrap()).unwrap();
+    assert_eq!(undone.output.unwrap().blocks[0].text,"😀订机票前核对会议。");assert_eq!(serde_json::to_value(undone.source).unwrap(),original_source);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);assert_eq!(usage_count(&h),1);
 }
 
 #[test]

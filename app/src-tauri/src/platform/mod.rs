@@ -7,6 +7,8 @@ mod resampler;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlatformError {
+    #[error("target has higher integrity; use explicit copy/manual paste")]
+    TargetHigherIntegrity,
     #[error("{0}")]
     Unavailable(String),
     #[error("{0}")]

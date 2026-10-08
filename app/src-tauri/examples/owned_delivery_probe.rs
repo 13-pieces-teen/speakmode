@@ -13,7 +13,7 @@ mod probe {
         process::{Child, Command}, thread, time::{Duration, Instant}};
     use std::os::windows::process::CommandExt;
     use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId,
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, GetForegroundWindow, GetWindowThreadProcessId,
         GetWindowTextW, IsWindow, SendMessageTimeoutW, SetForegroundWindow,
         SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT};
 
@@ -105,7 +105,8 @@ mod probe {
         Ok(HWND(value as _))
     }
 
-    fn run_scenario(args: &Args, kind: &str) -> Result<Value> {
+    fn run_scenario(args: &Args, kind: &str, phase: &mut &'static str) -> Result<Value> {
+        *phase = "fixtureStartup";
         let actual_kind = if matches!(kind, "caret-change" | "field-change" |
             "anchor-caret-change" | "anchor-field-change") { "edit" } else { kind };
         let id = uuid::Uuid::new_v4().simple().to_string();
@@ -115,7 +116,11 @@ mod probe {
             .args(["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(&args.fixture_script).args(["-FixtureId", &id, "-Kind", actual_kind])
             .arg("-ScratchDir").arg(&args.scratch_dir)
+            .arg("-ProbeProcessId").arg(std::process::id().to_string())
             .spawn().context("owned fixture process startup")?;
+        // Ordinary foreground-rights handoff to our specific child only.
+        // This can fail; the test must not bypass Windows focus policy.
+        let child_permission = unsafe { AllowSetForegroundWindow(child.id()) }.is_ok();
         // Establish cleanup ownership before waiting on or parsing metadata.
         let mut fixture = Fixture { child, root: HWND::default(), editor: HWND::default(),
             second: HWND::default(), id, scratch_dir: args.scratch_dir.clone() };
@@ -133,7 +138,8 @@ mod probe {
         fixture.editor = metadata_hwnd(&metadata, "editor")?;
         fixture.second = metadata_hwnd(&metadata, "second")?;
         ensure!(fixture.owned(), "fixture window PID/title ownership mismatch");
-        let _ = unsafe { SetForegroundWindow(fixture.root) };
+        *phase = "foregroundReadiness";
+        let parent_activation = unsafe { SetForegroundWindow(fixture.root) }.as_bool();
         fixture.message(fixture.root, 0x8031, WPARAM(0), LPARAM(0))?;
         // A newly shown WinForms child can publish its metadata just before
         // Windows completes foreground activation. Wait only for this already
@@ -145,6 +151,7 @@ mod probe {
             thread::sleep(Duration::from_millis(20));
         }
         ensure!(fixture.active(), "only our fixture may be the active target");
+        *phase = "targetCapture";
         let target = if matches!(kind, "readonly" | "password") { capture_target() } else {
             let anchor = capture_foreground_anchor().context("owned synchronous stop anchor")?;
             ensure!(anchor.process_id == fixture.child.id(), "anchor PID mismatch");
@@ -158,7 +165,8 @@ mod probe {
                 ensure!(error.to_string().contains("stop target changed"), "unexpected stop-target rejection");
                 ensure!(fixture.read_owned_text()? == "alpha | omega", "rejected anchor changed owned text");
                 return Ok(json!({"scenario":kind,"passed":true,"clipboardChanged":false,
-                    "inputEvents":0,"asyncTargetChangeRejected":true}));
+                    "inputEvents":0,"asyncTargetChangeRejected":true,
+                    "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation}}));
             }
             result
         };
@@ -168,7 +176,8 @@ mod probe {
                 "unexpected protected-target rejection");
             if kind == "readonly" { ensure!(fixture.read_owned_text()? == "alpha | omega", "read-only fixture changed"); }
             // Password contents are never read, even in this synthetic fixture.
-            return Ok(json!({"scenario":kind,"passed":true,"clipboardChanged":false,"inputEvents":0}));
+            return Ok(json!({"scenario":kind,"passed":true,"clipboardChanged":false,"inputEvents":0,
+                "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation}}));
         }
         let target = target.context("owned editable target capture")?;
         ensure!(target.process_id == fixture.child.id(), "target PID mismatch");
@@ -178,6 +187,7 @@ mod probe {
         if kind == "caret-change" { fixture.message(fixture.editor, 0x00B1, WPARAM(0), LPARAM(0))?; }
         if kind == "field-change" { fixture.message(fixture.root, 0x8032, WPARAM(0), LPARAM(0))?; }
         let text = "SpeakMode 合成测试。\r\n1. 保留否定。";
+        *phase = "nativeDispatch";
         let receipt = dispatch_once(&permit, &target, text, || unsafe { GetForegroundWindow() } == fixture.root);
         if matches!(kind, "caret-change" | "field-change") {
             ensure!(receipt.reason_code.as_deref() == Some("targetChangedBeforeDelivery"), "target change not rejected");
@@ -187,6 +197,7 @@ mod probe {
             ensure!(receipt.input_events == 4, "expected one four-event paste chord");
             ensure!(receipt.reason_code.as_deref() == Some("inputDispatchedUnconfirmed"), "unexpected dispatch result");
             let expected = format!("alpha {} omega", text.replace("\r\n", "\n"));
+            *phase = "ownedReadback";
             let deadline = Instant::now() + Duration::from_secs(2);
             while fixture.read_owned_text()? != expected && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(25));
@@ -198,6 +209,7 @@ mod probe {
             ensure!(fixture.read_owned_text()? == expected, "duplicate attempt changed owned text");
         }
         Ok(json!({"scenario":kind,"passed":true,"receipt":receipt,
+            "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation},
             "ownedReadbackConfirmed":!matches!(kind,"caret-change" | "field-change"),
             "repeatPasteRejected":!matches!(kind,"caret-change" | "field-change")}))
     }
@@ -208,15 +220,19 @@ mod probe {
         let mut receipts = Vec::new();
         for kind in SCENARIOS {
             eprintln!("owned native fixture scenario: {kind}");
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_scenario(args, kind)));
+            let mut phase = "fixtureStartup";
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_scenario(args, kind, &mut phase)));
+            let failure_scope = if matches!(phase,"fixtureStartup"|"foregroundReadiness"){"testPrecondition"}else{"productPath"};
             receipts.push(match result {
                 Ok(Ok(receipt)) => receipt,
-                Ok(Err(error)) => json!({"scenario":kind,"passed":false,"failure":format!("{error:#}")}),
-                Err(_) => json!({"scenario":kind,"passed":false,"failure":"unexpected scenario panic"}),
+                Ok(Err(error)) => json!({"scenario":kind,"passed":false,"failurePhase":phase,"failureScope":failure_scope,"failure":format!("{error:#}")}),
+                Err(_) => json!({"scenario":kind,"passed":false,"failurePhase":phase,"failureScope":failure_scope,"failure":"unexpected scenario panic"}),
             });
         }
         let passed = receipts.iter().all(|receipt| receipt["passed"] == true);
         Ok(json!({"status":if passed {"PASS"} else {"FAIL"},
+            "testPreconditionFailures":receipts.iter().filter(|receipt|receipt["failureScope"]=="testPrecondition").count(),
+            "productPathFailures":receipts.iter().filter(|receipt|receipt["failureScope"]=="productPath").count(),
             "scope":"REAL_WINDOWS_OWNED_EDITORS_SYNTHETIC_TEXT_ONLY",
             "microphone":"NOT_USED","cloud":"NOT_USED","userApplicationText":"NOT_READ",
             "fixtureScript":args.fixture_script,"scratchDirectory":args.scratch_dir,"scenarios":receipts}))

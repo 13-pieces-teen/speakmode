@@ -1,11 +1,13 @@
 //! Bounded, metadata-only diagnostics. Capture never waits for this recorder.
 //! No disk IO, transcript, PCM, prompt, credentials or host text enters it.
 use crate::core::{ModeSnapshot, ProviderConfig};
+use crate::cloud::asr::{AudioCounts,AsrTelemetry,AsrTelemetryView};
 use serde::Serialize;
 use std::{collections::VecDeque, sync::{Mutex, atomic::{AtomicU64, Ordering}}, time::Instant};
 use uuid::Uuid;
 
 const MAX_TRACES: usize = 64;
+pub const TIMING_SCOPE:&str="Rust monotonic offsets; socketWritten is a client write, not provider ACK; capture input samples use the native sample rate; bridge/asr samples use 16 kHz; UI render receipt is a proxy, not optical visibility or host confirmation";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all="camelCase")]
@@ -15,6 +17,7 @@ pub enum Stage {
     StopIntentReceived, CaptureCutoff, CaptureDrained, FinalAsrReceived,
     SourceCheckpointCommitted, RewriteStarted, RewriteValidated, ReadyCommitted,
     DeliveryClaim, NativeDeliveryReceipt, CancelIntent, ProcessingWorkerReleased,
+    AsrFinishWritten, AsrSessionFinishedReceived,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -28,6 +31,30 @@ pub struct TraceHandle { pub run_id: String }
 #[serde(rename_all="camelCase")]
 pub struct Mark { pub stage: Stage, pub offset_ms: f64 }
 
+#[derive(Debug,Clone,Copy,Default)]
+pub struct BridgeTelemetry {
+    pub observed:AudioCounts,pub enqueued:AudioCounts,
+    pub last_frame_enqueued_at:Option<Instant>,pub finish_enqueued_at:Option<Instant>,
+}
+impl BridgeTelemetry {
+    pub fn accepted(&mut self,counts:Option<(usize,usize)>) {
+        if let Some((real,padding))=counts {self.enqueued.add_frame(real,padding);self.last_frame_enqueued_at=Some(Instant::now());}
+        else {self.finish_enqueued_at=Some(Instant::now());}
+    }
+}
+#[derive(Clone,Default,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct BridgeView {
+    pub observed:AudioCounts,pub enqueued:AudioCounts,
+    pub last_frame_enqueued_ms:Option<f64>,pub finish_enqueued_ms:Option<f64>,
+}
+#[derive(Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct CaptureView {
+    pub input_samples:u64,pub input_sample_rate:u32,pub emitted_frames:u64,
+    pub complete:bool,pub cancelled:bool,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct TraceView {
@@ -38,6 +65,7 @@ pub struct TraceView {
     pub capture_duration_ms: Option<u64>, pub source_char_count: Option<usize>,
     pub bridge_queue_peak_frames: usize, pub outcome: Option<&'static str>,
     pub error_code: Option<String>, pub marks: Vec<Mark>, pub durations: Durations,
+    pub capture:Option<CaptureView>,pub bridge:BridgeView,pub asr:AsrTelemetryView,
 }
 #[derive(Default, Clone, Serialize)]
 #[serde(rename_all="camelCase")]
@@ -45,6 +73,7 @@ pub struct Durations {
     pub intent_to_capture_ms: Option<f64>, pub intent_to_first_caption_ms: Option<f64>,
     pub caption_to_render_receipt_proxy_ms: Option<f64>, pub stop_to_final_asr_ms: Option<f64>,
     pub rewrite_round_trip_ms: Option<f64>, pub stop_to_ready_ms: Option<f64>,
+    pub stop_to_finish_written_ms:Option<f64>,pub finish_written_to_session_finished_ms:Option<f64>,
 }
 struct Trace { origin: Instant, view: TraceView }
 #[derive(Default)]
@@ -68,6 +97,7 @@ impl DiagnosticsRecorder {
             asr_model:config.asr_model.clone(),rewrite_model:config.rewrite_model.clone(),mode_id:mode.mode_id.clone(),
             mode_revision:mode.revision,asr_attempt_id:None,capture_duration_ms:None,source_char_count:None,
             bridge_queue_peak_frames:0,outcome:None,error_code:None,
+            capture:None,bridge:BridgeView::default(),asr:AsrTelemetryView::default(),
             marks:vec![Mark{stage:Stage::IntentReceived,offset_ms:0.0}],durations:Durations::default()};
         if store.traces.len()==MAX_TRACES {store.traces.pop_front();store.evicted+=1;}
         store.traces.push_back(Trace{origin:at,view});
@@ -98,6 +128,29 @@ impl DiagnosticsRecorder {
     pub fn bridge_peak(&self, handle: Option<&TraceHandle>, frames: usize) {
         self.update(handle,|trace|trace.view.bridge_queue_peak_frames=trace.view.bridge_queue_peak_frames.max(frames));
     }
+    pub fn capture(&self,handle:Option<&TraceHandle>,input_samples:u64,input_sample_rate:u32,emitted_frames:u64,complete:bool,cancelled:bool) {
+        self.update(handle,|trace|trace.view.capture=Some(CaptureView{input_samples,input_sample_rate,emitted_frames,complete,cancelled}));
+    }
+    /// Cumulative snapshots recover counts after a dropped diagnostic update.
+    pub fn bridge(&self,handle:Option<&TraceHandle>,metadata:&BridgeTelemetry) {
+        self.update(handle,|trace|{
+            let offset=|at:Instant|at.checked_duration_since(trace.origin).map(|time|time.as_secs_f64()*1000.0);
+            trace.view.bridge=BridgeView{observed:metadata.observed,enqueued:metadata.enqueued,
+                last_frame_enqueued_ms:metadata.last_frame_enqueued_at.and_then(offset),finish_enqueued_ms:metadata.finish_enqueued_at.and_then(offset)};
+        });
+    }
+    pub fn asr(&self,handle:Option<&TraceHandle>,metadata:&AsrTelemetry) {
+        self.update(handle,|trace|{
+            trace.view.asr=metadata.relative_to(trace.origin);
+            for (stage,at) in [(Stage::AsrFinishWritten,metadata.finish_written_at),
+                (Stage::AsrSessionFinishedReceived,metadata.session_finished_received_at)] {
+                if trace.view.marks.iter().any(|mark|mark.stage==stage){continue;}
+                if let Some(offset)=at.and_then(|at|at.checked_duration_since(trace.origin)) {
+                    trace.view.marks.push(Mark{stage,offset_ms:offset.as_secs_f64()*1000.0});
+                }
+            }
+        });
+    }
     pub fn outcome(&self, handle: Option<&TraceHandle>, outcome: &'static str, code: Option<&str>) {
         self.update(handle,|trace|{
             trace.view.outcome=Some(outcome);
@@ -115,11 +168,13 @@ impl DiagnosticsRecorder {
                 caption_to_render_receipt_proxy_ms:delta(Stage::FirstCaptionReceived,Stage::CaptionRenderReceiptProxy),
                 stop_to_final_asr_ms:delta(Stage::StopIntentReceived,Stage::FinalAsrReceived),
                 rewrite_round_trip_ms:delta(Stage::RewriteStarted,Stage::RewriteValidated),
-                stop_to_ready_ms:delta(Stage::StopIntentReceived,Stage::ReadyCommitted)};
+                stop_to_ready_ms:delta(Stage::StopIntentReceived,Stage::ReadyCommitted),
+                stop_to_finish_written_ms:delta(Stage::StopIntentReceived,Stage::AsrFinishWritten),
+                finish_written_to_session_finished_ms:delta(Stage::AsrFinishWritten,Stage::AsrSessionFinishedReceived)};
             view
         }).collect();
-        Ok(Snapshot{schema_version:1,app_version:env!("CARGO_PKG_VERSION"),in_memory_only:true,
-            timing_scope:"Rust monotonic offsets; UI render receipt is a proxy, not optical visibility or host confirmation",
+        Ok(Snapshot{schema_version:2,app_version:env!("CARGO_PKG_VERSION"),in_memory_only:true,
+            timing_scope:TIMING_SCOPE,
             dropped_events:self.dropped.load(Ordering::Relaxed),evicted_traces:store.evicted,traces})
     }
 }
@@ -161,5 +216,35 @@ mod tests {
         let json=serde_json::to_string(&r.snapshot().unwrap()).unwrap();
         assert!(!json.contains("private"));assert!(!json.contains("Bearer"));
         assert!(!json.contains("transcript"));assert!(!json.contains("workspace"));
+    }
+    #[test] fn queue_finish_and_socket_finish_are_separate_from_final_completeness() {
+        let r=DiagnosticsRecorder::default();let at=Instant::now();let h=begin(&r,at);
+        r.mark_at(Some(&h),Stage::StopIntentReceived,at+Duration::from_secs(1));
+        let bridge=BridgeTelemetry{observed:AudioCounts{frames:2,real_samples:1603,padding_samples:1597},
+            enqueued:AudioCounts{frames:2,real_samples:1603,padding_samples:1597},
+            last_frame_enqueued_at:Some(at+Duration::from_secs(2)),finish_enqueued_at:Some(at+Duration::from_secs(2))};
+        r.bridge(Some(&h),&bridge);r.capture(Some(&h),4809,48_000,2,true,false);
+        let wire=AsrTelemetry{dequeued:bridge.enqueued,socket_written:bridge.enqueued,
+            finish_dequeued_at:Some(at+Duration::from_secs(4)),finish_expected_frames:Some(2),
+            last_frame_written_at:Some(at+Duration::from_secs(4)),finish_written_at:Some(at+Duration::from_secs(5)),
+            session_finished_received_at:Some(at+Duration::from_secs(7)),pending_items:1,final_items:1,terminated:true,..Default::default()};
+        r.asr(Some(&h),&wire);let snapshot=r.snapshot().unwrap();let trace=&snapshot.traces[0];
+        assert_eq!(snapshot.schema_version,2);assert_eq!(trace.capture.as_ref().unwrap().input_sample_rate,48_000);
+        assert_eq!(trace.bridge.finish_enqueued_ms,Some(2000.0));assert_eq!(trace.asr.finish_written_ms,Some(5000.0));
+        assert_eq!(trace.durations.stop_to_finish_written_ms,Some(4000.0));
+        assert_eq!(trace.durations.finish_written_to_session_finished_ms,Some(2000.0));
+        assert_eq!(trace.asr.pending_items,1);assert!(trace.durations.stop_to_final_asr_ms.is_none());
+    }
+    #[test] fn capture_and_wire_contention_drop_metadata_without_waiting_and_later_snapshots_recover_counts() {
+        let r=DiagnosticsRecorder::default();let at=Instant::now();let h=begin(&r,at);
+        let bridge=BridgeTelemetry{observed:AudioCounts{frames:8,real_samples:12800,padding_samples:0},
+            enqueued:AudioCounts{frames:7,real_samples:11200,padding_samples:0},..Default::default()};
+        let wire=AsrTelemetry{socket_written:AudioCounts{frames:6,real_samples:9600,padding_samples:0},..Default::default()};
+        let lock=r.store.lock().unwrap();
+        // Same-thread lock ownership would deadlock if any diagnostic used lock().
+        r.bridge(Some(&h),&bridge);r.asr(Some(&h),&wire);r.capture(Some(&h),12800,16000,8,true,false);drop(lock);
+        r.bridge(Some(&h),&bridge);r.asr(Some(&h),&wire);r.capture(Some(&h),12800,16000,8,true,false);
+        let snapshot=r.snapshot().unwrap();assert_eq!(snapshot.dropped_events,3);
+        assert_eq!(snapshot.traces[0].bridge.enqueued.frames,7);assert_eq!(snapshot.traces[0].asr.socket_written.frames,6);
     }
 }

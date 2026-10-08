@@ -157,6 +157,8 @@ struct Progress {
     last_revisions: HashMap<String, u64>, latest_captions: Vec<cloud::asr::CaptionItem>,
     feed_started_ms: Option<u64>, finish_enqueued_ms: Option<u64>, max_enqueue_wait_ms: u64,
     sent_frames: u64, sent_real_samples: u64, padded_tail_samples: u64,
+    /// Production client-write/event metadata; existing sent_* fields count queue admission only.
+    wire: Option<cloud::asr::AsrTelemetryView>,
 }
 fn ms(start: Instant) -> u64 { start.elapsed().as_millis().try_into().unwrap_or(u64::MAX) }
 async fn feed(pcm: Arc<Vec<i16>>, tx: mpsc::Sender<AsrInput>, configured: Arc<AtomicBool>, notify: Arc<Notify>,
@@ -198,6 +200,7 @@ async fn recognize(run: &PreparedRun, config: &ProviderConfig, secret: &str) -> 
                 callback_configured.store(true, Ordering::Release); callback_notify.notify_one();
             }
             AsrProgress::SpeechStart => metrics.speech_starts += 1,
+            AsrProgress::Diagnostics(metadata) => metrics.wire = Some(metadata.relative_to(started)),
             AsrProgress::Caption(captions) => {
                 metrics.caption_events += 1;
                 if captions.iter().any(|item| !item.text.is_empty()) && metrics.first_caption_ms.is_none() { metrics.first_caption_ms = Some(ms(started)); }

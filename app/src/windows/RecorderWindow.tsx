@@ -64,7 +64,7 @@ export function RecorderWindow(){
   <CaptionStrip key={identity} identity={identity} session={session} reportRender={reportCaptionRender}/>
   {canStop&&session?.recordingLimitRemainingMs!=null&&<p className="recorder-limit-warning" role="status" aria-live="polite">本次录音还可继续 {Math.ceil(session.recordingLimitRemainingMs/1000)} 秒，请结束本次录音并另起一段。</p>}
   {presentationError&&<div className="recorder-message" role="alert"><p>{presentationError}</p><Button size="1" variant="soft" onClick={()=>void act('app.showMain')}>打开主面板</Button></div>}
-  {delivery&&!presentationError&&<div className="recorder-delivery" data-warning={delivery.warning} role="status" aria-live="polite"><p>{delivery.message}</p>{delivery.canCopyOutput&&<Button size="1" variant="soft" onClick={()=>void act('app.showMain')}>查看成稿</Button>}</div>}
+  {delivery&&!presentationError&&<div className="recorder-delivery" data-warning={delivery.warning} role="status" aria-live="polite"><p>{delivery.message}</p>{delivery.canViewOutput&&<Button size="1" variant="soft" disabled={!desktop.available||busy} onClick={()=>void act('app.showMain')}>查看成稿</Button>}</div>}
   {['ready','failed','incomplete'].includes(phase)&&!presentationError&&!delivery&&<div className="recorder-result-link"><Button size="1" variant="ghost" onClick={()=>void act('app.showMain')}>查看结果与恢复选项</Button></div>}
  </section></main>;
 }

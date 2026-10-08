@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$FixtureId,
     [Parameter(Mandatory=$true)][ValidateSet('edit','rich','readonly','password')][string]$Kind,
-    [Parameter(Mandatory=$true)][string]$ScratchDir
+    [Parameter(Mandatory=$true)][string]$ScratchDir,
+    [ValidateRange(1,2147483647)][int]$ProbeProcessId
 )
 # Dedicated native fixture only. No microphone, cloud service, credentials,
 # user files or other applications are accessed. The parent verifies our PID.
@@ -25,14 +26,18 @@ public sealed class SpeakNativeFixture : Form {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowExW(uint ex, string cls, string title, uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr module, IntPtr param);
     [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(uint processId);
     [DllImport("user32.dll")] static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadLibraryW(string path);
     private readonly string kind, fixture, directory;
+    private readonly uint probeProcessId;
     private IntPtr editor, second;
     private Timer shutdownTimer;
     private bool closeRequested;
-    public SpeakNativeFixture(string kind, string fixture, string directory) {
+    public SpeakNativeFixture(string kind, string fixture, string directory, uint probeProcessId) {
         this.kind = kind; this.fixture = fixture; this.directory = directory;
+        this.probeProcessId = probeProcessId;
         Text = "SpeakMode owned native fixture " + fixture;
         StartPosition = FormStartPosition.Manual; Location = new Point(150, 100); Size = new Size(680, 350);
         shutdownTimer = new Timer { Interval = 100 };
@@ -57,7 +62,11 @@ public sealed class SpeakNativeFixture : Form {
             if (second == IntPtr.Zero) throw new InvalidOperationException("fixture alternate edit creation failed");
             SetForegroundWindow(Handle); SetFocus(editor);
             SendMessageW(editor, 0x00B1, new IntPtr(6), new IntPtr(7));
-            string metadata = "{\"processId\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ",\"hwnd\":" + Handle.ToInt64() + ",\"editor\":" + editor.ToInt64() + ",\"second\":" + second.ToInt64() + ",\"fixtureId\":\"" + fixture + "\",\"kind\":\"" + kind + "\"}";
+            // Only an already-foreground owned fixture grants permission back
+            // to its specific parent probe. Never ASFW_ANY, simulated Alt or
+            // AttachThreadInput; denied foreground activation remains a failure.
+            bool delegated = GetForegroundWindow() == Handle && probeProcessId != 0 && AllowSetForegroundWindow(probeProcessId);
+            string metadata = "{\"processId\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ",\"hwnd\":" + Handle.ToInt64() + ",\"editor\":" + editor.ToInt64() + ",\"second\":" + second.ToInt64() + ",\"fixtureId\":\"" + fixture + "\",\"kind\":\"" + kind + "\",\"parentForegroundPermissionGranted\":" + delegated.ToString().ToLowerInvariant() + "}";
             string staging = Path.Combine(directory, fixture + "-ready.tmp");
             using (var stream = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var writer = new StreamWriter(stream)) { writer.Write(metadata); }
@@ -87,5 +96,5 @@ public sealed class SpeakNativeFixture : Form {
     }
 }
 '@ -ReferencedAssemblies System.Windows.Forms,System.Drawing
-$speakFixture = New-Object SpeakNativeFixture($Kind,$FixtureId,$speakScratch)
+$speakFixture = New-Object SpeakNativeFixture($Kind,$FixtureId,$speakScratch,[uint32]$ProbeProcessId)
 [System.Windows.Forms.Application]::Run($speakFixture)

@@ -207,3 +207,74 @@ fn padding_metadata_and_ten_minute_limit_are_validated_without_transmission() {
     let mut audio=AudioSequence::default();audio.real_samples=16_000*600;
     assert_eq!(audio.frame(0,&[1],0).unwrap_err().code,"audio_frame_limit");assert_eq!(audio.next,0);
 }
+
+fn observe_wire(latest:Arc<Mutex<Option<AsrTelemetry>>>)->Arc<dyn Fn(AsrProgress)+Send+Sync> {
+    Arc::new(move|progress|if let AsrProgress::Diagnostics(metadata)=progress{*latest.lock().unwrap()=Some(metadata);})
+}
+#[tokio::test]
+async fn wire_diagnostics_distinguish_complete_client_write_from_pending_provider_final_without_text_or_ids() {
+    let (url,server)=server(|mut socket|async move{
+        receive(&mut socket).await;emit(&mut socket,json!({"type":"session.updated"})).await;
+        let append=receive(&mut socket).await;assert_eq!(STANDARD.decode(append["audio"].as_str().unwrap()).unwrap().len(),3200);
+        assert_eq!(receive(&mut socket).await["type"],"session.finish");
+        for event in [json!({"type":"conversation.item.input_audio_transcription.text","item_id":"private-provider-id-a","text":"private transcript","stash":"private words"}),
+            json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"private-provider-id-b","transcript":"private transcript private words"}),
+            json!({"type":"Bearer private secret","payload":"private prompt and key"}),json!({"type":"session.finished"})] {emit(&mut socket,event).await;}
+    }).await;
+    let (tx,rx)=mpsc::channel(2);let mut pcm=vec![0;1600];pcm[..3].copy_from_slice(&[1,2,3]);
+    tx.send(AsrInput::Frame{sequence:0,pcm16:pcm,padding_samples:1597}).await.unwrap();tx.send(AsrInput::Finish{next_sequence:1}).await.unwrap();
+    let origin=Instant::now();let latest=Arc::new(Mutex::new(None));
+    let error=run_local(url,rx,CancellationToken::new(),observe_wire(latest.clone()),short_timeouts()).await.unwrap_err();
+    assert_eq!(error.code,"asr_incomplete");let wire=latest.lock().unwrap().clone().unwrap();
+    assert!(wire.terminated);assert_eq!(wire.dequeued,AudioCounts{frames:1,real_samples:3,padding_samples:1597});
+    assert_eq!(wire.socket_written,wire.dequeued);assert_eq!(wire.finish_expected_frames,Some(1));
+    assert!(wire.last_frame_written_at.is_some()&&wire.finish_written_at.is_some()&&wire.session_finished_received_at.is_some());
+    assert!(wire.last_frame_written_at<=wire.finish_written_at);assert!(wire.finish_written_at<=wire.session_finished_received_at);
+    assert_eq!((wire.pending_items,wire.final_items),(1,1));
+    let partial=wire.event_tail.iter().find(|event|event.kind==AsrEventKind::Partial).unwrap();
+    let final_event=wire.event_tail.iter().find(|event|event.kind==AsrEventKind::Final).unwrap();
+    assert_ne!(partial.item_ordinal,final_event.item_ordinal);
+    let json=serde_json::to_string(&wire.relative_to(origin)).unwrap();
+    for excluded in ["private","Bearer","transcript","payload","pcm16","audio"] {assert!(!json.contains(excluded),"leaked {excluded}");}
+    server.await.unwrap();
+}
+#[tokio::test]
+async fn rejected_finish_records_queue_receipt_but_never_claims_a_socket_write() {
+    let (url,server)=server(|mut socket|async move{
+        receive(&mut socket).await;emit(&mut socket,json!({"type":"session.updated"})).await;
+        assert_eq!(receive(&mut socket).await["type"],"input_audio_buffer.append");
+        if let Some(Ok(Message::Text(_)))=socket.next().await {panic!("invalid Finish was sent");}
+    }).await;
+    let (tx,rx)=mpsc::channel(2);tx.send(AsrInput::Frame{sequence:0,pcm16:vec![1;1600],padding_samples:0}).await.unwrap();
+    tx.send(AsrInput::Finish{next_sequence:2}).await.unwrap();let latest=Arc::new(Mutex::new(None));
+    assert_eq!(run_local(url,rx,CancellationToken::new(),observe_wire(latest.clone()),short_timeouts()).await.unwrap_err().code,"audio_incomplete");
+    let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);assert_eq!(wire.socket_written.frames,1);
+    assert_eq!(wire.finish_expected_frames,Some(2));assert!(wire.finish_dequeued_at.is_some());assert!(wire.finish_written_at.is_none());
+    assert!(wire.session_finished_received_at.is_none());server.await.unwrap();
+}
+#[tokio::test]
+async fn cancellation_before_finish_send_preserves_unwritten_marker_and_terminal_metadata() {
+    let (url,server)=server(|mut socket|async move{
+        receive(&mut socket).await;emit(&mut socket,json!({"type":"session.updated"})).await;
+        if let Some(Ok(Message::Text(_)))=socket.next().await {panic!("cancelled Finish was sent");}
+    }).await;
+    let cancel=CancellationToken::new();let callback_cancel=cancel.clone();let latest=Arc::new(Mutex::new(None));let observed=latest.clone();
+    let callback=Arc::new(move|progress|if let AsrProgress::Diagnostics(metadata)=progress{
+        if metadata.finish_dequeued_at.is_some(){callback_cancel.cancel();}*observed.lock().unwrap()=Some(metadata);
+    });
+    let (tx,rx)=mpsc::channel(1);tx.send(AsrInput::Finish{next_sequence:0}).await.unwrap();
+    assert_eq!(run_local(url,rx,cancel,callback,short_timeouts()).await.unwrap_err().code,"cancelled");
+    let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);assert!(wire.finish_dequeued_at.is_some());
+    assert!(wire.finish_written_at.is_none());assert_eq!(wire.socket_written.frames,0);server.await.unwrap();
+}
+#[test]
+fn wire_event_history_is_bounded_and_unknown_wire_strings_are_not_retained() {
+    let latest=Arc::new(Mutex::new(None));let mut diagnostics=WireDiagnostics::new(observe_wire(latest.clone()));
+    let assembler=Assembler::default();let value=json!({"type":"private custom event","body":"secret"});
+    for _ in 0..100 {diagnostics.event(AsrEventKind::classify(&value),Some(&value),&assembler);}
+    assert_eq!(diagnostics.metadata.event_tail.len(),ASR_EVENT_TAIL);
+    assert_eq!(diagnostics.metadata.event_tail.front().unwrap().sequence,69);
+    for (index,kind) in AsrEventKind::ALL.into_iter().enumerate(){assert_eq!(kind as usize,index);}
+    drop(diagnostics);let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);
+    assert_eq!(wire.observed_events,100);assert_eq!(wire.event_counts[AsrEventKind::Unknown as usize],100);
+}

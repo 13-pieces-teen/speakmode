@@ -3,12 +3,22 @@ use crate::cloud::asr::{self,AsrInput,AsrProgress,CaptionItem};
 use crate::platform::audio::{AudioEvent,AudioFrame,CaptureHandle,CaptureSummary};
 use serde::Serialize;
 use std::{sync::atomic::{AtomicBool,Ordering},time::{Duration,Instant}};
-use tokio::sync::{mpsc,oneshot};
-use super::diagnostics::{Stage,Origin,TraceHandle};
+use tokio::sync::{mpsc,oneshot,Notify};
+use super::diagnostics::{Stage,Origin,TraceHandle,BridgeTelemetry,DiagnosticsRecorder};
+#[path="retry_audio.rs"]
+mod retry_audio;
 
 #[cfg(test)]
 #[path="tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path="audio_diagnostics_tests.rs"]
+mod audio_diagnostics_tests;
+
+#[cfg(test)]
+#[path="retry_asr_experiment_tests.rs"]
+mod retry_asr_experiment_tests;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,Serialize)]
 #[serde(rename_all="camelCase")]
@@ -45,6 +55,7 @@ pub(crate) struct ActiveSession {
     source:Option<SourceRevision>,output:Option<OutputRevision>,
     pending:Option<(String,PendingCommit)>,cache:Option<Vec<i16>>,cache_complete:bool,cache_created:Option<Instant>,
     target:Option<platform::delivery::TargetSnapshot>,target_capture_pending:bool,
+    target_capture_failure_reason:Option<String>,
     delivery_failure_reason:Option<String>,delivery:Option<DeliveryAttempt>,reason:CreationReason,
     asr_attempt_id:Option<String>,
     delivery_permit:Option<Arc<platform::delivery::DeliveryPermit>>,delivery_worker_released:bool,
@@ -148,6 +159,7 @@ impl AppHub {
                     s.captions=items;
                 },
                 AsrProgress::SpeechStart=>self.diagnostics.mark_at(trace,Stage::ProviderSpeechStartedReceived,received_at),
+                AsrProgress::Diagnostics(metadata)=>self.diagnostics.asr(trace,&metadata),
             }
         }}self.publish_session();
     }
@@ -180,7 +192,7 @@ impl AppHub {
             let generation=i.active.as_ref().map(|s|s.generation+1).unwrap_or(1);
             let id=Uuid::new_v4().to_string();
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_capture_pending:false,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             (id,generation,config,prefs,mode,dictionary)
         };
         let preflight=self.processing_lease(&id,generation);
@@ -202,42 +214,50 @@ impl AppHub {
                 // Cut recording before any native/UIA wait. Never keep sampling
                 // merely because an editor's accessibility provider is slow.
                 s.stop.store(true,Ordering::SeqCst);s.ended_at=Some(chrono::Local::now().to_rfc3339());s.phase=SessionPhase::FinalizingAsr;s.level=0.0;
-                s.target=None;s.delivery_failure_reason=None;
+                s.target=None;s.target_capture_failure_reason=None;s.delivery_failure_reason=None;
                 s.target_capture_pending=s.prefs.delivery_mode==DeliveryMode::Direct;
                 s.target_capture_pending.then(||(s.id.clone(),s.generation))
             }
         };Ok(target)
     }
-    fn resolve_stop_target(&self,id:&str,generation:u64,capture:impl FnOnce()->Option<platform::delivery::TargetSnapshot>) {
+    fn resolve_stop_target_result(&self,id:&str,generation:u64,capture:impl FnOnce()->platform::Result<Option<platform::delivery::TargetSnapshot>>) {
         let _lease=StopTargetLease{hub:self,id,generation,armed:true};
         let target=capture();
         let mut i=self.inner.lock().unwrap();
-        if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending){s.target=target;}
+        if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending){
+            match target {
+                Ok(target)=>{s.target=target;s.target_capture_failure_reason=None;}
+                Err(error)=>{s.target=None;s.target_capture_failure_reason=Some(if matches!(error,platform::PlatformError::TargetHigherIntegrity){"targetHigherIntegrity"}else{"targetUnavailableAtStop"}.into());}
+            }
+        }
     }
     async fn stop_session_at(self:&Arc<Self>,p:&Value,intent:Instant)->Result<Value> {
-        self.stop_session_at_with_target(p,intent,||platform::delivery::capture_foreground_anchor().ok(),|anchor|platform::delivery::capture_target_for_anchor(&anchor).ok()).await
+        self.stop_session_at_with_target_result(p,intent,||platform::delivery::capture_foreground_anchor().map(Some),|anchor|platform::delivery::capture_target_for_anchor(&anchor).map(Some)).await
     }
-    async fn stop_session_at_with_target(self:&Arc<Self>,p:&Value,intent:Instant,
-        anchor:impl FnOnce()->Option<platform::delivery::ForegroundAnchor>,
-        capture:impl FnOnce(platform::delivery::ForegroundAnchor)->Option<platform::delivery::TargetSnapshot>+Send+'static)->Result<Value> {
+    async fn stop_session_at_with_target_result(self:&Arc<Self>,p:&Value,intent:Instant,
+        anchor:impl FnOnce()->platform::Result<Option<platform::delivery::ForegroundAnchor>>,
+        capture:impl FnOnce(platform::delivery::ForegroundAnchor)->platform::Result<Option<platform::delivery::TargetSnapshot>>+Send+'static)->Result<Value> {
         if let Some((id,generation))=self.begin_stop_target(p,intent)? {
             // Freeze cheap OS identity on this stop operation, before yielding
             // to a worker. Otherwise a window switched during scheduling could
             // become a different, apparently valid automatic paste target.
             let mut stop_lease=StopTargetLease{hub:self,id:&id,generation,armed:true};
             let control=self.stop_target_control.lock().unwrap().clone();
-            let anchor=anchor().and_then(|anchor|match control{Some(control)=>control(anchor).ok(),None=>Some(anchor)});
+            let anchor=anchor().and_then(|anchor|match (anchor,control){
+                (Some(anchor),Some(control))=>control(anchor).map(Some).map_err(|error|if error.code=="target_higher_integrity"{platform::PlatformError::TargetHigherIntegrity}else{platform::PlatformError::Unavailable("mode return could not verify stop target".into())}),
+                (anchor,_)=>Ok(anchor),
+            });
             // Freeze/close Mode before announcing a phase change that asks
             // the renderer to close it too. UI control is bounded to 3s;
             // expensive accessibility work stays on its separate worker.
             self.publish_session();
             let hub=Arc::clone(self);
             let job_id=id.clone();
-            let inspection=tokio::task::spawn_blocking(move||hub.resolve_stop_target(&job_id,generation,||{
+            let inspection=tokio::task::spawn_blocking(move||hub.resolve_stop_target_result(&job_id,generation,||{
                 // A Mode menu can temporarily own focus. Close it and restore
                 // only its verified pre-menu foreground before freezing caret.
                 // The normal no-activate bar does not change external focus.
-                capture(anchor?)
+                match anchor {Ok(Some(anchor))=>capture(anchor),Ok(None)=>Ok(None),Err(error)=>Err(error)}
             }));
             // The queued/running blocking worker now owns release. Dropping an
             // IPC observer must not announce that this native work has ended.
@@ -248,6 +268,16 @@ impl AppHub {
     }
     pub async fn stop_session(self:&Arc<Self>,p:&Value)->Result<Value> {
         self.stop_session_at(p,Instant::now()).await
+    }
+    #[cfg(test)]
+    async fn stop_session_at_with_target(self:&Arc<Self>,p:&Value,intent:Instant,
+        anchor:impl FnOnce()->Option<platform::delivery::ForegroundAnchor>,
+        capture:impl FnOnce(platform::delivery::ForegroundAnchor)->Option<platform::delivery::TargetSnapshot>+Send+'static)->Result<Value> {
+        self.stop_session_at_with_target_result(p,intent,||Ok(anchor()),move|anchor|Ok(capture(anchor))).await
+    }
+    #[cfg(test)]
+    fn resolve_stop_target(&self,id:&str,generation:u64,capture:impl FnOnce()->Option<platform::delivery::TargetSnapshot>) {
+        self.resolve_stop_target_result(id,generation,||Ok(capture()));
     }
     #[cfg(test)]
     fn stop_with_capture(&self,p:&Value,capture:impl FnOnce()->Option<platform::delivery::TargetSnapshot>)->Result<Value> {
@@ -429,8 +459,12 @@ impl AppHub {
             capture_hub.publish_session();
             let _=done_tx.send(result);
         });
-        let event_hub=Arc::clone(&self);let event_id=id.clone();let event_attempt=attempt.clone();
-        let callback=Arc::new(move|progress:AsrProgress|event_hub.accept_asr_progress(&event_id,generation,&event_attempt,progress));
+        let event_hub=Arc::clone(&self);let event_id=id.clone();let event_attempt=attempt.clone();let callback_trace=trace.clone();
+        // Diagnostic progress has no AppHub state lock, UI publish or business side effect.
+        let callback=Arc::new(move|progress:AsrProgress|match progress {
+            AsrProgress::Diagnostics(metadata)=>event_hub.diagnostics.asr(callback_trace.as_ref(),&metadata),
+            progress=>event_hub.accept_asr_progress(&event_id,generation,&event_attempt,progress),
+        });
         let result=asr::run(config.clone(),secret.clone(),prefs.language.clone(),dictionary,attempt.clone(),audio_rx,cancel.clone(),callback).await;
         if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}
         // Any ASR early failure aborts capture; normal finish has already drained it.
@@ -540,9 +574,9 @@ impl AppHub {
             if Instant::now()>=deadline {break true;}
             std::thread::sleep(Duration::from_millis(10));
         };
-        let eligible={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!self.quitting.load(Ordering::SeqCst)&&!s.original_delivery_revoked&&s.phase==SessionPhase::Ready&&s.prefs.delivery_mode==DeliveryMode::Direct&&s.reason==CreationReason::NormalInitial).and_then(|s|s.output.clone().map(|output|(if target_timed_out{None}else{s.target.clone()},output)))};
-        let Some((target,output))=eligible else{let _=self.native_action("recording",false);if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.phase==SessionPhase::Ready&&!s.cancel.is_cancelled()&&s.prefs.delivery_mode==DeliveryMode::Preview){let _=self.native_action("showMain",true);}return;};
-        let rejection=match &target{None=>Some("targetUnavailableAtStop"),Some(target) if !validate(target)=>Some("targetChangedBeforeDelivery"),_=>None};
+        let eligible={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!self.quitting.load(Ordering::SeqCst)&&!s.original_delivery_revoked&&s.phase==SessionPhase::Ready&&s.prefs.delivery_mode==DeliveryMode::Direct&&s.reason==CreationReason::NormalInitial).and_then(|s|s.output.clone().map(|output|(if target_timed_out{None}else{s.target.clone()},output,s.target_capture_failure_reason.clone())))};
+        let Some((target,output,capture_failure))=eligible else{let _=self.native_action("recording",false);if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.phase==SessionPhase::Ready&&!s.cancel.is_cancelled()&&s.prefs.delivery_mode==DeliveryMode::Preview){let _=self.native_action("showMain",true);}return;};
+        let rejection=match &target{None=>Some(if target_timed_out{"targetUnavailableAtStop"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some("targetChangedBeforeDelivery"),_=>None};
         // A skipped automatic delivery is still a once-only decision. Preserve
         // an opaque ledger receipt even when no input target could be captured.
         let fingerprint=target.as_ref().map(|target|format!("{}:{}:{}",target.hwnd,target.process_id,target.process_created_at)).unwrap_or_else(||"unavailableAtStop".into());
@@ -675,19 +709,21 @@ impl AppHub {
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),values.0)));values};
         let processing=self.processing_lease(&id,generation);
         let trace=self.trace(&id,generation);
-        let (tx,rx)=mpsc::channel(5);let producer_cancel=cancel.clone();
+        let (tx,rx)=mpsc::channel(5);let producer_cancel=cancel.child_token();let producer_stop=producer_cancel.clone();let producer_hub=Arc::clone(self);let producer_trace=trace.clone();
+        let configured=Arc::new(AtomicBool::new(false));let configured_notify=Arc::new(Notify::new());
+        let producer_ready=configured.clone();let producer_notify=configured_notify.clone();
         let producer=tokio::spawn(async move{
-            let mut count=0;
-            for (sequence,frame) in cache.chunks(1600).enumerate(){let mut pcm16=frame.to_vec();let padding_samples=1600-pcm16.len();pcm16.resize(1600,0);
-                let input=AsrInput::Frame{sequence:sequence as u64,pcm16,padding_samples};
-                tokio::select!{biased;_=producer_cancel.cancelled()=>return,r=tx.send(input)=>if r.is_err(){return;}}count+=1;
-            }
-            tokio::select!{biased;_=producer_cancel.cancelled()=>(),_=tx.send(AsrInput::Finish{next_sequence:count})=>()}
+            retry_audio::replay(cache,tx,producer_cancel,producer_ready,producer_notify,
+                &producer_hub.diagnostics,producer_trace.as_ref()).await;
         });
-        let hub=Arc::clone(self);let event_id=id.clone();let event_attempt=attempt.clone();
-        let callback=Arc::new(move|progress:AsrProgress|hub.accept_asr_progress(&event_id,generation,&event_attempt,progress));
+        let hub=Arc::clone(self);let event_id=id.clone();let event_attempt=attempt.clone();let callback_trace=trace.clone();
+        let callback=Arc::new(move|progress:AsrProgress|match progress {
+            AsrProgress::Configured=>{configured.store(true,Ordering::Release);configured_notify.notify_waiters();hub.accept_asr_progress(&event_id,generation,&event_attempt,AsrProgress::Configured);},
+            AsrProgress::Diagnostics(metadata)=>hub.diagnostics.asr(callback_trace.as_ref(),&metadata),
+            progress=>hub.accept_asr_progress(&event_id,generation,&event_attempt,progress),
+        });
         let result=asr::run(config.clone(),secret.clone(),language,dictionary,attempt.clone(),rx,cancel,callback).await;
-        if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}let _=producer.await;
+        if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}producer_stop.cancel();let _=producer.await;
         let rows=match result{Ok(v)=>v,Err(e)=>{self.fail(&id,generation,e.into(),true);drop(processing);return self.scoped_view(&id,generation);}};
         if rows.is_empty(){self.fail(&id,generation,ApiError::new("empty_recording","asr","未识别到有效语音"),true);drop(processing);return self.scoped_view(&id,generation);}
         let source=SourceRevision{id:Uuid::new_v4().to_string(),session_id:id.clone(),asr_attempt_id:attempt,generation,provider:config.provider.clone(),model:config.asr_model.clone(),adapter_version:config.adapter_version.clone(),complete:true,items:rows,created_at:now()};
@@ -703,7 +739,7 @@ impl AppHub {
 }
 
 fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,tx:mpsc::Sender<AsrInput>,cancel:CancellationToken,stop:Arc<AtomicBool>)->Result<(CaptureSummary,Vec<i16>)> {
-    let trace=hub.trace(id,generation);let mut bridge_peak=0;
+    let trace=hub.trace(id,generation);let mut bridge_peak=0;let mut bridge=BridgeTelemetry::default();
     if cancel.is_cancelled(){return Err(ApiError::new("cancelled","audio","采音开始前已取消"));}
     let mut capture=CaptureHandle::start(device)?;
     let mut cache=Vec::new();let mut stop_started=None;let mut network_closed=false;let mut pending_frame=None;let mut limit_reached=false;
@@ -716,10 +752,11 @@ fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,tx:mps
             AudioEvent::Level(level)=>{hub.accept_audio_level(id,generation,level);}
             AudioEvent::Error(_)=>{capture.request_stop();hub.diagnostics.mark(trace.as_ref(),Stage::CaptureCutoff);stop_started.get_or_insert(Instant::now());}
         }}
-        if let Some(frame)=pending_frame.take(){match tx.try_send(frame){Ok(())=>{},Err(mpsc::error::TrySendError::Closed(_))=>{network_closed=true;capture.request_stop();stop_started.get_or_insert(Instant::now());},Err(mpsc::error::TrySendError::Full(frame))=>pending_frame=Some(frame)}}
+        if let Some(frame)=pending_frame.take(){match enqueue_observed(&tx,frame,&hub.diagnostics,trace.as_ref(),&mut bridge){Ok(())=>{},Err(mpsc::error::TrySendError::Closed(_))=>{network_closed=true;capture.request_stop();stop_started.get_or_insert(Instant::now());},Err(mpsc::error::TrySendError::Full(frame))=>pending_frame=Some(frame)}}
         while pending_frame.is_none(){let Ok(frame)=capture.frames.try_recv()else{break;};
+            bridge.observed.add_frame(frame.pcm16.len().saturating_sub(frame.padding_samples),frame.padding_samples);hub.diagnostics.bridge(trace.as_ref(),&bridge);
             if !cancel.is_cancelled(){let real=frame.pcm16.len().saturating_sub(frame.padding_samples);if cache.len()+real>50*1024*1024{capture.cancel();return Err(ApiError::new("cache_overflow","audio","音频缓存已达到上限"));}cache.extend_from_slice(&frame.pcm16[..real]);}
-            if !network_closed&&!cancel.is_cancelled(){match tx.try_send(cloud_frame(frame)){Ok(())=>{},Err(mpsc::error::TrySendError::Closed(_))=>{network_closed=true;capture.request_stop();stop_started.get_or_insert(Instant::now());},Err(mpsc::error::TrySendError::Full(frame))=>pending_frame=Some(frame)}}
+            if !network_closed&&!cancel.is_cancelled(){match enqueue_observed(&tx,cloud_frame(frame),&hub.diagnostics,trace.as_ref(),&mut bridge){Ok(())=>{},Err(mpsc::error::TrySendError::Closed(_))=>{network_closed=true;capture.request_stop();stop_started.get_or_insert(Instant::now());},Err(mpsc::error::TrySendError::Full(frame))=>pending_frame=Some(frame)}}
         }
         let peak=tx.max_capacity()-tx.capacity()+usize::from(pending_frame.is_some());
         if peak>bridge_peak{bridge_peak=peak;hub.diagnostics.bridge_peak(trace.as_ref(),peak);}
@@ -727,12 +764,14 @@ fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,tx:mps
             match capture.wait_drained(Duration::from_millis(5)){
                 Ok(summary)=>{
                     hub.diagnostics.mark(trace.as_ref(),Stage::CaptureDrained);
+                    hub.diagnostics.capture(trace.as_ref(),summary.captured_samples,summary.input_sample_rate,summary.emitted_frames,summary.complete,summary.cancelled);
                     if limit_reached {return Err(ApiError::new("recording_limit","audio","已到本次录音时长上限。已有字幕可复制；本次不会自动整理或输入，请重新口述剩余内容。"));}
                     let deadline=at+Duration::from_secs(5);
-                    if let Some(frame)=pending_frame.take(){if !network_closed&&!cancel.is_cancelled(){send_bounded(&tx,frame,&cancel,deadline)?;}}
+                    if let Some(frame)=pending_frame.take(){if !network_closed&&!cancel.is_cancelled(){send_bounded(&tx,frame,&cancel,deadline,&hub.diagnostics,trace.as_ref(),&mut bridge)?;}}
                     while let Ok(frame)=capture.frames.try_recv(){let real=frame.pcm16.len().saturating_sub(frame.padding_samples);if !cancel.is_cancelled(){if cache.len()+real>50*1024*1024{return Err(ApiError::new("cache_overflow","audio","音频缓存已达到上限"));}cache.extend_from_slice(&frame.pcm16[..real]);}
-                        if !network_closed&&!cancel.is_cancelled(){send_bounded(&tx,cloud_frame(frame),&cancel,deadline)?;}}
-                    if summary.complete&&!network_closed&&!cancel.is_cancelled(){send_bounded(&tx,AsrInput::Finish{next_sequence:summary.emitted_frames},&cancel,deadline)?;}
+                        bridge.observed.add_frame(real,frame.padding_samples);hub.diagnostics.bridge(trace.as_ref(),&bridge);
+                        if !network_closed&&!cancel.is_cancelled(){send_bounded(&tx,cloud_frame(frame),&cancel,deadline,&hub.diagnostics,trace.as_ref(),&mut bridge)?;}}
+                    if summary.complete&&!network_closed&&!cancel.is_cancelled(){send_bounded(&tx,AsrInput::Finish{next_sequence:summary.emitted_frames},&cancel,deadline,&hub.diagnostics,trace.as_ref(),&mut bridge)?;}
                     return Ok((summary,cache));
                 }
                 Err(platform::PlatformError::Timeout(_)) if at.elapsed()<Duration::from_secs(5)=>{},
@@ -745,10 +784,14 @@ fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,tx:mps
 fn cloud_frame(frame:AudioFrame)->AsrInput {
     AsrInput::Frame{sequence:frame.sequence,pcm16:frame.pcm16,padding_samples:frame.padding_samples}
 }
-fn send_bounded(tx:&mpsc::Sender<AsrInput>,mut input:AsrInput,cancel:&CancellationToken,deadline:Instant)->Result<()> {
+fn enqueue_observed(tx:&mpsc::Sender<AsrInput>,input:AsrInput,diagnostics:&DiagnosticsRecorder,trace:Option<&TraceHandle>,bridge:&mut BridgeTelemetry)->std::result::Result<(),mpsc::error::TrySendError<AsrInput>> {
+    let counts=input.frame_counts();let result=tx.try_send(input);
+    if result.is_ok(){bridge.accepted(counts);diagnostics.bridge(trace,bridge);}result
+}
+fn send_bounded(tx:&mpsc::Sender<AsrInput>,mut input:AsrInput,cancel:&CancellationToken,deadline:Instant,diagnostics:&DiagnosticsRecorder,trace:Option<&TraceHandle>,bridge:&mut BridgeTelemetry)->Result<()> {
     loop {
         if cancel.is_cancelled(){return Err(ApiError::new("cancelled","audio","口述已取消"));}
-        match tx.try_send(input){
+        match enqueue_observed(tx,input,diagnostics,trace,bridge){
             Ok(())=>return Ok(()),
             Err(mpsc::error::TrySendError::Closed(_))=>return Err(ApiError::new("asr_closed","audio","语音连接已结束")),
             Err(mpsc::error::TrySendError::Full(value))=>input=value,

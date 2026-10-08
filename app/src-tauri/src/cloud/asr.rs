@@ -6,7 +6,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{collections::{BTreeMap, HashSet}, sync::Arc, time::Duration};
+use std::{collections::{BTreeMap, HashSet, VecDeque}, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig}};
 use tokio_util::sync::CancellationToken;
@@ -51,7 +51,120 @@ impl AudioSequence {
 #[serde(rename_all="camelCase")]
 pub struct CaptionItem { pub id:String, pub text:String, pub revision:u64, #[serde(rename="final")] pub is_final:bool, pub capture_order:u64 }
 #[derive(Debug,Clone)]
-pub enum AsrProgress { Configured, Caption(Vec<CaptionItem>), SpeechStart }
+pub enum AsrProgress { Configured, Caption(Vec<CaptionItem>), SpeechStart, Diagnostics(AsrTelemetry) }
+
+/// Counts describe client-side boundaries, never provider acknowledgement.
+#[derive(Debug,Clone,Copy,Default,PartialEq,Eq,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct AudioCounts { pub frames:u64, pub real_samples:u64, pub padding_samples:u64 }
+impl AudioCounts {
+    pub fn add_frame(&mut self,real_samples:usize,padding_samples:usize) {
+        self.frames=self.frames.saturating_add(1);
+        self.real_samples=self.real_samples.saturating_add(real_samples as u64);
+        self.padding_samples=self.padding_samples.saturating_add(padding_samples as u64);
+    }
+}
+impl AsrInput {
+    pub fn frame_counts(&self)->Option<(usize,usize)> {
+        match self { Self::Frame{pcm16,padding_samples,..}=>{
+            let padding=(*padding_samples).min(pcm16.len());Some((pcm16.len()-padding,padding))
+        },Self::Finish{..}=>None }
+    }
+}
+
+pub const ASR_EVENT_TAIL:usize=32;
+pub const ASR_EVENT_KINDS:usize=14;
+/// Provider strings and item IDs are deliberately not retained in diagnostics.
+#[derive(Debug,Clone,Copy,PartialEq,Eq,Serialize)]
+#[serde(rename_all="camelCase")]
+pub enum AsrEventKind { SessionCreated,SessionUpdated,SpeechStarted,SpeechStopped,Committed,
+    ItemCreated,Partial,Final,SessionFinished,ServiceError,TranscriptionFailed,Unknown,MissingType,InvalidJson }
+impl AsrEventKind {
+    pub const ALL:[Self;ASR_EVENT_KINDS]=[Self::SessionCreated,Self::SessionUpdated,Self::SpeechStarted,
+        Self::SpeechStopped,Self::Committed,Self::ItemCreated,Self::Partial,Self::Final,Self::SessionFinished,
+        Self::ServiceError,Self::TranscriptionFailed,Self::Unknown,Self::MissingType,Self::InvalidJson];
+    fn classify(value:&Value)->Self {
+        match value["type"].as_str() {
+            Some("session.created")=>Self::SessionCreated,Some("session.updated")=>Self::SessionUpdated,
+            Some("input_audio_buffer.speech_started")=>Self::SpeechStarted,Some("input_audio_buffer.speech_stopped")=>Self::SpeechStopped,
+            Some("input_audio_buffer.committed")=>Self::Committed,Some("conversation.item.created")=>Self::ItemCreated,
+            Some("conversation.item.input_audio_transcription.text")=>Self::Partial,
+            Some("conversation.item.input_audio_transcription.completed")=>Self::Final,
+            Some("session.finished")=>Self::SessionFinished,Some("error")=>Self::ServiceError,
+            Some("conversation.item.input_audio_transcription.failed")=>Self::TranscriptionFailed,
+            Some(_)=>Self::Unknown,None=>Self::MissingType,
+        }
+    }
+}
+#[derive(Debug,Clone)]
+pub struct AsrWireEvent {
+    pub sequence:u64,pub kind:AsrEventKind,pub received_at:Instant,
+    pub item_ordinal:Option<u64>,pub previous_item_ordinal:Option<u64>,
+    pub pending_items:usize,pub final_items:usize,
+}
+#[derive(Debug,Clone,Default)]
+pub struct AsrTelemetry {
+    pub dequeued:AudioCounts,pub socket_written:AudioCounts,
+    pub last_frame_written_at:Option<Instant>,pub finish_dequeued_at:Option<Instant>,
+    pub finish_expected_frames:Option<u64>,pub finish_written_at:Option<Instant>,
+    pub session_finished_received_at:Option<Instant>,pub pending_items:usize,pub final_items:usize,
+    pub observed_events:u64,pub event_counts:[u64;ASR_EVENT_KINDS],pub event_tail:VecDeque<AsrWireEvent>,
+    pub terminated:bool,
+}
+#[derive(Debug,Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct AsrEventCount { pub kind:AsrEventKind,pub count:u64 }
+#[derive(Debug,Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct AsrEventView {
+    pub sequence:u64,pub kind:AsrEventKind,pub offset_ms:Option<f64>,
+    pub item_ordinal:Option<u64>,pub previous_item_ordinal:Option<u64>,pub pending_items:usize,pub final_items:usize,
+}
+#[derive(Debug,Clone,Default,Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct AsrTelemetryView {
+    pub dequeued:AudioCounts,pub socket_written:AudioCounts,pub last_frame_written_ms:Option<f64>,
+    pub finish_dequeued_ms:Option<f64>,pub finish_expected_frames:Option<u64>,pub finish_written_ms:Option<f64>,
+    pub session_finished_received_ms:Option<f64>,pub pending_items:usize,pub final_items:usize,
+    pub observed_events:u64,pub event_counts:Vec<AsrEventCount>,pub event_tail:Vec<AsrEventView>,pub terminated:bool,
+}
+impl AsrTelemetry {
+    pub fn relative_to(&self,origin:Instant)->AsrTelemetryView {
+        let offset=|at:Instant|at.checked_duration_since(origin).map(|time|time.as_secs_f64()*1000.0);
+        AsrTelemetryView{dequeued:self.dequeued,socket_written:self.socket_written,
+            last_frame_written_ms:self.last_frame_written_at.and_then(offset),finish_dequeued_ms:self.finish_dequeued_at.and_then(offset),
+            finish_expected_frames:self.finish_expected_frames,finish_written_ms:self.finish_written_at.and_then(offset),
+            session_finished_received_ms:self.session_finished_received_at.and_then(offset),pending_items:self.pending_items,final_items:self.final_items,
+            observed_events:self.observed_events,event_counts:AsrEventKind::ALL.into_iter().enumerate()
+                .filter_map(|(index,kind)|(self.event_counts[index]>0).then_some(AsrEventCount{kind,count:self.event_counts[index]})).collect(),
+            event_tail:self.event_tail.iter().rev().take(ASR_EVENT_TAIL).collect::<Vec<_>>().into_iter().rev()
+                .map(|event|AsrEventView{sequence:event.sequence,kind:event.kind,offset_ms:offset(event.received_at),
+                    item_ordinal:event.item_ordinal,previous_item_ordinal:event.previous_item_ordinal,
+                    pending_items:event.pending_items,final_items:event.final_items}).collect(),terminated:self.terminated}
+    }
+}
+struct WireDiagnostics { metadata:AsrTelemetry, callback:Arc<dyn Fn(AsrProgress)+Send+Sync> }
+impl WireDiagnostics {
+    fn new(callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Self { Self{metadata:AsrTelemetry::default(),callback} }
+    fn publish(&self) { (self.callback)(AsrProgress::Diagnostics(self.metadata.clone())); }
+    fn event(&mut self,kind:AsrEventKind,value:Option<&Value>,assembler:&Assembler) {
+        let at=Instant::now();self.metadata.observed_events=self.metadata.observed_events.saturating_add(1);
+        self.metadata.event_counts[kind as usize]=self.metadata.event_counts[kind as usize].saturating_add(1);
+        if kind==AsrEventKind::SessionFinished {self.metadata.session_finished_received_at.get_or_insert(at);}
+        self.metadata.final_items=assembler.items.values().filter(|item|item.final_text.is_some()).count();
+        self.metadata.pending_items=assembler.items.len()-self.metadata.final_items;
+        let item=value.and_then(|value|value["item_id"].as_str().or_else(||value.pointer("/item/id").and_then(Value::as_str)))
+            .and_then(|id|assembler.items.get(id));
+        let previous=item.and_then(|item|item.previous.as_deref()).and_then(|id|assembler.items.get(id));
+        if self.metadata.event_tail.len()==ASR_EVENT_TAIL {self.metadata.event_tail.pop_front();}
+        self.metadata.event_tail.push_back(AsrWireEvent{sequence:self.metadata.observed_events,kind,received_at:at,
+            item_ordinal:item.map(|item|item.seen),previous_item_ordinal:previous.map(|item|item.seen),
+            pending_items:self.metadata.pending_items,final_items:self.metadata.final_items});self.publish();
+    }
+}
+impl Drop for WireDiagnostics {
+    fn drop(&mut self) { self.metadata.terminated=true;self.publish(); }
+}
 
 #[derive(Default,Debug)]
 struct Item {
@@ -207,6 +320,7 @@ impl Default for Timeouts {fn default()->Self {Self{establishment:Duration::from
 
 // Private transport seam: only run() can select a production URL; localhost injection lives in tests.
 async fn run_at(config:ProviderConfig, secret:String, language:String, dictionary:DictionarySnapshot, attempt:String, mut audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>, url:String, timeouts:Timeouts)->Result<Vec<SourceItem>,CloudError> {
+    let mut diagnostics=WireDiagnostics::new(Arc::clone(&callback));
     let update=session_update(&language,&dictionary)?;
     let connect_deadline=tokio::time::Instant::now()+timeouts.establishment;
     let request=authorized_request(&url,&secret,config.workspace.as_deref())?;
@@ -234,15 +348,22 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, dictionar
                 let message=incoming.ok_or_else(||CloudError::new("asr_disconnected","asr","语音服务提前断开，结果不完整"))?.map_err(|_|CloudError::new("asr_disconnected","asr","语音连接中断"))?;
                 match message {
                     Message::Text(text)=>{
-                        let value:Value=serde_json::from_str(&text).map_err(|_|CloudError::new("invalid_asr_event","asr","语音事件无法解析"))?;
+                        let value:Value=match serde_json::from_str(&text) {
+                            Ok(value)=>value,Err(_)=>{diagnostics.event(AsrEventKind::InvalidJson,None,&assembler);
+                                return Err(CloudError::new("invalid_asr_event","asr","语音事件无法解析"));}
+                        };
                         if cancel.is_cancelled(){return Err(cancelled());}
+                        let kind=AsrEventKind::classify(&value);
                         match value["type"].as_str() {
                             Some("session.updated") if !configured=>{configured=true;callback(AsrProgress::Configured);},
                             Some("input_audio_buffer.speech_started")=>callback(AsrProgress::SpeechStart),
-                            Some("session.finished") if !finishing=>return Err(CloudError::new("unexpected_finish","asr","语音服务提前结束，请重新口述")),
+                            Some("session.finished") if !finishing=>{diagnostics.event(kind,Some(&value),&assembler);
+                                return Err(CloudError::new("unexpected_finish","asr","语音服务提前结束，请重新口述"));},
                             _=>{}
                         }
-                        if assembler.ingest(&value)? {callback(AsrProgress::Caption(assembler.captions(&attempt)));}
+                        let changed=assembler.ingest(&value);
+                        diagnostics.event(kind,Some(&value),&assembler);
+                        if changed? {callback(AsrProgress::Caption(assembler.captions(&attempt)));}
                         if assembler.finished {if cancel.is_cancelled(){return Err(cancelled());}return assembler.finish(&attempt);}
                     }
                     Message::Ping(data)=>{let send_deadline=if !configured||finishing {deadline.min(tokio::time::Instant::now()+timeouts.send)} else {tokio::time::Instant::now()+timeouts.send};send_message(&mut socket,Message::Pong(data),&cancel,send_deadline).await?;},
@@ -251,16 +372,27 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, dictionar
                 }
             },
             frame=audio.recv(), if configured && !finishing=>{
+                let mut frame_counts=None;
+                let mut finish=false;
                 let value=match frame {
                     Some(AsrInput::Frame{sequence,pcm16:pcm,padding_samples})=>{
+                        let padding=padding_samples.min(pcm.len());
+                        frame_counts=Some((pcm.len()-padding,padding));
+                        diagnostics.metadata.dequeued.add_frame(pcm.len()-padding,padding);diagnostics.publish();
                         audio_sequence.frame(sequence,&pcm,padding_samples)?;
                         let bytes=pcm.into_iter().flat_map(i16::to_le_bytes).collect::<Vec<_>>();
                         let mut value=event("input_audio_buffer.append");value["audio"]=json!(STANDARD.encode(bytes));value
                     }
-                    Some(AsrInput::Finish{next_sequence})=>{audio_sequence.finish(next_sequence)?;finishing=true;finish_deadline=Some(tokio::time::Instant::now()+timeouts.finish);event("session.finish")},
+                    Some(AsrInput::Finish{next_sequence})=>{
+                        diagnostics.metadata.finish_dequeued_at=Some(Instant::now());diagnostics.metadata.finish_expected_frames=Some(next_sequence);diagnostics.publish();
+                        audio_sequence.finish(next_sequence)?;finishing=true;finish=true;
+                        finish_deadline=Some(tokio::time::Instant::now()+timeouts.finish);event("session.finish")},
                     None=>return Err(CloudError::new("audio_disconnected","asr","采音队列未正常收尾")),
                 };
                 send_message(&mut socket,Message::Text(value.to_string()),&cancel,finish_deadline.unwrap_or(tokio::time::Instant::now()+timeouts.send).min(tokio::time::Instant::now()+timeouts.send)).await?;
+                if let Some((real,padding))=frame_counts {diagnostics.metadata.socket_written.add_frame(real,padding);diagnostics.metadata.last_frame_written_at=Some(Instant::now());}
+                if finish {diagnostics.metadata.finish_written_at=Some(Instant::now());}
+                diagnostics.publish();
             }
         }
     }
