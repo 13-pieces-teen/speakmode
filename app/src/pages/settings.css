@@ -24,16 +24,11 @@
 .settings-device { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 45px; padding: 10px 14px; border: 1px solid #e7ebf1; border-radius: 10px; background: #fcfdfe; color: #576a81; font-size: 14px; }
 .settings-device small { color: var(--sm-muted); font-size: 11px; line-height: 18px; }
 .settings-mode-control, .settings-delivery-control { width: 100%; min-width: 0; }
-.settings-mode-control .mode-selector { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
-.settings-mode-control .mode-option.rt-RadioCardsItem { min-width: 0; height: auto; min-height: 45px; padding: 9px 7px; gap: 6px; align-items: center; justify-content: center; border-radius: 8px; }
-.settings-mode-control .mode-option-icon { width: 17px; height: 20px; }
-.settings-mode-control .mode-option-icon svg { width: 16px; height: 16px; }
-.settings-mode-control .mode-option-copy { flex: 0 1 auto; }
-.settings-mode-control .mode-option-copy strong { font-size: 13px; white-space: nowrap; }
-.settings-mode-control .mode-option[data-personal=true] { grid-column: 1/-1; justify-content: flex-start; padding: 10px; }
-.settings-mode-control .mode-option[data-personal=true] .mode-option-copy strong { white-space: normal; }
+.settings-mode-select .settings-mode-option-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-mode-menu { max-width: min(360px, calc(100vw - 32px)); }
+.settings-mode-menu .rt-SelectItem { height: auto; min-height: 34px; padding-top: 7px; padding-bottom: 7px; }
+.settings-mode-menu .settings-mode-option-label { display: block; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
 .settings-mode-control > .rt-Button { margin: 12px 0 0; }
-.settings-mode-control .mode-option-copy > span, .settings-mode-control .mode-option-check { display: none; }
 .settings-control-hint { font-size: 12px; line-height: 21px; color: var(--sm-muted); margin: 9px 0 0; overflow-wrap: anywhere; }
 .settings-mode-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .settings-example { margin-top: -7px; margin-bottom: 7px; }
@@ -60,6 +55,8 @@
 .settings-control-fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
 .settings-control-fieldset:disabled { opacity: .55; }
 .settings-feedback { display: grid; gap: 6px; min-width: 0; }
+.settings-row-feedback { grid-column: 2; display: flex; align-items: flex-start; gap: 6px; min-width: 0; margin: -5px 0 0; color: #536f8e; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.settings-row-feedback svg { flex-shrink: 0; margin-top: 3px; }
 .settings-footer .settings-error, .settings-error { color: #a33737; font-size: 12px; line-height: 1.8; margin: 0; overflow-wrap: anywhere; }
 .settings-provider-intro { margin: 16px 0 12px; font-size: 13px; line-height: 1.85; color: var(--sm-muted); }
 .settings-provider-status { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--sm-secondary); font-size: 12px; line-height: 22px; }
@@ -97,6 +94,7 @@
 @container settings (max-width: 640px) {
   .setting-row { grid-template-columns: minmax(0,1fr); gap: 13px; padding: 16px 0; }
   .setting-row-control { justify-content: flex-start; }
+  .settings-row-feedback { grid-column: 1/-1; }
   .setting-row:has(.rt-SwitchRoot) { grid-template-columns: minmax(0,1fr) auto; }
   .setting-row-control > .rt-SwitchRoot { margin-top: 4px; }
   .shortcut-current { grid-column: 1; }
@@ -111,7 +109,6 @@
   .settings-page .page-heading h1 { font-size: 26px; }
 }
 @container settings (max-width: 310px) {
-  .settings-mode-control .mode-option-icon { display: none; }
   .shortcut-panel { padding: 12px; }
   .shortcut-actions { justify-content: flex-start; }
   .settings-device { flex-wrap: wrap; gap: 4px 10px; }

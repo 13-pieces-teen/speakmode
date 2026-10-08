@@ -122,7 +122,13 @@ svg { flex-shrink: 0; }
 .latest-card { display: flex; flex-direction: column; }
 .latest-title-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .latest-title-row .mode-badge { flex-shrink: 0; }
-.latest-card .record-text { padding-bottom: 18px; }
+.latest-preview { margin: 16px 0 18px; min-width: 0; }
+.latest-preview-viewport { --latest-preview-height: 204px; }
+.latest-preview-viewport[data-expanded=false] { max-height: var(--latest-preview-height); overflow: hidden; }
+.latest-preview-viewport[data-expanded=false][data-overflowing=true] { mask-image: linear-gradient(#000 calc(100% - 18px), transparent); }
+.latest-preview-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.latest-preview-footer > span { color: var(--sm-muted); font-size: 12px; }
+.latest-preview-footer .rt-Button { margin: 0; scroll-margin-block: 24px; }
 .recent-section, .quick-settings { align-self: stretch; }
 .rt-Button.rt-variant-soft[data-accent-color='gray'] { background: #f0f3f7; color: var(--sm-secondary); }
 .rt-Button.rt-variant-soft[data-accent-color='gray']:hover { background: #e8edf4; }
@@ -130,13 +136,14 @@ svg { flex-shrink: 0; }
 .rt-Button:disabled { box-shadow: none; }
 .rt-Button, .rt-SelectTrigger, .rt-SwitchRoot { scroll-margin-block: 20px; }
 .latest-card .section-heading time { font-size: 12px; color: var(--sm-muted); font-variant-numeric: tabular-nums; }
-.latest-title-row h3 { font-size: 21px; line-height: 1.5; font-weight: 600; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.latest-title-row h3 { font-size: 21px; line-height: 1.5; font-weight: 600; margin: 0; min-width: 0; overflow-wrap: anywhere; text-wrap: balance; }
 .mode-badge { font-size: 11px; font-weight: 500; gap: 5px; padding: 4px 8px; line-height: 18px; }
 .mode-badge svg { height: 12px; width: 12px; }
 .record-text { font-size: 15px; color: #39495e; line-height: 1.95; overflow-wrap: anywhere; }
 .record-text p { margin: 0 0 14px; white-space: pre-wrap; }
 .record-text p:last-child { margin-bottom: 0; }
 .latest-card .record-text { margin-top: 16px; font-size: 15px; line-height: 1.95; }
+.latest-card .latest-preview .record-text { margin: 0; padding: 0; }
 
 .latest-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--sm-line); padding-top: 16px; }
 .modified-label { font-size: 12px; color: #657e9c; }
@@ -206,7 +213,7 @@ svg { flex-shrink: 0; }
   .app-sidebar { padding: 10px 16px; border-radius: 0; border-right: 0; border-bottom: 1px solid var(--sm-line); }
   .brand { margin: 0 0 15px; padding: 0 4px; font-size: 20px; }
   .brand-mark { width: 25px; height: 28px; }
-  .main-nav { display: grid; width: 100%; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; }
+  .main-nav { display: grid; width: 100%; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 6px; }
   .nav-item { justify-content: center; gap: 7px; padding: 9px; font-size: 13px; min-height: 40px; }
   .sidebar-bottom { margin: 0; padding-top: 8px; }
   .sidebar-record.rt-Button { width: auto; }
@@ -240,6 +247,11 @@ svg { flex-shrink: 0; }
 }
 @media (max-width: 380px) { .app-main { padding: 22px 15px; } .surface { padding: 16px; } .home-hero h1 { font-size: 21px; } .usage-metric strong { font-size: 18px; } .usage-metric dd { column-gap: 2px; } .latest-actions .rt-Button { padding: 0 10px; } .nav-item { padding: 9px 5px; gap: 5px; font-size: 12px; } .nav-item svg { width: 15px; height: 15px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+@media (max-width: 480px) {
+  .main-nav { gap: 4px; }
+  .nav-item { flex-direction: column; gap: 3px; padding: 7px 2px; font-size: 11px; line-height: 18px; }
+  .nav-item svg { width: 16px; height: 16px; }
+}
 
 /* Custom shortcut labels can be longer than a single key. */
 .quick-settings dl>div { flex-wrap: wrap; }
