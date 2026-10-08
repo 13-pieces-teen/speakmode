@@ -9,13 +9,13 @@
 .settings-sections { display: grid; grid-template-columns: minmax(0,1fr); gap: 24px; }
 .settings-section { min-width: 0; }
 .settings-section-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid #e7ebf0; }
-.settings-section-heading h2 { font-size: 15px; font-weight: 600; line-height: 26px; margin: 0; color: var(--sm-secondary); }
+.settings-section-heading h2 { font-size: 15px; font-weight: var(--sm-font-title-weight); line-height: 26px; margin: 0; color: var(--sm-secondary); }
 .settings-section-icon { color: #7d8997; display: grid; place-items: center; flex-shrink: 0; }
 .settings-section-icon svg { width: 19px; height: 19px; }
 .setting-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,320px); align-items: start; gap: 14px 30px; padding: 16px 0; min-width: 0; }
 .setting-row:last-child { padding-bottom: 8px; }
 .setting-row-copy { min-width: 0; padding-top: 2px; }
-.setting-row-copy h3, .setting-row-copy label { display: block; margin: 0; color: var(--sm-ink); font-size: 15px; line-height: 23px; font-weight: 500; }
+.setting-row-copy h3, .setting-row-copy label { display: block; margin: 0; color: var(--sm-ink); font-size: 15px; line-height: 23px; font-weight: var(--sm-font-title-weight); }
 .setting-row-copy p { margin: 7px 0 0; font-size: 13px; line-height: 22px; color: var(--sm-muted); overflow-wrap: anywhere; }
 .setting-row-control { display: flex; justify-content: flex-end; min-width: 0; max-width: 100%; }
 .setting-row-control > .rt-SwitchRoot { margin-top: 7px; }

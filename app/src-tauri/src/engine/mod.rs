@@ -124,7 +124,7 @@ fn db_wire(value:DbValue)->Result<Value>{match value{
     DbValue::Snapshot(v)=>Ok(json!({"revision":v.revision,"preferences":v.preferences,"providerConfig":v.provider_config,"modes":v.modes,"dictionary":v.dictionary,"usage":v.usage,"temporaryResult":v.temporary_result})),DbValue::Preferences(v)=>wire(v),DbValue::ProviderConfig(v)=>wire(v),
     DbValue::Modes(v)=>wire(v),DbValue::Dictionary(v)=>wire(v),DbValue::Correction(v)=>wire(v),DbValue::Mode(v)=>wire(v),DbValue::ModeSnapshot(v)=>wire(v),
     DbValue::Detail(v)=>wire(v),DbValue::Source(v)=>wire(v),DbValue::Output(v)=>wire(v),
-    DbValue::HistoryPage(v)=>wire(v),DbValue::Usage(v)=>wire(v),DbValue::UsageEvent(v)=>wire(v),
+    DbValue::HistoryPage(v)=>wire(v),DbValue::Usage(v)=>wire(v),DbValue::UsageTotal(v)=>wire(v),DbValue::UsageEvent(v)=>wire(v),
     DbValue::Delivery(v)=>wire(v),DbValue::Unit=>Ok(Value::Null),
     #[cfg(test)] DbValue::Count(v)=>wire(v),
 }}
@@ -240,7 +240,7 @@ impl AppHub {
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
         if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.resizeRecorder"|"session.captionRendered") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
         if !matches!(window,"main"|"recording"){return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
-        let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"diagnostics.get"|"session.captionRendered");
+        let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"usage.total"|"diagnostics.get"|"session.captionRendered");
         if !mutation{return self.execute_command(window,request).await;}
         let request_id=text(&request.payload,"requestId")?;
         if request_id.is_empty()||request_id.len()>128{return Err(ApiError::new("invalid_request_id","ipc","请求身份无效"));}
@@ -359,6 +359,7 @@ impl AppHub {
                 if result.is_ok(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id){s.discard_deleted_content();}}
                 db_wire(result?)},
             "usage.today"=>db_wire(self.db_read(DbCommand::UsageToday{date:chrono::Local::now().format("%Y-%m-%d").to_string()}).await?),
+            "usage.total"=>db_wire(self.db_read(DbCommand::UsageTotal).await?),
             "history.rewrite"=>self.make_candidate(&p,false).await,
             "rewrite.retry"=>self.retry_rewrite(&p).await,
             "history.cancelCandidate"=>{let mut i=self.inner.lock().unwrap();let session=text(&p,"sessionId")?;let run=operation_id(&p,"runId")?;cancel_operation(&mut i,&format!("candidate:{session}:{run}"))?;if i.candidate.as_ref().is_some_and(|c|c.key==session&&run==c.run){if let Some(slot)=i.candidate.take(){slot.cancel.cancel();if let Some(guard)=slot.adopting{let decision=guard.cancel();return Ok(json!({"status":match decision{CancelDecision::Accepted=>"cancelled",CancelDecision::Pending=>"pending",CancelDecision::AlreadyCompleted=>"alreadyCompleted"}}));}}}Ok(Value::Null)},
@@ -426,7 +427,7 @@ impl AppHub {
             "app.quit"=>{self.native_action("quit",true)?;Ok(Value::Null)},
             _=>Err(ApiError::new("unknown_command","ipc","此操作未提供")),
         };
-        if result.is_ok() && !matches!(request.name.as_str(),"preferences.get"|"mode.list"|"dictionary.list"|"usage.today"|"provider.status"|"audio.listDevices"|"history.list"|"history.get"|"credential.status"|"result.copy"|"recoverable.copy"|"mode.preview"|"mode.cancelPreview"|"history.cancelCandidate"|"shortcut.capture.begin"|"shortcut.capture.cancel"|"window.resizeRecorder"|"session.cancel"){self.changed();}
+        if result.is_ok() && !matches!(request.name.as_str(),"preferences.get"|"mode.list"|"dictionary.list"|"usage.today"|"usage.total"|"provider.status"|"audio.listDevices"|"history.list"|"history.get"|"credential.status"|"result.copy"|"recoverable.copy"|"mode.preview"|"mode.cancelPreview"|"history.cancelCandidate"|"shortcut.capture.begin"|"shortcut.capture.cancel"|"window.resizeRecorder"|"session.cancel"){self.changed();}
         result
     }
 

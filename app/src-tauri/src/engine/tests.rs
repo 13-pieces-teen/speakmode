@@ -126,6 +126,20 @@ async fn command(hub: &Arc<AppHub>, name: &str, payload: Value) -> Result<Value>
 }
 
 #[tokio::test]
+async fn usage_total_ipc_is_a_main_window_read_with_camel_case_counters() {
+    let h = hub();
+    assert_eq!(command(&h, "usage.total", json!({})).await.unwrap(), json!({"count":0,"sourceCharCount":0,"captureDurationMs":0}));
+    install(&h, "usage-total", SessionPhase::FinalizingAsr, true);
+    ready(&h, "usage-total");
+    let sequence = h.inner.lock().unwrap().sequence;
+    let result = command(&h, "usage.total", json!({})).await.unwrap();
+    assert_eq!(result, json!({"count":1,"sourceCharCount":crate::core::store::source_character_count(&source("usage-total").text()),"captureDurationMs":12_000}));
+    assert_eq!(h.inner.lock().unwrap().sequence, sequence, "statistics reads must not publish changed events");
+    assert_eq!(h.command("recording", CommandRequest { name:"usage.total".into(), payload:json!({}) }).await.unwrap_err().code, "forbidden");
+    h.db.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn correction_remembers_only_the_selected_term_and_preserves_source_and_undo() {
     let h=hub();install(&h,"correct-term",SessionPhase::FinalizingAsr,true);ready(&h,"correct-term");
     let before=h.db.get_result("correct-term").unwrap();
@@ -692,7 +706,7 @@ async fn read_commands_do_not_emit_changed_or_increment_sequence() {
     let h = hub(); install(&h, "s", SessionPhase::FinalizingAsr, true); ready(&h, "s"); let seen = events(&h);
     let sequence = h.snapshot("main").unwrap()["sequence"].clone();
     for (name, p) in [("state.snapshot", json!({})), ("preferences.get", json!({})), ("mode.list", json!({})),
-        ("usage.today", json!({})), ("provider.status", json!({})), ("credential.status", json!({})),
+        ("usage.today", json!({})), ("usage.total", json!({})), ("provider.status", json!({})), ("credential.status", json!({})),
         ("history.list", json!({"query":""})), ("history.get", json!({"sessionId":"s"}))] {
         command(&h, name, p).await.unwrap();
     }

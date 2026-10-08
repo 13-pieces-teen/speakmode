@@ -5,7 +5,7 @@ export function useDictations(){
  const desktop=useDesktop();
  const changed=async(name:string,payload:Record<string,unknown>)=>{const detail=await desktop.command<HistoryDetail>(name,payload);desktop.acceptDetail(detail);await desktop.refresh();return detail;};
  return {
-  records:desktop.records,stats:{count:desktop.usage.count,characters:desktop.usage.sourceCharCount,durationSec:Math.floor(desktop.usage.captureDurationMs/1000)},
+  records:desktop.records,
   load:desktop.loadRecord,
   generate:async(record:Dictation,mode:Mode,runId:string):Promise<Candidate>=>fromCandidate(await desktop.command<OutputRevision>('history.rewrite',{sessionId:record.id,sourceRevisionId:record.sourceRevisionId,modeId:toModeId(mode),baseRevisionId:record.revision,runId})),
   cancelCandidate:async(id:string,runId:string|null|undefined)=>{if(!runId)return;await desktop.command('history.cancelCandidate',{sessionId:id,runId});},

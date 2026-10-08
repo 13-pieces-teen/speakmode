@@ -1,0 +1,19 @@
+.home-page .usage-overview { grid-template-columns: 218px minmax(0, 1fr); row-gap: 12px; }
+
+.usage-overview .usage-period p { font-size: 11px; line-height: 1.5; }
+.usage-range { display: inline-flex; padding: 3px; gap: 2px; margin-top: 10px; border: 1px solid var(--sm-line); border-radius: 9px; background: var(--sm-canvas); }
+.usage-range button { padding: 4px 15px; border: 0; border-radius: 6px; color: var(--sm-muted); background: transparent; font-size: 12px; line-height: 20px; cursor: pointer; }
+.usage-range button[aria-pressed='true'] { color: var(--sm-ink); background: white; box-shadow: 0 1px 3px #263b5714; font-weight: 600; }
+.usage-range button:hover { color: var(--sm-ink); }
+.usage-read-status { grid-column: 1 / -1; min-width: 0; font-size: 11px; line-height: 1.5; color: var(--sm-muted); }
+.usage-read-status button { margin-left: 8px; padding: 0; border: 0; background: transparent; color: var(--sm-accent); font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 1000px) {
+  .home-page .usage-overview { grid-template-columns: 190px minmax(0, 1fr); }
+}
+@media (max-width: 740px) {
+  .home-page .usage-overview { grid-template-columns: minmax(0, 1fr); }
+  .usage-overview .usage-period { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; }
+  .usage-period h2, .usage-period p { grid-column: 1; }
+  .usage-range { grid-column: 2; grid-row: 1 / 3; align-self: center; margin-top: 0; }
+  .usage-range button { padding-inline: 10px; }
+}
