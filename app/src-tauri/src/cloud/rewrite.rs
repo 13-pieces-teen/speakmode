@@ -64,6 +64,7 @@ fn mode_task(mode: BaseMode) -> String {
 }
 
 pub fn request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision) -> Result<Value, CloudError> {
+    super::models::validate_rewrite_model(config)?;
     validate_source(source)?;
     if mode.rules.chars().count()>4000 {return Err(CloudError::new("invalid_mode","rewrite","个人规则超过容量限制"));}
     let system = format!("{REWRITE_CONTRACT}\n\n{}", mode_task(mode.base_mode));

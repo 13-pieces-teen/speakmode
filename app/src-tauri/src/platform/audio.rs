@@ -12,6 +12,61 @@ use std::time::{Duration, Instant};
 const OUTPUT_HZ: usize = 16_000;
 const FRAME_SAMPLES: usize = 1_600;
 const RAW_CHUNKS: usize = 64;
+const FIRST_SAMPLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Initial engineering threshold; real device and CPU-load acceptance is
+/// separate from the deterministic supply tests below. Silence has no limit.
+const PCM_STALL_TIMEOUT: Duration = Duration::from_secs(5);
+pub const PCM_STALL_ERROR: &str = "microphone PCM callback stalled";
+pub const FIRST_SAMPLE_TIMEOUT_ERROR: &str = "microphone first-sample deadline exceeded";
+pub const OUTPUT_QUEUE_FULL_ERROR: &str = "ASR bounded audio output queue full";
+pub const OUTPUT_CONSUMER_DISCONNECTED_ERROR: &str = "ASR audio output consumer disconnected";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureFailureReason { PcmStalled, FirstSampleTimeout, DeviceError, QueueOverflow, MalformedFrame }
+
+/// Classifies native summary/event errors without depending on localized UI
+/// text. Unknown resampler/stream-creation errors retain the caller's fallback.
+pub fn classify_capture_error(error: Option<&str>) -> Option<CaptureFailureReason> {
+    match error? {
+        PCM_STALL_ERROR => Some(CaptureFailureReason::PcmStalled),
+        FIRST_SAMPLE_TIMEOUT_ERROR => Some(CaptureFailureReason::FirstSampleTimeout),
+        "microphone stream error/disconnected" | "microphone input disconnected" => Some(CaptureFailureReason::DeviceError),
+        "audio input queue overflow" | OUTPUT_QUEUE_FULL_ERROR => Some(CaptureFailureReason::QueueOverflow),
+        "malformed microphone frame" => Some(CaptureFailureReason::MalformedFrame),
+        _ => None,
+    }
+}
+
+/// Callback writes only one atomic timestamp after a nonempty PCM submission
+/// has succeeded. Zero means no PCM yet; other values are monotonic nanoseconds
+/// since this capture's epoch plus one. No locks, channel sends or allocations
+/// are added to the callback. Worker time/RMS/provider progress are unrelated.
+struct PcmHeartbeat { epoch: Instant, last_accepted_ns: AtomicU64 }
+impl PcmHeartbeat {
+    fn new_at(epoch: Instant) -> Self { Self { epoch, last_accepted_ns: AtomicU64::new(0) } }
+    fn mark_at(&self, accepted_at: Instant) {
+        let offset = accepted_at.saturating_duration_since(self.epoch).as_nanos().min(u128::from(u64::MAX - 1)) as u64;
+        self.last_accepted_ns.fetch_max(offset + 1, Ordering::SeqCst);
+    }
+    fn last_accepted_at(&self) -> Option<Instant> {
+        let value = self.last_accepted_ns.load(Ordering::SeqCst);
+        (value != 0).then(|| self.epoch + Duration::from_nanos(value - 1))
+    }
+    fn failure_at(&self, started_at: Instant, now: Instant, accepting: bool) -> Option<&'static str> {
+        // User cutoff wins over liveness; stop/cancel drains already accepted
+        // samples without judging the deliberately stopped PCM supply.
+        if !accepting { return None; }
+        match self.last_accepted_at() {
+            None if now.saturating_duration_since(started_at) >= FIRST_SAMPLE_TIMEOUT => Some(FIRST_SAMPLE_TIMEOUT_ERROR),
+            Some(last) if now.saturating_duration_since(last) >= PCM_STALL_TIMEOUT => Some(PCM_STALL_ERROR),
+            _ => None,
+        }
+    }
+}
+
+fn source_fault_error(code: usize) -> &'static str {
+    match code { 1 => "audio input queue overflow", 2 => "microphone stream error/disconnected", _ => "malformed microphone frame" }
+}
 static ACTIVE_CAPTURE: AtomicBool = AtomicBool::new(false);
 struct CaptureLease;
 impl Drop for CaptureLease { fn drop(&mut self) { ACTIVE_CAPTURE.store(false, Ordering::SeqCst); } }
@@ -87,6 +142,7 @@ struct CallbackIngress {
     accepting: Arc<AtomicBool>,
     queued: Arc<AtomicUsize>,
     fault: Arc<AtomicUsize>,
+    heartbeat: Arc<PcmHeartbeat>,
     channels: usize,
     budget: usize,
     chunk_capacity: usize,
@@ -102,7 +158,8 @@ impl CallbackIngress {
             recycle.try_send(Vec::with_capacity(chunk_capacity)).expect("new pool has capacity");
         }
         let worker_recycle = recycle.clone();
-        (Self { sender, available, recycle, accepting, queued, fault, channels, budget, chunk_capacity }, receiver, worker_recycle)
+        (Self { sender, available, recycle, accepting, queued, fault, heartbeat: Arc::new(PcmHeartbeat::new_at(Instant::now())),
+            channels, budget, chunk_capacity }, receiver, worker_recycle)
     }
 
     fn fail(&self, code: usize) {
@@ -145,6 +202,7 @@ impl CallbackIngress {
                 },
             }
         }
+        self.heartbeat.mark_at(accepted_at);
     }
 }
 
@@ -244,15 +302,16 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
     let budget = config.sample_rate.0 as usize * 2;
     let (ingress, raw_rx, recycle) = CallbackIngress::new(usize::from(config.channels), budget,
         Arc::clone(&accepting), Arc::clone(&queued_samples), Arc::clone(&fault));
+    let heartbeat = Arc::clone(&ingress.heartbeat);
     let stream = build_stream(&device, &config, supported.sample_format(), ingress)?;
     let mut resampler = FrameResampler::new(config.sample_rate.0 as usize, OUTPUT_HZ, Duration::from_millis(100));
     stream.play().map_err(unavailable)?;
+    let started = Instant::now();
     let _ = ready.send(Ok(()));
     let mut captured: u64 = 0;
     let mut sequence = 0;
     let mut error: Option<String> = None;
     let mut cancelled = false;
-    let started = Instant::now();
     let mut level_at = Instant::now() - Duration::from_secs(1);
     loop {
         if cancellation.load(Ordering::SeqCst) { cancelled = true; break; }
@@ -263,8 +322,10 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
             Err(crossbeam_channel::TryRecvError::Empty) => {},
         }
         let code = fault.load(Ordering::SeqCst);
-        if code != 0 { error = Some(match code { 1 => "audio input queue overflow", 2 => "microphone stream error/disconnected", _ => "malformed microphone frame" }.into()); break; }
-        if captured == 0 && started.elapsed() >= Duration::from_secs(10) { error = Some("microphone first-sample deadline exceeded".into()); break; }
+        if code != 0 { error = Some(source_fault_error(code).into()); break; }
+        if let Some(reason) = heartbeat.failure_at(started, Instant::now(), accepting.load(Ordering::SeqCst)) {
+            error = Some(reason.into()); break;
+        }
         match raw_rx.recv_timeout(Duration::from_millis(10)) {
             Ok(chunk) => {
                 account_received_chunk(&chunk, &queued_samples, &mut captured, events);
@@ -301,7 +362,8 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
         });
         if let Some(value) = resampler.error() { error = Some(value.into()); }
     }
-    if fault.load(Ordering::SeqCst) != 0 && error.is_none() { error = Some("audio source failed before cutoff completed".into()); }
+    let final_fault = fault.load(Ordering::SeqCst);
+    if final_fault != 0 && error.is_none() { error = Some(source_fault_error(final_fault).into()); }
     cancelled |= cancellation.load(Ordering::SeqCst);
     if let Some(value) = &error { let _ = events.try_send(AudioEvent::Error(value.clone())); }
     Ok(CaptureSummary { complete: !cancelled && error.is_none(), cancelled, captured_samples: captured,
@@ -317,9 +379,14 @@ fn account_received_chunk(chunk: &RawChunk, queued: &AtomicUsize, captured: &mut
 fn emit_frame(frame: &[f32], padding_samples: usize, output: &Sender<AudioFrame>, sequence: &mut u64, error: &mut Option<String>) {
     if error.is_some() { return; }
     let pcm16 = frame.iter().map(|value| quantize(*value)).collect();
-    if output.try_send(AudioFrame { sequence: *sequence, pcm16, padding_samples }).is_err() {
-        *error = Some("ASR bounded audio queue full or consumer disconnected".into());
-    } else { *sequence += 1; }
+    match output.try_send(AudioFrame { sequence: *sequence, pcm16, padding_samples }) {
+        Ok(()) => *sequence += 1,
+        Err(crossbeam_channel::TrySendError::Full(_)) => *error = Some(OUTPUT_QUEUE_FULL_ERROR.into()),
+        // A downstream receiver may close because of its own cloud failure.
+        // Keep the original ASR error authoritative rather than misclassifying
+        // that consequence as a proven native queue overflow.
+        Err(crossbeam_channel::TrySendError::Disconnected(_)) => *error = Some(OUTPUT_CONSUMER_DISCONNECTED_ERROR.into()),
+    }
 }
 
 fn build_stream(device: &cpal::Device, config: &cpal::StreamConfig, format: cpal::SampleFormat,
@@ -368,6 +435,102 @@ fn rms(samples: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test] fn pcm_supply_stall_is_detected_after_first_callback_at_the_five_second_boundary() {
+        let started_at = Instant::now();
+        let (mut ingress, receiver, recycle) = test_ingress(1, 96_000);
+        ingress.heartbeat = Arc::new(PcmHeartbeat::new_at(started_at));
+        let accepted_at = started_at + Duration::from_millis(20);
+        ingress.submit_at(&[0.0_f32; 480], accepted_at);
+        assert_eq!(collect_ingress(&ingress, &receiver, &recycle), vec![0.0; 480]);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, accepted_at + PCM_STALL_TIMEOUT - Duration::from_nanos(1), true), None);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, accepted_at + PCM_STALL_TIMEOUT, true), Some(PCM_STALL_ERROR));
+    }
+
+    #[test] fn first_pcm_deadline_is_ten_seconds_and_empty_callbacks_do_not_extend_it() {
+        let started_at = Instant::now();
+        let (mut ingress, receiver, _recycle) = test_ingress(1, 96_000);
+        ingress.heartbeat = Arc::new(PcmHeartbeat::new_at(started_at));
+        ingress.submit_at::<f32>(&[], started_at + Duration::from_secs(9));
+        assert!(receiver.is_empty());
+        assert_eq!(ingress.heartbeat.last_accepted_at(), None);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, started_at + FIRST_SAMPLE_TIMEOUT - Duration::from_nanos(1), true), None);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, started_at + FIRST_SAMPLE_TIMEOUT, true), Some(FIRST_SAMPLE_TIMEOUT_ERROR));
+    }
+
+    #[test] fn another_successful_pcm_callback_restarts_the_supply_deadline() {
+        let started_at = Instant::now();
+        let (mut ingress, receiver, recycle) = test_ingress(1, 96_000);
+        ingress.heartbeat = Arc::new(PcmHeartbeat::new_at(started_at));
+        ingress.submit_at(&[0.0_f32; 480], started_at);
+        collect_ingress(&ingress, &receiver, &recycle);
+        let next_at = started_at + Duration::from_millis(4_900);
+        ingress.submit_at(&[0.0_f32; 480], next_at);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, started_at + PCM_STALL_TIMEOUT, true), None);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, next_at + PCM_STALL_TIMEOUT, true), Some(PCM_STALL_ERROR));
+        assert!(ingress.accepting.load(Ordering::SeqCst));
+        assert_eq!(ingress.fault.load(Ordering::SeqCst), 0);
+    }
+
+    #[test] fn consuming_old_queued_pcm_does_not_refresh_the_callback_heartbeat() {
+        let started_at = Instant::now();
+        let (mut ingress, receiver, recycle) = test_ingress(1, 96_000);
+        ingress.heartbeat = Arc::new(PcmHeartbeat::new_at(started_at));
+        ingress.submit_at(&[0.0_f32; 480], started_at);
+        // Even with a source chunk waiting, the callback timestamp is stale.
+        assert_eq!(receiver.len(), 1);
+        assert_eq!(ingress.heartbeat.failure_at(started_at, started_at + PCM_STALL_TIMEOUT, true), Some(PCM_STALL_ERROR));
+        let (events, _received_events) = bounded(1);
+        let mut captured = 0;
+        let chunk = receiver.try_recv().unwrap();
+        account_received_chunk(&chunk, &ingress.queued, &mut captured, &events);
+        recycle_chunk(chunk, &recycle);
+        assert_eq!(captured, 480);
+        assert_eq!(ingress.heartbeat.last_accepted_at(), Some(started_at));
+        assert_eq!(ingress.heartbeat.failure_at(started_at, started_at + Duration::from_secs(6), true), Some(PCM_STALL_ERROR));
+    }
+
+    #[test] fn failed_and_closed_pcm_callbacks_do_not_refresh_the_heartbeat() {
+        let started_at = Instant::now();
+        let (mut ingress, receiver, _recycle) = test_ingress(1, 96_000);
+        ingress.heartbeat = Arc::new(PcmHeartbeat::new_at(started_at));
+        for _ in 0..RAW_CHUNKS { ingress.submit_at(&[0.0_f32], started_at); }
+        assert_eq!(receiver.len(), RAW_CHUNKS);
+        ingress.submit_at(&[0.0_f32], started_at + Duration::from_secs(1));
+        assert_eq!(ingress.fault.load(Ordering::SeqCst), 1);
+        assert_eq!(ingress.heartbeat.last_accepted_at(), Some(started_at));
+        ingress.submit_at(&[0.0_f32], started_at + Duration::from_secs(2));
+        assert_eq!(ingress.heartbeat.last_accepted_at(), Some(started_at));
+    }
+
+    #[test] fn pcm_heartbeat_never_moves_backward_and_user_cutoff_disables_deadlines() {
+        let started_at = Instant::now();
+        let heartbeat = PcmHeartbeat::new_at(started_at);
+        assert_eq!(heartbeat.failure_at(started_at, started_at + Duration::from_secs(60), false), None);
+        let latest_at = started_at + Duration::from_secs(2);
+        heartbeat.mark_at(latest_at);
+        heartbeat.mark_at(started_at + Duration::from_secs(1));
+        assert_eq!(heartbeat.last_accepted_at(), Some(latest_at));
+        assert_eq!(heartbeat.failure_at(started_at, latest_at + PCM_STALL_TIMEOUT, true), Some(PCM_STALL_ERROR));
+        // request_stop/cancel both close admission before sending control.
+        assert_eq!(heartbeat.failure_at(started_at, started_at + Duration::from_secs(60), false), None);
+    }
+
+    #[test] fn capture_errors_have_stable_distinct_classifications() {
+        for (reason, expected) in [
+            (PCM_STALL_ERROR, CaptureFailureReason::PcmStalled),
+            (FIRST_SAMPLE_TIMEOUT_ERROR, CaptureFailureReason::FirstSampleTimeout),
+            (source_fault_error(1), CaptureFailureReason::QueueOverflow),
+            (source_fault_error(2), CaptureFailureReason::DeviceError),
+            ("microphone input disconnected", CaptureFailureReason::DeviceError),
+            (OUTPUT_QUEUE_FULL_ERROR, CaptureFailureReason::QueueOverflow),
+            (source_fault_error(3), CaptureFailureReason::MalformedFrame),
+        ] { assert_eq!(classify_capture_error(Some(reason)), Some(expected)); }
+        assert_eq!(classify_capture_error(None), None);
+        for reason in [OUTPUT_CONSUMER_DISCONNECTED_ERROR, "ASR bounded audio queue full or consumer disconnected", "unknown future native failure"] {
+            assert_eq!(classify_capture_error(Some(reason)), None);
+        }
+    }
 
     fn test_ingress(channels: usize, budget: usize) -> (CallbackIngress, Receiver<RawChunk>, Sender<Vec<f32>>) {
         CallbackIngress::new(channels, budget, Arc::new(AtomicBool::new(true)),
@@ -469,12 +632,13 @@ mod tests {
             assert_eq!(ingress.available.len(), RAW_CHUNKS);
         }
     }
-    #[test] fn thirty_seconds_of_silent_callbacks_do_not_stop_or_drop_audio() {
-        let (ingress, receiver, recycle) = test_ingress(1, 96_000);
+    #[test] fn sixty_seconds_of_silent_callbacks_do_not_stop_or_drop_audio_or_report_a_stall() {
+        let (mut ingress, receiver, recycle) = test_ingress(1, 96_000);
         let (events, received_events) = bounded(4);
         let started_at = Instant::now();
+        ingress.heartbeat = Arc::new(PcmHeartbeat::new_at(started_at));
         let mut captured = 0;
-        for callback in 0..3_000 {
+        for callback in 0..6_000 {
             let accepted_at = started_at + Duration::from_millis(callback * 10);
             ingress.submit_at(&[0.0_f32; 480], accepted_at);
             let chunk = receiver.try_recv().unwrap();
@@ -482,8 +646,10 @@ mod tests {
             assert_eq!(chunk.accepted_at, accepted_at);
             account_received_chunk(&chunk, &ingress.queued, &mut captured, &events);
             recycle_chunk(chunk, &recycle);
+            assert_eq!(ingress.heartbeat.last_accepted_at(), Some(accepted_at));
+            assert_eq!(ingress.heartbeat.failure_at(started_at, accepted_at + Duration::from_millis(10), true), None);
         }
-        assert_eq!(captured, 30 * 48_000);
+        assert_eq!(captured, 60 * 48_000);
         assert!(ingress.accepting.load(Ordering::SeqCst));
         assert_eq!(ingress.fault.load(Ordering::SeqCst), 0);
         assert_eq!(ingress.queued.load(Ordering::SeqCst), 0);
@@ -500,6 +666,7 @@ mod tests {
             assert_eq!(ingress.queued.load(Ordering::SeqCst), 0);
             assert_eq!(ingress.available.len(), RAW_CHUNKS);
             assert!(receiver.is_empty());
+            assert_eq!(ingress.heartbeat.last_accepted_at(), None);
         }
     }
     #[test] fn disconnected_raw_consumer_releases_reserved_samples_and_buffer() {
@@ -510,6 +677,7 @@ mod tests {
         assert!(!ingress.accepting.load(Ordering::SeqCst));
         assert_eq!(ingress.queued.load(Ordering::SeqCst), 0);
         assert_eq!(ingress.available.len(), RAW_CHUNKS);
+        assert_eq!(ingress.heartbeat.last_accepted_at(), None);
     }
     #[test] fn partial_large_callback_failure_keeps_only_accepted_samples_accounted() {
         let (mut ingress, _receiver, recycle) = test_ingress(1, 96_000);
@@ -524,6 +692,7 @@ mod tests {
         assert_eq!(collect_ingress(&ingress, &narrow_receiver, &recycle), vec![0.5; 1_500]);
         assert_eq!(ingress.queued.load(Ordering::SeqCst), 0);
         assert_eq!(ingress.available.len(), RAW_CHUNKS);
+        assert_eq!(ingress.heartbeat.last_accepted_at(), None);
     }
     #[test] fn pooled_stop_cutoff_drains_accepted_samples_and_preserves_resampler_tail() {
         let (ingress, receiver, recycle) = test_ingress(1, 96_000);
@@ -719,7 +888,15 @@ mod tests {
         let (tx, _rx) = bounded(1); let mut seq = 0; let mut error = None;
         emit_frame(&[0.1], 0, &tx, &mut seq, &mut error);
         emit_frame(&[0.2], 0, &tx, &mut seq, &mut error);
-        assert_eq!(seq, 1); assert!(error.is_some());
+        assert_eq!(seq, 1); assert_eq!(error.as_deref(), Some(OUTPUT_QUEUE_FULL_ERROR));
+        assert_eq!(classify_capture_error(error.as_deref()), Some(CaptureFailureReason::QueueOverflow));
+    }
+    #[test] fn disconnected_output_consumer_is_not_misclassified_as_queue_overflow() {
+        let (tx, rx) = bounded(1); let mut seq = 0; let mut error = None;
+        drop(rx);
+        emit_frame(&[0.1], 0, &tx, &mut seq, &mut error);
+        assert_eq!(seq, 0); assert_eq!(error.as_deref(), Some(OUTPUT_CONSUMER_DISCONNECTED_ERROR));
+        assert_eq!(classify_capture_error(error.as_deref()), None);
     }
     #[test] fn source_duration_excludes_resampler_padding() {
         let s = CaptureSummary { complete: true, cancelled: false, captured_samples: 48_001,

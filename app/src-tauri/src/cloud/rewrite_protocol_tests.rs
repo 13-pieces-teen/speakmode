@@ -194,13 +194,13 @@ async fn old_new_cold_hot_same_fixture_demonstrates_actual_connection_reuse_only
 async fn pooled_client_sets_credentials_workspace_and_model_per_request_after_configuration_switch() {
     let(config,mode,source)=fixture();let client=build_client().unwrap();let(url,mut requests,server)=keep_alive_server(2,Duration::ZERO).await;
     rewrite_with_client(&client,&config,"synthetic-key-a",&mode,&source,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
-    let mut changed=config.clone();changed.workspace=Some("synthetic-workspace-b".into());changed.rewrite_model="candidate-b".into();
+    let mut changed=config.clone();changed.workspace=Some("synthetic-workspace-b".into());changed.rewrite_model="qwen-plus".into();
     rewrite_with_client(&client,&changed,"synthetic-key-b",&mode,&source,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
     let first=requests.recv().await.unwrap();let second=requests.recv().await.unwrap();
     assert_eq!(first.connection,second.connection);
     assert!(first.headers.to_lowercase().contains("authorization: bearer synthetic-key-a"));assert!(!first.headers.to_lowercase().contains("x-dashscope-workspace:"));
     assert!(second.headers.to_lowercase().contains("authorization: bearer synthetic-key-b"));assert!(!second.headers.contains("synthetic-key-a"));assert!(second.headers.to_lowercase().contains("x-dashscope-workspace: synthetic-workspace-b"));
-    assert_eq!(first.body["model"],config.rewrite_model);assert_eq!(second.body["model"],"candidate-b");assert_eq!(server.await.unwrap(),1);
+    assert_eq!(first.body["model"],config.rewrite_model);assert_eq!(second.body["model"],"qwen-plus");assert_eq!(server.await.unwrap(),1);
 }
 
 #[tokio::test]

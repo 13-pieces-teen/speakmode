@@ -320,6 +320,7 @@ impl Default for Timeouts {fn default()->Self {Self{establishment:Duration::from
 
 // Private transport seam: only run() can select a production URL; localhost injection lives in tests.
 async fn run_at(config:ProviderConfig, secret:String, language:String, dictionary:DictionarySnapshot, attempt:String, mut audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>, url:String, timeouts:Timeouts)->Result<Vec<SourceItem>,CloudError> {
+    super::models::validate_recognition(&config,&language)?;
     let mut diagnostics=WireDiagnostics::new(Arc::clone(&callback));
     let update=session_update(&language,&dictionary)?;
     let connect_deadline=tokio::time::Instant::now()+timeouts.establishment;

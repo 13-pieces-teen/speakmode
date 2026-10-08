@@ -42,8 +42,8 @@ ORIGINS = frozenset(("uiCommand", "hotkeyHook", "asrRetry", "rewriteRetry", "sav
 MODE_IDS = frozenset(("auto", "light", "structure"))
 REGIONS = frozenset(("beijing", "singapore"))
 # The current MVP models. Other values are redacted, never copied as arbitrary strings.
-ASR_MODELS = frozenset(("qwen3-asr-flash-realtime",))
-REWRITE_MODELS = frozenset(("qwen-flash",))
+ASR_MODELS = frozenset(("qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2025-10-27", "qwen3-asr-flash-realtime-2026-02-10"))
+REWRITE_MODELS = frozenset(("qwen-flash", "qwen-plus", "qwen3.8-flash", "qwen3.7-plus", "qwen3.7-plus-2026-05-26"))
 ERROR_CODES = frozenset("""
 ack_timeout asr_closed asr_connect_failed asr_connect_timeout asr_disconnected
 asr_finish_timeout asr_limit asr_receive_failed asr_retry_unavailable asr_send_failed
@@ -66,6 +66,9 @@ provider_error rewrite_http rewrite_rejected rewrite_incomplete asr_incomplete
 rewrite_meaning_risk target_higher_integrity
 asr_config_timeout audio_disconnected late_asr_event asr_service_error dictionary_invalid
 missing_predecessor unknown_order ambiguous_order unexpected_finish
+unsupported_asr_model unsupported_rewrite_model unsupported_asr_language
+asr_adapter_not_implemented asr_adapter_mismatch audio_capture_stalled
+audio_first_sample_timeout audio_capture_device_error audio_capture_queue_overflow audio_capture_malformed
 """.split())
 
 

@@ -2,7 +2,7 @@
 
 SpeakMode 是一个 Windows 语音输入 MVP：按右 Alt 开始口述，再按一次结束，将识别结果按所选 Mode 整理后输入到结束口述时的文本位置。录音中可以停顿、翻阅资料或移动光标。
 
-当前桌面源码版本为 **0.1.7**，前端 package 版本为 **0.3.2**。仓库包含实际 React/Tauri/Rust 实现、锁定依赖、测试和构建所需的第三方材料；不包含个人配置、API Key、历史数据库、录音、安装包或本机工具链。
+当前桌面源码版本为 **0.1.8**，前端 package 版本为 **0.3.3**。仓库包含实际 React/Tauri/Rust 实现、锁定依赖、测试和构建所需的第三方材料；不包含个人配置、API Key、历史数据库、录音、安装包或本机工具链。
 
 ## 功能
 
@@ -61,7 +61,9 @@ PowerShell 中带 `--` 分隔的打包命令使用 `npm.cmd`，避免 `npm.ps1` 
 
 固定 TTS 的真实云端对比、默认麦克风采音与自有 Windows 控件实验见 [0.1.5 真实语音实验报告](docs/experiments/voice-real-lab-2026-10-08.md)。该实验发现的来源映射失败和时间限定遗漏已按 [0.1.6 修复计划](docs/plans/voice-0.1.6.md)实施；[新一轮复测报告](docs/experiments/voice-repair-0.1.6-2026-10-08.md)记录 22/24 任务产出、所有实际整理调用通过，以及 ASR 不完整和本轮宿主输入未验收的限制。`app/src-tauri/examples/` 中的实验工具须显式运行，正常程序启动不执行实验。
 
-恢复、语音、输入与设置优化见 [优化清单](docs/plans/optimization-backlog-2026-10-08.md)。本轮实施 O01/O03，并补 O02 的诊断和缓存重试节拍，增量与验证边界见 [0.1.7 计划](docs/plans/voice-0.1.7.md)和[实际报告](docs/experiments/voice-0.1.7-2026-10-08.md)。O04–O10 尚未实施。
+恢复、语音、输入与设置优化见 [优化清单](docs/plans/optimization-backlog-2026-10-08.md)。O01/O03 及 O02 的诊断和缓存重试节拍见 [0.1.7 计划](docs/plans/voice-0.1.7.md)和[实际报告](docs/experiments/voice-0.1.7-2026-10-08.md)。0.1.8 新增 O04、有限 O06 事实检查及模型配置兼容校验；其余条目继续按证据推进。
+
+后续语音模型、词典、整理保真与真人质量评测见 [质量优化路线](docs/plans/voice-quality-roadmap-2026-10-08.md)。第一轮实施见 [0.1.8 增量计划](docs/plans/voice-0.1.8.md)与[评测工具](docs/experiments/voice-quality-lab.md)。默认模型保持原值；旧实时协议的快照及文本候选已列入兼容清单，新 Task Streaming／文件识别接口尚未接入，候选真实质量与账号可用性待测。
 
 手动诊断导出工具 `scripts/export-voice-diagnostics.py` 支持 schema1/2；只导出有界类型化元数据，过滤正文、PCM、Key 和原始服务端标识。使用 `--help` 查看要求。`--project-root` 必须显式指向包含 `app/src-tauri/tauri.conf.json` 的本机项目目录；RPC 仅允许经过 PID/可执行文件/CDP 归属核对的主窗口。导出失败不输出原始 payload。
 

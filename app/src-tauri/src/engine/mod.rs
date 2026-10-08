@@ -220,8 +220,10 @@ impl AppHub {
         if window=="recording" {for m in &mut modes{m.rules.clear();}return Ok(json!({"sequence":i.sequence,"session":i.active.as_ref().map(|s|s.view()),"modes":modes}));}
         if window!="main"{return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
         let config=cache.provider_config;
-        let valid=cloud::endpoints(&config).is_ok();
-        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:None},"session":i.active.as_ref().map(|s|s.view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
+        let configuration=cloud::endpoints(&config);let valid=configuration.is_ok();
+        let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
+        provider["modelCatalog"]=wire(cloud::models::catalog())?;
+        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
     }
 
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
@@ -529,6 +531,7 @@ impl AppHub {
         if sample.trim().is_empty()||sample.chars().count()>80_000{return Err(ApiError::new("invalidInput","mode","试用文本为空或过长"));}
         let cancel=CancellationToken::new();
         let (config,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;(self.db.snapshot().provider_config,self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
+        cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
         let lease={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;
             if self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst)!=epoch{return Err(ApiError::new("cancelled","preview","系统状态变化，试用已取消"));}
@@ -552,6 +555,7 @@ impl AppHub {
         let base=detail.output.as_ref().map(|v|v.id.clone()).unwrap_or_default();
         if p.get("baseRevisionId").and_then(Value::as_str).is_some_and(|v|v!=base){return Err(ApiError::new("revisionConflict","rewrite","记录已变化，请重新核对"));}
         let config=self.db.snapshot().provider_config;
+        cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
         let cancel=CancellationToken::new();
         let current=db_detail(self.db_read(DbCommand::GetResult{session_id:id.clone()}).await?)?;

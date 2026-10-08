@@ -1,6 +1,6 @@
 use super::*;
 use crate::cloud::asr::{self,AsrInput,AsrProgress,CaptionItem};
-use crate::platform::audio::{AudioEvent,AudioFrame,CaptureHandle,CaptureSummary};
+use crate::platform::audio::{AudioEvent,AudioFrame,CaptureHandle,CaptureSummary,CaptureFailureReason,classify_capture_error};
 use serde::Serialize;
 use std::{sync::atomic::{AtomicBool,Ordering},time::{Duration,Instant}};
 use tokio::sync::{mpsc,oneshot,Notify};
@@ -19,6 +19,10 @@ mod audio_diagnostics_tests;
 #[cfg(test)]
 #[path="retry_asr_experiment_tests.rs"]
 mod retry_asr_experiment_tests;
+
+#[cfg(test)]
+#[path="quality_foundation_tests.rs"]
+mod quality_foundation_tests;
 
 #[derive(Debug,Clone,Copy,PartialEq,Eq,Serialize)]
 #[serde(rename_all="camelCase")]
@@ -418,7 +422,7 @@ impl AppHub {
     fn fail(&self,id:&str,generation:u64,error:ApiError,resources_released:bool) {
         let error=error.for_session(id,generation);
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.worker_released=resources_released;
-            if !matches!(s.phase,SessionPhase::Cancelled|SessionPhase::Ready)&&!s.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed"){s.phase=if matches!(error.code.as_str(),"asr_finish_timeout"|"asr_disconnected"|"audio_incomplete"|"recording_limit"|"cache_overflow"|"capture_overflow"|"missing_order"|"invalid_order"|"conflicting_order"|"conflicting_final"|"incomplete_source"|"asr_closed"|"asr_send_timeout"|"asr_receive_failed"|"invalid_final"|"invalid_asr_event")||(error.stage=="asr"&&s.first_samples){SessionPhase::Incomplete}else{SessionPhase::Failed};self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"failed",Some(&error.code));s.error=Some(error);}
+            if !matches!(s.phase,SessionPhase::Cancelled|SessionPhase::Ready)&&!s.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed"){s.phase=if matches!(error.code.as_str(),"asr_finish_timeout"|"asr_disconnected"|"audio_incomplete"|"audio_capture_stalled"|"audio_capture_device_error"|"audio_capture_queue_overflow"|"audio_capture_malformed"|"recording_limit"|"cache_overflow"|"capture_overflow"|"missing_order"|"invalid_order"|"conflicting_order"|"conflicting_final"|"incomplete_source"|"asr_closed"|"asr_send_timeout"|"asr_receive_failed"|"invalid_final"|"invalid_asr_event")||(error.stage=="asr"&&s.first_samples){SessionPhase::Incomplete}else{SessionPhase::Failed};self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"failed",Some(&error.code));s.error=Some(error);}
         }}self.publish_session();self.changed();
     }
     fn valid_active(&self,id:&str,generation:u64)->bool {self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())}
@@ -477,6 +481,7 @@ impl AppHub {
         };
         self.diagnostics.lengths(trace.as_ref(),summary.duration_ms(),None);
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.worker_released=true;s.capture_duration_ms=summary.duration_ms();if s.phase!=SessionPhase::Cancelled{s.cache_complete=summary.complete;s.cache=Some(cache);s.cache_created=Some(Instant::now());}if s.ended_at.is_none(){s.ended_at=Some(chrono::Local::now().to_rfc3339());}}}
+        if let Some(error)=capture_failure(&summary){self.fail(&id,generation,error,true);return;}
         let items=match result {Ok(v) if summary.complete=>v,Ok(_)=>{self.fail(&id,generation,ApiError::new("audio_incomplete","audio","采音未完整结束，可复制已有字幕"),true);return;},Err(e)=>{self.fail(&id,generation,e.into(),true);return;}};
         if items.is_empty(){self.fail(&id,generation,ApiError::new("empty_recording","asr","未识别到有效语音"),true);return;}
         let source=SourceRevision{id:Uuid::new_v4().to_string(),session_id:id.clone(),asr_attempt_id:attempt,generation,provider:config.provider.clone(),model:config.asr_model.clone(),adapter_version:config.adapter_version.clone(),complete:true,items,created_at:now()};
@@ -650,7 +655,7 @@ impl AppHub {
             if text(p,"pendingCommitId")?!=pending_id{return Err(ApiError::new("save_expired","recovery","保存身份已过期"));}
             (s.id.clone(),s.generation,pending_id,pending,s.config.clone())};
         match pending {
-            PendingCommit::Source(_seed,source)=>{let secret=credentials::read(&config)?;
+            PendingCommit::Source(_seed,source)=>{cloud::endpoints(&config)?;let secret=credentials::read(&config)?;
                 {let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
                     if s.id!=id||s.generation!=generation||s.busy()||s.pending.as_ref().is_none_or(|(key,_)|key!=&pending_id){return Err(ApiError::new("save_expired","recovery","保存请求已过期"));}
                     s.cancel=CancellationToken::new();s.reason=CreationReason::Retry;s.processing_worker_released=false;s.error=None;s.caption_render_token=None;
@@ -682,6 +687,7 @@ impl AppHub {
         let (config,generation)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||!s.view().can_retry_rewrite{return Err(ApiError::new("rewrite_unavailable","recovery","这条口述不能直接重试整理，请到记录中操作"));}
             (s.config.clone(),s.generation)};
+        cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
         {let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=generation||!s.view().can_retry_rewrite{return Err(ApiError::new("stale_session","recovery","整理请求已过期"));}
@@ -698,6 +704,7 @@ impl AppHub {
             if !s.view().can_retry_asr{return Err(ApiError::new("asr_retry_unavailable","recovery","完整音频缓存不可用，请重新口述"));}
             if p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","这次识别尝试已经变化"));}
             (s.id.clone(),s.generation,s.config.clone())};
+        cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
         let (generation,language,dictionary,cache,cancel,attempt)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=old_generation||!s.view().can_retry_asr||p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","识别请求已过期"));}
@@ -787,6 +794,21 @@ fn cloud_frame(frame:AudioFrame)->AsrInput {
 fn enqueue_observed(tx:&mpsc::Sender<AsrInput>,input:AsrInput,diagnostics:&DiagnosticsRecorder,trace:Option<&TraceHandle>,bridge:&mut BridgeTelemetry)->std::result::Result<(),mpsc::error::TrySendError<AsrInput>> {
     let counts=input.frame_counts();let result=tx.try_send(input);
     if result.is_ok(){bridge.accepted(counts);diagnostics.bridge(trace,bridge);}result
+}
+
+/// Native supply failure is more specific than the ASR receiver closing as a
+/// consequence. Cancellation remains authoritative, and no raw driver text is
+/// put into product messages or diagnostics.
+fn capture_failure(summary:&CaptureSummary)->Option<ApiError> {
+    if summary.cancelled || summary.complete {return None;}
+    let (code,message)=match classify_capture_error(summary.error.as_deref())? {
+        CaptureFailureReason::PcmStalled=>("audio_capture_stalled","麦克风已连续 5 秒没有提供音频，本次录音已停止。已有字幕可复制，请检查设备后重新录音。"),
+        CaptureFailureReason::FirstSampleTimeout=>("audio_first_sample_timeout","麦克风启动后没有提供音频，请检查设备连接和 Windows 麦克风权限。"),
+        CaptureFailureReason::DeviceError=>("audio_capture_device_error","麦克风连接或音频流中断，本次录音未完整。已有字幕可复制，请重新连接设备。"),
+        CaptureFailureReason::QueueOverflow=>("audio_capture_queue_overflow","音频处理队列未能及时接收，本次录音未完整。已有字幕可复制，请稍后重新录音。"),
+        CaptureFailureReason::MalformedFrame=>("audio_capture_malformed","麦克风提供的音频格式异常，本次录音未完整。请更换设备后重新录音。"),
+    };
+    Some(ApiError::new(code,"audio",message))
 }
 fn send_bounded(tx:&mpsc::Sender<AsrInput>,mut input:AsrInput,cancel:&CancellationToken,deadline:Instant,diagnostics:&DiagnosticsRecorder,trace:Option<&TraceHandle>,bridge:&mut BridgeTelemetry)->Result<()> {
     loop {

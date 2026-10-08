@@ -12,7 +12,9 @@ export interface HistorySummary { sessionId:string; title:string; preview:string
 export interface HistoryPage { items:HistorySummary[]; total:number; nextCursor:number|null }
 export interface DailyUsage { date:string; count:number; sourceCharCount:number; captureDurationMs:number }
 export interface ProviderConfig { version:number; provider:string; region:string|null; workspace:string|null; asrModel:string; rewriteModel:string; adapterVersion:string }
-export interface ProviderStatus { config:ProviderConfig; configured:boolean; credentialConfigured?:boolean; status?:string; message?:string }
+export interface ProviderModelOption { id:string; label:string; implemented:boolean; adapterVersion?:string|null; dictionarySupport?:string; protocol?:string; timestamps?:boolean; recognitionLanguages?:string[]; productAudioLimitSeconds?:number; jsonSchema?:boolean }
+export interface ProviderModelCatalog { asr:ProviderModelOption[]; rewrite:ProviderModelOption[] }
+export interface ProviderStatus { config:ProviderConfig; configured:boolean; credentialConfigured?:boolean; status?:string; message?:string; modelCatalog?:ProviderModelCatalog }
 export interface AudioDevice { id:string; name:string; isDefault?:boolean; available?:boolean }
 export interface DictionaryEntry { id:string; term:string; createdAt:string; updatedAt:string }
 export interface DictionarySnapshot { version:number; entries:DictionaryEntry[] }

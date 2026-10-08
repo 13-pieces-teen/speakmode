@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "example-speech",
+  "language": "mixed",
+  "transcript": "嗯，如果时间没确认，先不要发邀请，可能周五试用 SpeakMode。",
+  "deletableFillers": ["嗯"],
+  "facts": [
+    {
+      "id": "conditional-action",
+      "description": "时间没确认时，先不要发邀请；不得丢失否定或将条件移到其他事项。",
+      "sourceStart": 2,
+      "sourceEnd": 16,
+      "disposition": "retained",
+      "critical": true,
+      "kind": "negation"
+    },
+    {
+      "id": "uncertain-date",
+      "description": "周五试用只是可能，不能改成已确定安排。",
+      "sourceStart": 17,
+      "sourceEnd": 23,
+      "disposition": "retained",
+      "critical": true,
+      "kind": "condition"
+    },
+    {
+      "id": "product-name",
+      "description": "产品名为 SpeakMode。",
+      "sourceStart": 24,
+      "sourceEnd": 33,
+      "disposition": "retained",
+      "critical": true,
+      "kind": "entity"
+    }
+  ],
+  "positiveTerms": ["SpeakMode"],
+  "negativeTerms": ["WASAPI", "Rubato"],
+  "modeCriteria": {
+    "light": [
+      {"id": "clean-filler", "description": "允许删除嗯，保留条件、否定与可能性。"},
+      {"id": "natural-paragraph", "description": "自然短句或段落，不凭空增加任务。"}
+    ],
+    "structure": [
+      {"id": "group-condition", "description": "若分条，未确认的条件与暂不发邀请必须保持对应。"},
+      {"id": "retain-uncertainty", "description": "可能周五试用应继续表示为可能。"}
+    ]
+  }
+}

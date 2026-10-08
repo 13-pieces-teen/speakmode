@@ -1,5 +1,6 @@
 pub mod asr;
 pub mod credentials;
+pub mod models;
 pub mod rewrite;
 
 use crate::core::ProviderConfig;
@@ -30,6 +31,8 @@ pub fn endpoints(config: &ProviderConfig) -> Result<Endpoints, CloudError> {
             return Err(CloudError::new("invalid_model", "configuration", "模型名称无效"));
         }
     }
+    models::validate_asr_adapter(config)?;
+    models::validate_rewrite_model(config)?;
     let (legacy, region) = match config.region.as_deref() {
         Some("beijing") => ("dashscope.aliyuncs.com", "cn-beijing"),
         Some("singapore") => ("dashscope-intl.aliyuncs.com", "ap-southeast-1"),
@@ -53,6 +56,14 @@ pub fn endpoints(config: &ProviderConfig) -> Result<Endpoints, CloudError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unsupported_streaming_model_is_rejected_before_constructing_a_legacy_endpoint() {
+        let mut config = ProviderConfig::default();
+        config.region = Some("beijing".into());
+        config.asr_model = "qwen-audio-3.1-asr-flash-streaming".into();
+        let error = endpoints(&config).err().expect("a run-task model must not use session.update");
+        assert_eq!(error.code, "asr_adapter_not_implemented");
+    }
     #[test]
     fn arbitrary_hosts_and_model_query_injection_are_not_allowed() {
         let mut c = ProviderConfig::default();
