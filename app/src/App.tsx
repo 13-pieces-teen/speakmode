@@ -5,6 +5,7 @@ import {HomePage} from './pages/HomePage';
 import {HistoryPage} from './pages/HistoryPage';
 import {SettingsPage} from './pages/SettingsPage';
 import {ModesPage} from './pages/ModesPage';
+import {DictionaryPage} from './pages/DictionaryPage';
 import {ModeProvider,useModes} from './hooks/useModes';
 import {useDictations} from './hooks/useDictations';
 import {DesktopProvider,useDesktop} from './services/DesktopProvider';
@@ -35,6 +36,7 @@ function AppContent(){
   {desktop.available&&<SessionRecovery onOpen={openRecord}/>} 
   {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={mode=>void updateDefault(mode).catch(showError)} stats={dictations.stats} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onManageModes={()=>manageModes('home')}/>}
   {view==='history'&&<HistoryPage selectedId={selectedId} onSelect={setSelectedId}/>}
+  {view==='dictionary'&&<DictionaryPage/>}
   {view==='settings'&&<SettingsPage preferences={preferences} onPreferencesChange={updatePreferences} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onManageModes={()=>manageModes('settings')}/>}
   {view==='modes'&&<ModesPage records={dictations.records.filter(r=>r.detail)} origin={modeOrigin==='home'?'首页':'设置'} onBack={()=>navigate(modeOrigin)} onDirtyChange={setModeDirty} leaving={pendingView!==null} onKeepEditing={()=>setPendingView(null)} onDiscardAndLeave={()=>pendingView&&commitNavigation(pendingView)}/>}
  </AppShell>;

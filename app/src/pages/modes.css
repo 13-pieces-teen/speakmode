@@ -64,6 +64,10 @@
 .mode-preserve-note { display: flex; align-items: flex-start; gap: 8px; border-top: 1px solid var(--sm-line); padding-top: 14px; margin-top: 18px; color: #617c9c; }
 .mode-preserve-note svg { margin-top: 3px; }
 .mode-preserve-note p { font-size: 12px; line-height: 1.8; margin: 0; }
+.mode-expression-preferences { margin-bottom: 18px; min-width: 0; }
+.mode-preference-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.mode-preference-options .rt-Button { min-height: 32px; max-width: 100%; }
+.mode-expression-preferences .mode-field-hint { margin: 8px 0 0; }
 .mode-sample-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 10px; }
 .mode-sample-heading > label { margin: 0; }
 .mode-sample-picker.rt-SelectTrigger { max-width: 100%; min-width: 0; font-size: 12px; height: 30px; }

@@ -1,5 +1,6 @@
-//! Tap policy around handy-keys. The hook is nonblocking so AltGr/native
-//! combinations remain available; standalone Alt menu effects need native QA.
+//! Tap policy around handy-keys. Physical downs, AltGr/native combinations and
+//! long holds remain available. Only a recognized standalone Alt/Win tap's
+//! release is replaced by an ordered mask + equivalent release batch.
 use super::{PlatformError, Result};
 use handy_keys::{Hotkey, Key, KeyEvent};
 use std::collections::HashSet;
@@ -56,7 +57,7 @@ impl ShortcutTap {
                     self.cancelled = false;
                     return valid;
                 }
-            } else if self.started.is_some() && (event.key.is_some() || !match_mods) {
+            } else if self.started.is_some() && (event.changed_modifier.is_none() || !match_mods) {
                 self.cancelled = true;
             }
         } else if event.changed_modifier.is_some() {
@@ -71,7 +72,7 @@ impl ShortcutTap {
             } else if self.started.is_some() && !match_mods && event.is_key_down {
                 self.cancelled = true;
             }
-        } else if self.started.is_some() && event.key.is_some() {
+        } else if self.started.is_some() {
             self.cancelled = true;
         }
         false
@@ -240,8 +241,9 @@ pub fn parse_shortcut(text: &str) -> Result<Hotkey> {
 #[cfg(windows)]
 fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping: Arc<AtomicBool>,
     ready: Sender<std::result::Result<(), String>>, callback: impl Fn(HotkeyEvent)) {
-    use handy_keys::{KeyOrigin, Lifecycle, ObservedEvent, KeyboardListener};
-    let listener = match KeyboardListener::new_observed() {
+    use handy_keys::{KeyOrigin, Lifecycle, ObservedEvent, KeyboardListener, StandaloneTapMaskControl};
+    let menu_mask=StandaloneTapMaskControl::default();
+    let listener = match KeyboardListener::new_observed_with_tap_mask(menu_mask.clone()) {
         Ok(listener) => listener,
         Err(error) => { let _ = ready.send(Err(error.to_string())); return; },
     };
@@ -251,6 +253,7 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
     let mut hook_available = true;
     let mut capture = false;
     let mut recorded: Option<Hotkey> = None;
+    menu_mask.configure(Some(shortcut),maximum);
     let _ = ready.send(Ok(()));
     callback(HotkeyEvent::Ready);
     while !stopping.load(Ordering::SeqCst) {
@@ -258,30 +261,40 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
             match command {
                 Command::Replace(shortcut, ack) => {
                     ack.apply(|| {
-                        if hook_available { tap = ShortcutTap::new(shortcut, maximum); Ok(()) }
+                        if hook_available {
+                            tap = ShortcutTap::new(shortcut, maximum);
+                            menu_mask.configure((enabled&&!capture).then_some(shortcut),maximum);
+                            Ok(())
+                        }
                         else { Err("keyboard hook is unavailable".into()) }
                     });
                 },
-                Command::Capture(value, ack) => ack.apply(|| { capture = value; recorded = None; tap.reset(); Ok(()) }),
+                Command::Capture(value, ack) => ack.apply(|| {
+                    capture = value; recorded = None; tap.reset();
+                    menu_mask.configure((enabled&&hook_available&&!capture).then_some(tap.shortcut),maximum);Ok(())
+                }),
                 Command::Enable(value, ack) => {
                     ack.apply(|| {
                         if value && !hook_available { Err("keyboard hook is unavailable".into()) }
-                        else { enabled = value; tap.reset(); Ok(()) }
+                        else {
+                            enabled = value; tap.reset();
+                            menu_mask.configure((enabled&&hook_available&&!capture).then_some(tap.shortcut),maximum);Ok(())
+                        }
                     });
                 },
-                Command::Reset => tap.reset(),
+                Command::Reset => {tap.reset();menu_mask.reset();},
             }
         }
         match listener.recv_observed_timeout(Duration::from_millis(10)) {
             Ok(ObservedEvent::Lifecycle(lifecycle)) => {
-                tap.reset(); recorded = None;
+                tap.reset(); recorded = None;menu_mask.disable();
                 if matches!(lifecycle, Lifecycle::Locked | Lifecycle::Suspended | Lifecycle::HooksUnavailable) { enabled = false; }
                 if lifecycle == Lifecycle::HooksUnavailable { hook_available = false; }
                 if lifecycle == Lifecycle::HooksReinstalled { hook_available = true; }
                 callback(HotkeyEvent::LifecycleReset(format!("{lifecycle:?}")));
                 if lifecycle == Lifecycle::HooksUnavailable { callback(HotkeyEvent::Unavailable("hook reinstall failed".into())); }
             },
-            Ok(ObservedEvent::Key { origin: KeyOrigin::Reconciled, .. }) => { tap.reset(); recorded = None; },
+            Ok(ObservedEvent::Key { origin: KeyOrigin::Reconciled, .. }) => { tap.reset(); recorded = None;menu_mask.reset(); },
             Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical }) if capture => {
                 // Capture a complete gesture and keep recording Toggle disabled.
                 if event.is_key_down {
@@ -300,6 +313,7 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
             Err(error) => { callback(HotkeyEvent::Unavailable(error.to_string())); break; },
         }
     }
+    menu_mask.disable();
 }
 
 #[cfg(windows)]
@@ -307,7 +321,9 @@ fn unrelated_key_is_held() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     // Include keys held before hook startup; modifier-only tapping must not
     // appear independent simply because their down event predates the listener.
-    (0x08..=0xFE).filter(|vk| !matches!(*vk, 0x10..=0x12 | 0x5B..=0x5C | 0xA0..=0xA5))
+    // The observer's inert mask is synthetic bookkeeping, never another held
+    // physical key. It may still be queued when the gesture worker wakes.
+    (0x01..=0xFE).filter(|vk| !matches!(*vk, 0x10..=0x12 | 0x5B..=0x5C | 0xA0..=0xA5 | 0xE8))
         .any(|vk| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0)
 }
 
@@ -333,6 +349,162 @@ mod tests {
         assert!(!t.feed(modifier(Modifiers::OPT_RIGHT, Modifiers::OPT_RIGHT, true), now));
         assert!(t.feed(modifier(Modifiers::empty(), Modifiers::OPT_RIGHT, false), now));
         assert!(!t.feed(modifier(Modifiers::empty(), Modifiers::OPT_RIGHT, false), now));
+    }
+    #[test]
+    fn configured_standalone_alt_and_win_taps_disarm_native_menu_only_on_release() {
+        use handy_keys::{KeyOrigin, StandaloneTapMaskControl, StandaloneTapMenuMask};
+        let now=Instant::now();
+        for (shortcut,side) in [("alt_right",Modifiers::OPT_RIGHT),("alt_left",Modifiers::OPT_LEFT),
+                                ("winleft",Modifiers::CMD_LEFT),("winright",Modifiers::CMD_RIGHT)] {
+            let control=StandaloneTapMaskControl::default();
+            control.configure(Some(shortcut.parse().unwrap()),Duration::from_secs(1));
+            let mut native=StandaloneTapMenuMask::new(control);
+            assert!(!native.feed(modifier(side,side,true),KeyOrigin::Physical,now,false));
+            assert!(native.feed(modifier(Modifiers::empty(),side,false),KeyOrigin::Physical,
+                now+Duration::from_millis(100),false),"configured {shortcut} tap must disarm the native menu before its release is forwarded");
+            assert!(!native.feed(modifier(Modifiers::empty(),side,false),KeyOrigin::Physical,now,false));
+        }
+    }
+    fn native_tap_mask() -> (handy_keys::StandaloneTapMaskControl,handy_keys::StandaloneTapMenuMask) {
+        let control=handy_keys::StandaloneTapMaskControl::default();
+        control.configure(Some("alt_right".parse().unwrap()),Duration::from_secs(1));
+        let mask=handy_keys::StandaloneTapMenuMask::new(control.clone());(control,mask)
+    }
+    #[test]
+    fn standalone_menu_mask_preserves_altgr_keyboard_and_mouse_chords() {
+        use handy_keys::KeyOrigin::Physical;
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;
+        for other in [Key::Q,Key::A,Key::MouseLeft,Key::MouseX1] {
+            let (_,mut mask)=native_tap_mask();
+            assert!(!mask.feed(modifier(side,side,true),Physical,n,false));
+            assert!(!mask.feed(key(other,side,true),Physical,n,false));
+            assert!(!mask.feed(key(other,side,false),Physical,n,false));
+            assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n,false));
+        }
+        let (_,mut mask)=native_tap_mask();
+        mask.feed(modifier(side,side,true),Physical,n,false);
+        mask.feed(modifier(side|Modifiers::CTRL_LEFT,Modifiers::CTRL_LEFT,true),Physical,n,false);
+        mask.feed(modifier(side,Modifiers::CTRL_LEFT,false),Physical,n,false);
+        assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n,false));
+    }
+    #[test]
+    fn standalone_menu_mask_preserves_win_chords_and_unconfigured_menu_keys() {
+        use handy_keys::{KeyOrigin::Physical,StandaloneTapMaskControl,StandaloneTapMenuMask};
+        let n=Instant::now();let control=StandaloneTapMaskControl::default();
+        control.configure(Some("winleft".parse().unwrap()),Duration::from_secs(1));
+        let mut mask=StandaloneTapMenuMask::new(control);
+        mask.feed(modifier(Modifiers::CMD_LEFT,Modifiers::CMD_LEFT,true),Physical,n,false);
+        mask.feed(key(Key::A,Modifiers::CMD_LEFT,true),Physical,n,false);
+        mask.feed(key(Key::A,Modifiers::CMD_LEFT,false),Physical,n,false);
+        assert!(!mask.feed(modifier(Modifiers::empty(),Modifiers::CMD_LEFT,false),Physical,n,false));
+        for wrong in [Modifiers::CMD_RIGHT,Modifiers::OPT_RIGHT,Modifiers::OPT_LEFT] {
+            assert!(!mask.feed(modifier(wrong,wrong,true),Physical,n,false));
+            assert!(!mask.feed(modifier(Modifiers::empty(),wrong,false),Physical,n,false));
+        }
+    }
+    #[test]
+    fn standalone_menu_mask_preserves_long_hold_and_does_not_refresh_on_repeat() {
+        use handy_keys::KeyOrigin::Physical;
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;let(_,mut mask)=native_tap_mask();
+        mask.feed(modifier(side,side,true),Physical,n,false);
+        mask.feed(modifier(side,side,true),Physical,n+Duration::from_millis(900),false);
+        assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n+Duration::from_millis(1001),false));
+        mask.feed(modifier(side,side,true),Physical,n,false);
+        assert!(mask.feed(modifier(Modifiers::empty(),side,false),Physical,n+Duration::from_secs(1),false));
+        mask.feed(modifier(side,side,true),Physical,n,false);
+        assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n+Duration::from_micros(1_000_001),false));
+    }
+    #[test]
+    fn standalone_menu_mask_requires_no_other_held_key_at_both_edges() {
+        use handy_keys::KeyOrigin::Physical;
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;
+        for (at_down,at_up) in [(true,false),(false,true),(true,true)] {
+            let (_,mut mask)=native_tap_mask();
+            mask.feed(modifier(side,side,true),Physical,n,at_down);
+            assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n,at_up));
+        }
+    }
+    #[test]
+    fn standalone_menu_mask_disable_capture_and_policy_replacement_cancel_old_hold() {
+        use handy_keys::KeyOrigin::Physical;
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;
+        for replacement in [None,Some("ctrl+k"),Some("alt_left"),Some("alt_right")] {
+            let(control,mut mask)=native_tap_mask();
+            mask.feed(modifier(side,side,true),Physical,n,false);
+            control.configure(replacement.map(|value|value.parse().unwrap()),Duration::from_secs(1));
+            assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n,false));
+        }
+    }
+    #[test]
+    fn standalone_menu_mask_reconciled_release_reset_and_lifecycle_cannot_finish_old_tap() {
+        use handy_keys::KeyOrigin::{Physical,Reconciled};
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;
+        for lifecycle in 0..3 {
+            let (_,mut mask)=native_tap_mask();
+            mask.feed(modifier(side,side,true),Physical,n,false);
+            match lifecycle {0=>mask.reset(),1=>mask.disable(),_=>{
+                assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Reconciled,n,false));}}
+            assert!(!mask.feed(modifier(Modifiers::empty(),side,false),Physical,n,false));
+        }
+    }
+    #[test]
+    fn standalone_menu_replacement_batch_keeps_mask_before_correct_side_release() {
+        use handy_keys::{standalone_menu_release_batch,STANDALONE_MENU_MASK_VK,STANDALONE_MENU_MASK_EXTRA_INFO};
+        for (vk,extended) in [(0xa4,false),(0xa5,true),(0x5b,true),(0x5c,true)] {
+            let batch=standalone_menu_release_batch(vk).unwrap();
+            assert_eq!(batch[0].virtual_key,STANDALONE_MENU_MASK_VK);assert!(!batch[0].key_up);assert!(!batch[0].extended);
+            assert_eq!(batch[1].virtual_key,STANDALONE_MENU_MASK_VK);assert!(batch[1].key_up);assert!(!batch[1].extended);
+            assert_eq!(batch[2].virtual_key,vk);assert!(batch[2].key_up);assert_eq!(batch[2].extended,extended);
+            assert!(batch.iter().all(|event|event.extra_info==STANDALONE_MENU_MASK_EXTRA_INFO));
+        }
+        assert!(standalone_menu_release_batch(0x12).is_none());
+        assert!(standalone_menu_release_batch(0x41).is_none());
+    }
+    #[test]
+    fn standalone_menu_replacement_failure_never_swallows_physical_release() {
+        use handy_keys::{standalone_release_disposition,StandaloneReleaseDisposition::*};
+        for count in [0,1,2,4,u32::MAX] {assert_eq!(standalone_release_disposition(count),PreservePhysicalRelease);}
+        assert_eq!(standalone_release_disposition(3),ReplacePhysicalRelease);
+    }
+    #[test]
+    fn injected_menu_mask_release_and_paste_chords_never_enter_gesture_policy() {
+        use handy_keys::{observed_keyboard_event_is_physical,KeyOrigin::Physical,STANDALONE_MENU_MASK_EXTRA_INFO};
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;let(_,mut mask)=native_tap_mask();
+        for (vk,flags,marker) in [(0xe8,0x10,STANDALONE_MENU_MASK_EXTRA_INFO),
+            (0xa5,0x10,STANDALONE_MENU_MASK_EXTRA_INFO),(0x11,0x10,0x534d_5041),(0x56,0x10,0x534d_5041)] {
+            assert!(!observed_keyboard_event_is_physical(vk,flags,marker));
+        }
+        assert!(!observed_keyboard_event_is_physical(0xe8,0,STANDALONE_MENU_MASK_EXTRA_INFO));
+        assert!(observed_keyboard_event_is_physical(0xa5,0x01,0));
+        assert!(observed_keyboard_event_is_physical(0x41,0,0));
+        // Filtered synthetic releases do not complete a physical hold.
+        mask.feed(modifier(side,side,true),Physical,n,false);
+        if observed_keyboard_event_is_physical(0xa5,0x10,STANDALONE_MENU_MASK_EXTRA_INFO) {
+            panic!("synthetic release must be excluded before feed");
+        }
+        assert!(mask.feed(modifier(Modifiers::empty(),side,false),Physical,n,false));
+    }
+    #[test]
+    fn standalone_menu_mask_detects_modifier_held_before_hook_without_rejecting_altgr_phantom() {
+        use handy_keys::standalone_tap_has_other_modifier;
+        let right=Modifiers::OPT_RIGHT;
+        assert!(standalone_tap_has_other_modifier(right,right|Modifiers::CTRL_RIGHT,false));
+        assert!(standalone_tap_has_other_modifier(right,right|Modifiers::OPT_LEFT,false));
+        assert!(standalone_tap_has_other_modifier(right,right|Modifiers::CTRL_LEFT,false));
+        assert!(!standalone_tap_has_other_modifier(right,right|Modifiers::CTRL_LEFT,true));
+        assert!(!standalone_tap_has_other_modifier(right,right,true));
+        assert!(standalone_tap_has_other_modifier(right,right|Modifiers::CTRL_RIGHT,true));
+    }
+    #[test]
+    fn unmapped_physical_key_cancels_native_mask_and_recording_tap() {
+        use handy_keys::KeyOrigin::Physical;
+        let n=Instant::now();let side=Modifiers::OPT_RIGHT;let(_,mut mask)=native_tap_mask();let mut gesture=tap();
+        let down=modifier(side,side,true);
+        assert!(!gesture.feed(down,n));assert!(!mask.feed(down,Physical,n,false));
+        let unknown=KeyEvent{modifiers:side,key:None,is_key_down:true,changed_modifier:None};
+        assert!(!gesture.feed(unknown,n));assert!(!mask.feed(unknown,Physical,n,false));
+        let up=modifier(Modifiers::empty(),side,false);
+        assert!(!gesture.feed(up,n));assert!(!mask.feed(up,Physical,n,false));
     }
     #[test] fn altgr_chord_never_toggles() {
         let mut t = tap(); let n = Instant::now();

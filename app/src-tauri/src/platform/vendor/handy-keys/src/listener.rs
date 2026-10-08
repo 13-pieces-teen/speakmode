@@ -13,14 +13,14 @@
 //!   events through uinput, so it additionally requires write access to
 //!   `/dev/uinput`. Clean thread shutdown.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
-use crate::types::KeyEvent;
+use crate::types::{Hotkey, KeyEvent, Modifiers};
 
 pub use crate::platform::state::BlockingHotkeys;
 
@@ -31,6 +31,102 @@ pub enum KeyOrigin { Physical, Reconciled }
 pub enum Lifecycle { Locked, Suspended, Resumed, Connected, HooksReinstalled, HooksUnavailable }
 #[derive(Debug, Clone, Copy)]
 pub enum ObservedEvent { Key { event: KeyEvent, origin: KeyOrigin }, Lifecycle(Lifecycle) }
+
+/// Narrow observer policy: physical downs and native chords remain untouched.
+/// Only a completed standalone Alt/Win tap may replace its native release.
+/// Updating any policy advances an epoch so an older hold cannot cross an ACK.
+#[derive(Clone, Default)]
+pub struct StandaloneTapMaskControl { state: Arc<AtomicU64> }
+impl StandaloneTapMaskControl {
+    pub fn configure(&self, shortcut: Option<Hotkey>, maximum: Duration) {
+        let modifiers = shortcut.filter(|shortcut| shortcut.key.is_none() &&
+            !shortcut.modifiers.is_empty() &&
+            (Modifiers::OPT.contains(shortcut.modifiers) || Modifiers::CMD.contains(shortcut.modifiers)))
+            .map(|shortcut| shortcut.modifiers.bits()).unwrap_or(0);
+        let milliseconds = maximum.as_millis().min(0x003f_ffff) as u64;
+        let policy = u64::from(modifiers) | (milliseconds << 10);
+        #[allow(deprecated)] // Also builds with Rust versions preceding fetch_update's rename.
+        let _ = self.state.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state|
+            Some(((state.wrapping_add(1u64 << 32)) & !0xffff_ffff) | policy));
+    }
+    pub fn reset(&self) {
+        #[allow(deprecated)]
+        let _ = self.state.fetch_update(Ordering::AcqRel, Ordering::Acquire, |state|
+            Some(((state.wrapping_add(1u64 << 32)) & !0xffff_ffff) | (state & 0xffff_ffff)));
+    }
+    pub fn disable(&self) { self.configure(None, Duration::ZERO); }
+}
+
+/// The production hook's pure recognizer is public for no-hook behavior tests.
+pub struct StandaloneTapMenuMask {
+    control: StandaloneTapMaskControl,
+    epoch: u64,
+    started: Option<(Instant, Modifiers)>,
+}
+impl StandaloneTapMenuMask {
+    pub fn new(control: StandaloneTapMaskControl) -> Self { Self { control, epoch: 0, started: None } }
+    pub fn reset(&mut self) { self.started=None; self.control.reset(); }
+    pub fn disable(&mut self) { self.started=None; self.control.disable(); }
+    /// Recheck immediately before native replacement if the service changed its policy.
+    pub fn policy_is_current(&self) -> bool {
+        self.epoch & 0x3ff != 0 && self.control.state.load(Ordering::Acquire)==self.epoch
+    }
+    pub fn feed(&mut self, event: KeyEvent, origin: KeyOrigin, now: Instant,
+                unrelated_held: bool) -> bool {
+        let epoch=self.control.state.load(Ordering::Acquire);
+        if self.epoch!=epoch {self.started=None;self.epoch=epoch;}
+        let configured=Modifiers::from_bits_truncate(epoch as u32 & 0x3ff);
+        if origin!=KeyOrigin::Physical || configured.is_empty() || unrelated_held {
+            self.started=None;return false;
+        }
+        let Some(changed)=event.changed_modifier else {
+            // Includes an unmapped physical key and mouse buttons: no chord is a tap.
+            self.started=None;return false;
+        };
+        if event.is_key_down {
+            if event.key.is_none() && event.modifiers.bits().count_ones()==1 &&
+                configured.matches(event.modifiers) && event.modifiers==changed {
+                // A repeat cannot refresh the original hold duration.
+                if self.started.is_none(){self.started=Some((now,changed));}
+            }else {self.started=None;}
+            return false;
+        }
+        let Some((started,side))=self.started.take() else {return false;};
+        event.key.is_none() && event.modifiers.is_empty() && changed==side &&
+            now.checked_duration_since(started).is_some_and(|duration|
+                duration<=Duration::from_millis(u64::from((epoch as u32)>>10)))
+    }
+}
+
+/// Pure native replacement description. Modifier-up is in the same SendInput
+/// batch as the mask, so it cannot overtake the mask through CallNextHookEx.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StandaloneMenuInput {
+    pub virtual_key: u16, pub key_up: bool, pub extended: bool, pub extra_info: usize,
+}
+pub const STANDALONE_MENU_MASK_VK:u16=0xe8;
+pub const STANDALONE_MENU_MASK_EXTRA_INFO:usize=0x484b_4d4d;
+/// Own inert mask and all synthetic keyboard events bypass gesture recognition.
+pub fn observed_keyboard_event_is_physical(virtual_key:u16,flags:u32,extra_info:usize)->bool {
+    flags & 0x10 == 0 && !(virtual_key==STANDALONE_MENU_MASK_VK && extra_info==STANDALONE_MENU_MASK_EXTRA_INFO)
+}
+pub fn standalone_tap_has_other_modifier(side:Modifiers,physical:Modifiers,altgr_phantom_ctrl:bool)->bool {
+    let physical=if altgr_phantom_ctrl{physical & !Modifiers::CTRL_LEFT}else{physical};
+    !(physical & !side).is_empty()
+}
+pub fn standalone_menu_release_batch(virtual_key:u16) -> Option<[StandaloneMenuInput;3]> {
+    let extended=match virtual_key {0xa4=>false,0xa5|0x5b|0x5c=>true,_=>return None};
+    let input=|virtual_key,key_up,extended|StandaloneMenuInput{virtual_key,key_up,extended,
+        extra_info:STANDALONE_MENU_MASK_EXTRA_INFO};
+    Some([input(STANDALONE_MENU_MASK_VK,false,false),input(STANDALONE_MENU_MASK_VK,true,false),
+        input(virtual_key,true,extended)])
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandaloneReleaseDisposition { ReplacePhysicalRelease, PreservePhysicalRelease }
+pub fn standalone_release_disposition(inserted:u32) -> StandaloneReleaseDisposition {
+    if inserted==3 {StandaloneReleaseDisposition::ReplacePhysicalRelease}
+    else {StandaloneReleaseDisposition::PreservePhysicalRelease}
+}
 
 /// Platform-agnostic Keyboard Listener
 ///
@@ -43,6 +139,7 @@ pub struct KeyboardListener {
     _thread_handle: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
     blocking_hotkeys: Option<BlockingHotkeys>,
+    standalone_tap_mask: Option<StandaloneTapMaskControl>,
     /// Backend-specific wakeup invoked on Drop after `running` is cleared.
     /// macOS parks its listener thread in a CFRunLoop with no periodic
     /// wakeups (see run_event_tap), so Drop must stop that loop explicitly.
@@ -85,6 +182,7 @@ impl KeyboardListener {
                 _thread_handle: state.thread_handle,
                 running: state.running,
                 blocking_hotkeys: state.blocking_hotkeys,
+                standalone_tap_mask: None,
                 stop_wakeup: Some(Box::new(move || run_loop.stop())),
             })
         }
@@ -100,6 +198,7 @@ impl KeyboardListener {
                 _thread_handle: state.thread_handle,
                 running: state.running,
                 blocking_hotkeys: state.blocking_hotkeys,
+                standalone_tap_mask: None,
                 stop_wakeup: None,
             })
         }
@@ -115,6 +214,7 @@ impl KeyboardListener {
                 _thread_handle: state.thread_handle,
                 running: state.running,
                 blocking_hotkeys: state.blocking_hotkeys,
+                standalone_tap_mask: None,
                 stop_wakeup: None,
             })
         }
@@ -124,13 +224,18 @@ impl KeyboardListener {
     /// Caller must drain this stream, not recv(), on an observed listener.
     #[cfg(target_os = "windows")]
     pub fn new_observed() -> Result<Self> {
-        let state = crate::platform::windows::listener::spawn_observed()?;
+        Self::new_observed_with_tap_mask(StandaloneTapMaskControl::default())
+    }
+    #[cfg(target_os = "windows")]
+    pub fn new_observed_with_tap_mask(control: StandaloneTapMaskControl) -> Result<Self> {
+        let state = crate::platform::windows::listener::spawn_observed(Some(control.clone()))?;
         Ok(Self {
             event_receiver: state.event_receiver,
             observed_receiver: state.observed_receiver,
             _thread_handle: state.thread_handle,
             running: state.running,
             blocking_hotkeys: None,
+            standalone_tap_mask: Some(control),
             stop_wakeup: None,
         })
     }
@@ -184,6 +289,7 @@ impl KeyboardListener {
 
 impl Drop for KeyboardListener {
     fn drop(&mut self) {
+        if let Some(control)=&self.standalone_tap_mask {control.disable();}
         self.running.store(false, Ordering::SeqCst);
 
         // Wake the listener thread if the backend parks it (macOS stops the

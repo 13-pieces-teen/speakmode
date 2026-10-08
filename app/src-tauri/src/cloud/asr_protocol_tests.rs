@@ -16,9 +16,49 @@ async fn receive(socket:&mut WebSocketStream<TcpStream>)->Value {
 async fn emit(socket:&mut WebSocketStream<TcpStream>,value:Value){socket.send(Message::Text(value.to_string())).await.unwrap();}
 fn short_timeouts()->Timeouts {Timeouts{establishment:Duration::from_secs(2),send:Duration::from_secs(1),finish:Duration::from_secs(1)}}
 async fn run_local(url:String,audio:mpsc::Receiver<AsrInput>,cancel:CancellationToken,callback:Arc<dyn Fn(AsrProgress)+Send+Sync>,timeouts:Timeouts)->Result<Vec<SourceItem>,CloudError> {
-    run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"auto".into(),"test-attempt".into(),audio,cancel,callback,url,timeouts).await
+    run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"auto".into(),DictionarySnapshot::default(),"test-attempt".into(),audio,cancel,callback,url,timeouts).await
 }
 fn ignored()->Arc<dyn Fn(AsrProgress)+Send+Sync>{Arc::new(|_|{})}
+
+#[tokio::test]
+async fn frozen_dictionary_is_sent_once_as_corpus_context_without_replacing_provider_words() {
+    let mut store=crate::core::Store::in_memory().unwrap();
+    let frozen=store.import_dictionary(vec!["SpeakMode".into(),"百炼".into()],1).unwrap();
+    let expected_context=frozen.asr_context().unwrap();
+    store.import_dictionary(vec!["ChangedAfterCapture".into()],frozen.version).unwrap();
+    let (url,server)=server(move|mut socket|async move{
+        let update=receive(&mut socket).await;
+        assert_eq!(update["session"]["input_audio_transcription"]["language"],"en");
+        assert_eq!(update["session"]["input_audio_transcription"]["corpus"]["text"],expected_context);
+        assert!(!update.to_string().contains("ChangedAfterCapture"));
+        emit(&mut socket,json!({"type":"session.updated"})).await;
+        assert_eq!(receive(&mut socket).await["type"],"session.finish");
+        emit(&mut socket,json!({"type":"input_audio_buffer.committed","item_id":"a","previous_item_id":null})).await;
+        emit(&mut socket,json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"a","transcript":"provider spelling remains untouched"})).await;
+        emit(&mut socket,json!({"type":"session.finished"})).await;
+    }).await;
+    let (tx,rx)=mpsc::channel(1);tx.send(AsrInput::Finish{next_sequence:0}).await.unwrap();
+    let rows=run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"en".into(),frozen,"dictionary-attempt".into(),rx,CancellationToken::new(),ignored(),url,short_timeouts()).await.unwrap();
+    assert_eq!(rows[0].text,"provider spelling remains untouched");server.await.unwrap();
+}
+
+#[test]
+fn empty_dictionary_omits_corpus_and_does_not_change_audio_or_vad_settings() {
+    let update=session_update("auto",&DictionarySnapshot::default()).unwrap();
+    assert!(update["session"]["input_audio_transcription"].get("corpus").is_none());
+    assert!(update["session"]["input_audio_transcription"].get("language").is_none());
+    assert_eq!(update["session"]["input_audio_format"],"pcm");assert_eq!(update["session"]["sample_rate"],16000);
+    assert_eq!(update["session"]["turn_detection"]["silence_duration_ms"],400);
+}
+
+#[tokio::test]
+async fn invalid_dictionary_is_rejected_before_opening_a_provider_connection() {
+    let entries=(0..20).map(|index|crate::core::DictionaryEntry{id:format!("entry-{index}"),term:format!("{}-{index}","术".repeat(70)),created_at:"test".into(),updated_at:"test".into()}).collect();
+    let oversized=DictionarySnapshot{version:1,entries};assert!(oversized.asr_context().unwrap().len()>4000);
+    let (_tx,rx)=mpsc::channel(1);
+    let error=run_at(ProviderConfig::default(),"test-only-not-a-real-key".into(),"auto".into(),oversized,"invalid-context".into(),rx,CancellationToken::new(),ignored(),"not-a-websocket-url".into(),short_timeouts()).await.unwrap_err();
+    assert_eq!(error.code,"dictionary_invalid");assert_eq!(error.stage,"configuration");
+}
 
 #[tokio::test]
 async fn frames_wait_for_config_ack_then_finish_follows_every_audio_byte() {
@@ -166,4 +206,75 @@ fn padding_metadata_and_ten_minute_limit_are_validated_without_transmission() {
     }
     let mut audio=AudioSequence::default();audio.real_samples=16_000*600;
     assert_eq!(audio.frame(0,&[1],0).unwrap_err().code,"audio_frame_limit");assert_eq!(audio.next,0);
+}
+
+fn observe_wire(latest:Arc<Mutex<Option<AsrTelemetry>>>)->Arc<dyn Fn(AsrProgress)+Send+Sync> {
+    Arc::new(move|progress|if let AsrProgress::Diagnostics(metadata)=progress{*latest.lock().unwrap()=Some(metadata);})
+}
+#[tokio::test]
+async fn wire_diagnostics_distinguish_complete_client_write_from_pending_provider_final_without_text_or_ids() {
+    let (url,server)=server(|mut socket|async move{
+        receive(&mut socket).await;emit(&mut socket,json!({"type":"session.updated"})).await;
+        let append=receive(&mut socket).await;assert_eq!(STANDARD.decode(append["audio"].as_str().unwrap()).unwrap().len(),3200);
+        assert_eq!(receive(&mut socket).await["type"],"session.finish");
+        for event in [json!({"type":"conversation.item.input_audio_transcription.text","item_id":"private-provider-id-a","text":"private transcript","stash":"private words"}),
+            json!({"type":"conversation.item.input_audio_transcription.completed","item_id":"private-provider-id-b","transcript":"private transcript private words"}),
+            json!({"type":"Bearer private secret","payload":"private prompt and key"}),json!({"type":"session.finished"})] {emit(&mut socket,event).await;}
+    }).await;
+    let (tx,rx)=mpsc::channel(2);let mut pcm=vec![0;1600];pcm[..3].copy_from_slice(&[1,2,3]);
+    tx.send(AsrInput::Frame{sequence:0,pcm16:pcm,padding_samples:1597}).await.unwrap();tx.send(AsrInput::Finish{next_sequence:1}).await.unwrap();
+    let origin=Instant::now();let latest=Arc::new(Mutex::new(None));
+    let error=run_local(url,rx,CancellationToken::new(),observe_wire(latest.clone()),short_timeouts()).await.unwrap_err();
+    assert_eq!(error.code,"asr_incomplete");let wire=latest.lock().unwrap().clone().unwrap();
+    assert!(wire.terminated);assert_eq!(wire.dequeued,AudioCounts{frames:1,real_samples:3,padding_samples:1597});
+    assert_eq!(wire.socket_written,wire.dequeued);assert_eq!(wire.finish_expected_frames,Some(1));
+    assert!(wire.last_frame_written_at.is_some()&&wire.finish_written_at.is_some()&&wire.session_finished_received_at.is_some());
+    assert!(wire.last_frame_written_at<=wire.finish_written_at);assert!(wire.finish_written_at<=wire.session_finished_received_at);
+    assert_eq!((wire.pending_items,wire.final_items),(1,1));
+    let partial=wire.event_tail.iter().find(|event|event.kind==AsrEventKind::Partial).unwrap();
+    let final_event=wire.event_tail.iter().find(|event|event.kind==AsrEventKind::Final).unwrap();
+    assert_ne!(partial.item_ordinal,final_event.item_ordinal);
+    let json=serde_json::to_string(&wire.relative_to(origin)).unwrap();
+    for excluded in ["private","Bearer","transcript","payload","pcm16","audio"] {assert!(!json.contains(excluded),"leaked {excluded}");}
+    server.await.unwrap();
+}
+#[tokio::test]
+async fn rejected_finish_records_queue_receipt_but_never_claims_a_socket_write() {
+    let (url,server)=server(|mut socket|async move{
+        receive(&mut socket).await;emit(&mut socket,json!({"type":"session.updated"})).await;
+        assert_eq!(receive(&mut socket).await["type"],"input_audio_buffer.append");
+        if let Some(Ok(Message::Text(_)))=socket.next().await {panic!("invalid Finish was sent");}
+    }).await;
+    let (tx,rx)=mpsc::channel(2);tx.send(AsrInput::Frame{sequence:0,pcm16:vec![1;1600],padding_samples:0}).await.unwrap();
+    tx.send(AsrInput::Finish{next_sequence:2}).await.unwrap();let latest=Arc::new(Mutex::new(None));
+    assert_eq!(run_local(url,rx,CancellationToken::new(),observe_wire(latest.clone()),short_timeouts()).await.unwrap_err().code,"audio_incomplete");
+    let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);assert_eq!(wire.socket_written.frames,1);
+    assert_eq!(wire.finish_expected_frames,Some(2));assert!(wire.finish_dequeued_at.is_some());assert!(wire.finish_written_at.is_none());
+    assert!(wire.session_finished_received_at.is_none());server.await.unwrap();
+}
+#[tokio::test]
+async fn cancellation_before_finish_send_preserves_unwritten_marker_and_terminal_metadata() {
+    let (url,server)=server(|mut socket|async move{
+        receive(&mut socket).await;emit(&mut socket,json!({"type":"session.updated"})).await;
+        if let Some(Ok(Message::Text(_)))=socket.next().await {panic!("cancelled Finish was sent");}
+    }).await;
+    let cancel=CancellationToken::new();let callback_cancel=cancel.clone();let latest=Arc::new(Mutex::new(None));let observed=latest.clone();
+    let callback=Arc::new(move|progress|if let AsrProgress::Diagnostics(metadata)=progress{
+        if metadata.finish_dequeued_at.is_some(){callback_cancel.cancel();}*observed.lock().unwrap()=Some(metadata);
+    });
+    let (tx,rx)=mpsc::channel(1);tx.send(AsrInput::Finish{next_sequence:0}).await.unwrap();
+    assert_eq!(run_local(url,rx,cancel,callback,short_timeouts()).await.unwrap_err().code,"cancelled");
+    let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);assert!(wire.finish_dequeued_at.is_some());
+    assert!(wire.finish_written_at.is_none());assert_eq!(wire.socket_written.frames,0);server.await.unwrap();
+}
+#[test]
+fn wire_event_history_is_bounded_and_unknown_wire_strings_are_not_retained() {
+    let latest=Arc::new(Mutex::new(None));let mut diagnostics=WireDiagnostics::new(observe_wire(latest.clone()));
+    let assembler=Assembler::default();let value=json!({"type":"private custom event","body":"secret"});
+    for _ in 0..100 {diagnostics.event(AsrEventKind::classify(&value),Some(&value),&assembler);}
+    assert_eq!(diagnostics.metadata.event_tail.len(),ASR_EVENT_TAIL);
+    assert_eq!(diagnostics.metadata.event_tail.front().unwrap().sequence,69);
+    for (index,kind) in AsrEventKind::ALL.into_iter().enumerate(){assert_eq!(kind as usize,index);}
+    drop(diagnostics);let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);
+    assert_eq!(wire.observed_events,100);assert_eq!(wire.event_counts[AsrEventKind::Unknown as usize],100);
 }

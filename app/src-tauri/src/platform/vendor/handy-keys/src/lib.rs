@@ -141,7 +141,11 @@ mod platform;
 mod types;
 
 pub use error::{Error, Result};
-pub use listener::{BlockingHotkeys, KeyboardListener, KeyOrigin, Lifecycle, ObservedEvent};
+pub use listener::{BlockingHotkeys, KeyboardListener, KeyOrigin, Lifecycle, ObservedEvent,
+    StandaloneTapMaskControl, StandaloneTapMenuMask, StandaloneMenuInput,
+    standalone_menu_release_batch, standalone_release_disposition, StandaloneReleaseDisposition,
+    observed_keyboard_event_is_physical, standalone_tap_has_other_modifier,
+    STANDALONE_MENU_MASK_VK, STANDALONE_MENU_MASK_EXTRA_INFO};
 pub use manager::HotkeyManager;
 pub use types::{Hotkey, HotkeyEvent, HotkeyId, HotkeyState, Key, KeyEvent, Modifiers};
 

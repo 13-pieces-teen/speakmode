@@ -7,6 +7,7 @@ import { useModes, type ModeDraft as Draft } from '../hooks/useModes';
 import { useDesktop } from '../services/DesktopProvider';
 import { ModeIcon, OutputBlocks, PageHeading } from '../components/ui';
 import { focusInView } from '../components/focusInView';
+import { ExpressionPreferences } from '../components/ExpressionPreferences';
 import './modes.css';
 
 interface ModePreviewResult {
@@ -220,6 +221,7 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
           <p className="mode-field-hint">{draft.base === '轻整理' ? '保留说话顺序。' : '按要点分组。'}</p>
         </div>
         <div className="mode-field">
+          <ExpressionPreferences value={draft.instructions} disabled={saving} onChange={instructions => changeDraft({ ...draft, instructions })} />
           <label htmlFor="personal-mode-instructions">整理要求</label>
           <TextArea ref={instructionsRef} id="personal-mode-instructions" className="mode-instructions" value={draft.instructions} disabled={saving} onChange={event => changeDraft({ ...draft, instructions: event.target.value })} placeholder="说清楚希望的格式、语气，以及需要保留什么。" aria-invalid={triedSubmit && Boolean(instructionError)} aria-describedby="mode-instruction-hint mode-instruction-error" />
           <p className="mode-field-hint" id="mode-instruction-hint">用自己的话描述格式和语气，1–4000 个字符。</p>

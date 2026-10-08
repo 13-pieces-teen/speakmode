@@ -108,12 +108,12 @@ fn complete_refs_allow_many_to_one_filler_cleanup_and_overlap_between_blocks() {
 }
 
 #[test]
-fn complete_mapping_does_not_prove_negations_or_meaning_were_preserved() {
+fn complete_mapping_does_not_bypass_observable_negation_loss_guard() {
     let (_,mode,source)=fixture();
     // The cited source says "不要今天发". The altered output says the opposite;
-    // refs coverage cannot detect this and must never be reported as fidelity.
+    // Refs coverage alone cannot detect this; the independent guard now rejects it.
     let changed=json!({"resolvedMode":"light","blocks":[{"text":"今天发布。","sourceRefs":["attempt-1:item-1"]}]}).to_string();
-    assert!(parse_model_output(&changed,&mode,&source).is_ok());
+    assert_eq!(parse_model_output(&changed,&mode,&source).unwrap_err().code,"rewrite_meaning_risk");
 }
 
 #[tokio::test]
@@ -153,7 +153,7 @@ async fn keep_alive_server(expected:usize,first_body_delay:Duration)->(String,mp
                     let body:Value=serde_json::from_slice(&bytes[header_end..header_end+length]).unwrap();bytes.drain(..header_end+length);
                     let sequence=received.fetch_add(1,Ordering::SeqCst);
                     let data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-                    let content=json!({"resolvedMode":"light","blocks":[{"text":data["items"][0]["text"],"sourceRefs":[data["items"][0]["id"]]}]}).to_string();
+                    let content=json!({"resolvedMode":"light","blocks":[{"text":data["items"][0]["text"],"sourceRange":[0,0]}]}).to_string();
                     tx.send(ObservedRequest{connection,headers,body}).unwrap();
                     let response_body=envelope(content,"stop");
                     let response=format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",response_body.len());
@@ -194,13 +194,13 @@ async fn old_new_cold_hot_same_fixture_demonstrates_actual_connection_reuse_only
 async fn pooled_client_sets_credentials_workspace_and_model_per_request_after_configuration_switch() {
     let(config,mode,source)=fixture();let client=build_client().unwrap();let(url,mut requests,server)=keep_alive_server(2,Duration::ZERO).await;
     rewrite_with_client(&client,&config,"synthetic-key-a",&mode,&source,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
-    let mut changed=config.clone();changed.workspace=Some("synthetic-workspace-b".into());changed.rewrite_model="candidate-b".into();
+    let mut changed=config.clone();changed.workspace=Some("synthetic-workspace-b".into());changed.rewrite_model="qwen-plus".into();
     rewrite_with_client(&client,&changed,"synthetic-key-b",&mode,&source,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
     let first=requests.recv().await.unwrap();let second=requests.recv().await.unwrap();
     assert_eq!(first.connection,second.connection);
     assert!(first.headers.to_lowercase().contains("authorization: bearer synthetic-key-a"));assert!(!first.headers.to_lowercase().contains("x-dashscope-workspace:"));
     assert!(second.headers.to_lowercase().contains("authorization: bearer synthetic-key-b"));assert!(!second.headers.contains("synthetic-key-a"));assert!(second.headers.to_lowercase().contains("x-dashscope-workspace: synthetic-workspace-b"));
-    assert_eq!(first.body["model"],config.rewrite_model);assert_eq!(second.body["model"],"candidate-b");assert_eq!(server.await.unwrap(),1);
+    assert_eq!(first.body["model"],config.rewrite_model);assert_eq!(second.body["model"],"qwen-plus");assert_eq!(server.await.unwrap(),1);
 }
 
 #[tokio::test]
@@ -296,7 +296,9 @@ async fn same_dictation_distinct_mode_contracts_reach_http_and_formatted_blocks_
         let expected=&sample[key];let(url,request,server)=http_server("200 OK",envelope(expected.to_string(),"stop"),Duration::ZERO,Duration::ZERO).await;
         let result=rewrite_at(&config,"synthetic-mode-key",&mode,&source,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
         let(_,body)=request.await.unwrap();let sent:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-        assert_eq!(sent["baseMode"],serde_json::to_value(base_mode).unwrap());assert_eq!(sent["items"],sample["items"]);
+        assert_eq!(sent["baseMode"],serde_json::to_value(base_mode).unwrap());
+        let indexed=source.items.iter().enumerate().map(|(index,item)|json!({"index":index,"text":item.text})).collect::<Vec<_>>();
+        assert_eq!(sent["items"],json!(indexed));assert_eq!(sent["sourceCount"],source.items.len());
         systems.push(body["messages"][0]["content"].as_str().unwrap().to_owned());
         assert_eq!(result.resolved_mode,if key=="light"{BaseMode::Light}else{BaseMode::Structure});
         assert_eq!(result.blocks.len(),expected["blocks"].as_array().unwrap().len());

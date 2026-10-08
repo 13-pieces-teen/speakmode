@@ -8,6 +8,7 @@ import { SettingsSection, SettingRow } from './SettingsControls';
 
 type ProviderDraft = Pick<ProviderConfig, 'region' | 'workspace' | 'asrModel' | 'rewriteModel'>;
 const UNSELECTED_REGION = '__choose_region__';
+const UNSELECTED_MODEL = '__choose_model__';
 function draftFrom(config: ProviderConfig): ProviderDraft {
   return { region: config.region, workspace: config.workspace, asrModel: config.asrModel, rewriteModel: config.rewriteModel };
 }
@@ -72,10 +73,10 @@ export function ProviderSettings() {
   }
 
   function saveConfig() {
-    if (!dirty || !draft.region || !draft.asrModel.trim() || !draft.rewriteModel.trim() || provider.config.version !== draftVersion) return;
+    if (!dirty || !draft.region || !modelsCompatible || provider.config.version !== draftVersion) return;
     return perform('config', async () => {
       await command('provider.configure', {
-        config: { ...provider.config, ...draft, workspace: draft.workspace?.trim() || null, asrModel: draft.asrModel.trim(), rewriteModel: draft.rewriteModel.trim() },
+        config: { ...provider.config, ...draft, workspace: draft.workspace?.trim() || null, asrModel: draft.asrModel.trim(), rewriteModel: draft.rewriteModel.trim(), adapterVersion: selectedAsr!.adapterVersion! },
         expectedVersion: draftVersion,
       });
       dirtyRef.current = false;
@@ -99,8 +100,15 @@ export function ProviderSettings() {
     }, '已删除当前地域与业务空间保存的 API Key。再次使用前需要重新配置。');
   }
 
+  const asrModels = provider.modelCatalog?.asr ?? [];
+  const rewriteModels = provider.modelCatalog?.rewrite ?? [];
+  const selectedAsr = asrModels.find(model => model.id === draft.asrModel);
+  const selectedRewrite = rewriteModels.find(model => model.id === draft.rewriteModel);
+  const modelsCompatible = Boolean(selectedAsr?.implemented && selectedAsr.adapterVersion && selectedRewrite?.implemented);
+  const catalogReady = Boolean(provider.modelCatalog);
   const configSaved = (provider.config.region === 'beijing' || provider.config.region === 'singapore')
-    && Boolean(provider.config.asrModel.trim() && provider.config.rewriteModel.trim());
+    && Boolean(asrModels.some(model => model.id === provider.config.asrModel && model.implemented && model.adapterVersion === provider.config.adapterVersion)
+      && rewriteModels.some(model => model.id === provider.config.rewriteModel && model.implemented));
   const keyDisabled = disabled || dirty || !configSaved;
   const savedRegion = provider.config.region === 'beijing' ? '中国内地（北京）' : provider.config.region === 'singapore' ? '国际（新加坡）' : '尚未保存地域';
   const savedWorkspace = provider.config.workspace || '默认业务空间';
@@ -115,6 +123,7 @@ export function ProviderSettings() {
       <span>服务连接：尚未验证</span>
     </div>
     <p className="settings-control-hint">配置与 Key 的保存状态不代表网络或模型已经可用。实际请求仍可能遇到地域、权限、余额或连接错误。</p>
+    {provider.message && <p className="settings-inline-note">{provider.message}</p>}
 
     <form onSubmit={event => { event.preventDefault(); void saveConfig(); }}>
       <SettingRow title="账号地域" description="选择 API Key 所属地域，必须与你的百炼账号配置一致。" htmlFor="provider-region">
@@ -131,19 +140,36 @@ export function ProviderSettings() {
         <input id="provider-workspace" className="settings-text-input" type="text" value={draft.workspace ?? ''} disabled={disabled}
           onChange={event => edit('workspace', event.target.value)} aria-describedby="provider-workspace-description" placeholder="默认业务空间" autoComplete="off" spellCheck={false} maxLength={80} />
       </SettingRow>
-      <SettingRow title="语音识别模型" description="填写当前账号和地域支持的实时识别模型 ID。" htmlFor="provider-asr-model">
-        <input id="provider-asr-model" className="settings-text-input" type="text" value={draft.asrModel} disabled={disabled}
-          onChange={event => edit('asrModel', event.target.value)} aria-describedby="provider-asr-model-description" autoComplete="off" spellCheck={false} required />
+      <SettingRow title="语音识别模型" description="更改用于下一次口述，当前录音仍使用开始时的模型。" htmlFor="provider-asr-model">
+        <div className="settings-delivery-control">
+        <Select.Root value={draft.asrModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('asrModel', value)}>
+          <Select.Trigger id="provider-asr-model" aria-label="语音识别模型" aria-describedby="provider-asr-model-description provider-asr-capability" className="settings-select" variant="surface" />
+          <Select.Content position="popper" sideOffset={6}>
+            {!selectedAsr && <Select.Item value={draft.asrModel || UNSELECTED_MODEL} disabled>当前配置（尚未确认兼容）</Select.Item>}
+            {asrModels.map(model => <Select.Item key={model.id} value={model.id} disabled={!model.implemented}>{model.label}</Select.Item>)}
+          </Select.Content>
+        </Select.Root>
+        <p className="settings-control-hint" id="provider-asr-capability">{selectedAsr?.implemented
+          ? selectedAsr.dictionarySupport === 'vocabularyAndContext'
+            ? '支持词典热词与词汇上下文。会使用你保存的词条；识别效果可与 Qwen3 实时模型比较。'
+            : '使用已有实时识别链路。词典通过旧接口传入，效果因词语与发音而异。'
+          : '请选择已接入的实时识别模型。'}</p>
+        </div>
       </SettingRow>
-      <SettingRow title="整理模型" description="填写当前账号和地域支持的文本模型 ID。" htmlFor="provider-rewrite-model">
-        <input id="provider-rewrite-model" className="settings-text-input" type="text" value={draft.rewriteModel} disabled={disabled}
-          onChange={event => edit('rewriteModel', event.target.value)} aria-describedby="provider-rewrite-model-description" autoComplete="off" spellCheck={false} required />
+      <SettingRow title="整理模型" description="候选模型未做质量排名，实际可用性取决于账号权限与地域。" htmlFor="provider-rewrite-model">
+        <Select.Root value={draft.rewriteModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('rewriteModel', value)}>
+          <Select.Trigger id="provider-rewrite-model" aria-label="整理模型" aria-describedby="provider-rewrite-model-description" className="settings-select" variant="surface" />
+          <Select.Content position="popper" sideOffset={6}>
+            {!selectedRewrite && <Select.Item value={draft.rewriteModel || UNSELECTED_MODEL} disabled>当前配置（尚未确认兼容）</Select.Item>}
+            {rewriteModels.map(model => <Select.Item key={model.id} value={model.id} disabled={!model.implemented}>{model.label}</Select.Item>)}
+          </Select.Content>
+        </Select.Root>
       </SettingRow>
       {staleDraft && <p className="settings-inline-note">已保存配置发生变化。当前编辑内容仍保留；请重新载入后再修改，避免覆盖其他更改。</p>}
       <div className="settings-provider-actions">
-        <span className="settings-control-hint">适配器：{provider.config.adapterVersion}</span>
+        <span className="settings-control-hint">{catalogReady ? modelsCompatible ? '模型接口已匹配；保存后仍需实际连接验证。' : '请选择已接入的模型组合。' : available ? '正在读取模型兼容清单。' : '模型清单仅在桌面应用中可用。'}</span>
         {dirty && <Button type="button" variant="ghost" color="gray" disabled={disabled} onClick={reloadConfig}>重新载入</Button>}
-        <Button type="submit" size="2" disabled={disabled || !dirty || !draft.region || !draft.asrModel.trim() || !draft.rewriteModel.trim() || staleDraft}>
+        <Button type="submit" size="2" disabled={disabled || !dirty || !draft.region || !modelsCompatible || staleDraft}>
           {pending === 'config' ? '正在保存…' : '保存服务配置'}
         </Button>
       </div>

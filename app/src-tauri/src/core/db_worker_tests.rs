@@ -567,6 +567,58 @@ async fn cancelled_settings_operation_cannot_commit_after_waiting_for_the_real_w
 }
 
 #[tokio::test]
+async fn cancelled_dictionary_import_cannot_commit_after_waiting_for_a_real_writer() {
+    let h=Harness::new(options());let original=h.db.snapshot().dictionary;
+    let operation=Arc::new(CommitGuard::new("dictionary-operation".into(),0)).operation();
+    let lock=write_lock(&h.file);
+    let ticket=h.db.submit(DbCommand::ImportDictionary{terms:vec!["CancelledTerm".into()],expected_version:original.version},Some(operation.clone()),DbPriority::Normal).unwrap();
+    let queued=queue_behind_active(&h.db).await;
+    assert_eq!(cancel_promptly(operation).await,CancelDecision::Accepted);
+    lock.execute_batch("ROLLBACK;").unwrap();drop(lock);
+    assert!(matches!(wait(&ticket).await,Err(StoreError::Cancelled)));wait(&queued).await.unwrap();
+    assert_eq!(h.db.snapshot().dictionary,original);
+    assert!(matches!(invoke(&h.db,DbCommand::Dictionary,None).await.unwrap(),DbValue::Dictionary(value) if value==original));
+    stop(&h.db).await;
+}
+
+#[tokio::test]
+async fn dictionary_cas_rechecks_version_after_a_competing_sql_writer_wins() {
+    let h=Harness::new(options());let operation=Arc::new(CommitGuard::new("dictionary-cas".into(),0)).operation();
+    let lock=write_lock(&h.file);
+    let ticket=h.db.submit(DbCommand::ImportDictionary{terms:vec!["StaleTerm".into()],expected_version:1},Some(operation),DbPriority::Normal).unwrap();
+    let queued=queue_behind_active(&h.db).await;
+    lock.execute_batch("UPDATE dictionary_meta SET version=2;INSERT INTO dictionary_entries(id,normalized_term,term,created_at,updated_at) VALUES('external-winner','winner','Winner','test','test');COMMIT;").unwrap();drop(lock);
+    assert!(matches!(wait(&ticket).await,Err(StoreError::Conflict{current}) if current=="2"));wait(&queued).await.unwrap();
+    let DbValue::Dictionary(saved)=invoke(&h.db,DbCommand::Dictionary,None).await.unwrap()else{panic!("wrong dictionary type")};
+    assert_eq!(saved.version,2);assert_eq!(saved.entries.iter().map(|entry|entry.term.as_str()).collect::<Vec<_>>(),["Winner"]);
+    stop(&h.db).await;
+}
+
+#[tokio::test]
+async fn dictionary_cache_does_not_retain_deleted_words_when_an_unrelated_refresh_fails() {
+    let h=Harness::new(options());let operation=Arc::new(CommitGuard::new("dictionary-add".into(),0)).operation();
+    let DbValue::Dictionary(saved)=invoke(&h.db,DbCommand::ImportDictionary{terms:vec!["RemoveMe".into()],expected_version:1},Some(&operation)).await.unwrap()else{panic!("wrong dictionary type")};
+    assert_eq!(operation.cancel(),CancelDecision::AlreadyCompleted);
+    invoke(&h.db,DbCommand::TestExecuteBatch{sql:"ALTER TABLE preferences RENAME TO unavailable_preferences;".into()},None).await.unwrap();
+    let deletion=Arc::new(CommitGuard::new("dictionary-delete".into(),0)).operation();
+    let DbValue::Dictionary(deleted)=invoke(&h.db,DbCommand::DeleteDictionary{entry_id:saved.entries[0].id.clone(),expected_version:saved.version},Some(&deletion)).await.unwrap()else{panic!("wrong dictionary type")};
+    assert!(deleted.entries.is_empty());assert_eq!(h.db.snapshot().dictionary,deleted);assert!(h.db.cache_error().is_some());
+    stop(&h.db).await;
+}
+
+#[tokio::test]
+async fn dictionary_mutations_require_guard_and_observer_drop_does_not_cancel_owned_commit() {
+    let h=Harness::new(options());
+    assert!(matches!(invoke(&h.db,DbCommand::ImportDictionary{terms:vec!["NoGuard".into()],expected_version:1},None).await,Err(StoreError::Invalid(_))));
+    let operation=Arc::new(CommitGuard::new("dictionary-owned".into(),0)).operation();let lock=write_lock(&h.file);
+    let ticket=h.db.submit(DbCommand::ImportDictionary{terms:vec!["OwnedTerm".into()],expected_version:1},Some(operation.clone()),DbPriority::Normal).unwrap();
+    let observer=ticket.clone();let waiter=tokio::spawn(async move{observer.wait().await});let queued=queue_behind_active(&h.db).await;
+    waiter.abort();let _=waiter.await;lock.execute_batch("ROLLBACK;").unwrap();drop(lock);
+    assert!(matches!(wait(&ticket).await.unwrap(),DbValue::Dictionary(snapshot) if snapshot.version==2));wait(&queued).await.unwrap();
+    assert_eq!(h.db.snapshot().dictionary.entries[0].term,"OwnedTerm");assert_eq!(operation.cancel(),CancelDecision::AlreadyCompleted);stop(&h.db).await;
+}
+
+#[tokio::test]
 async fn dropping_the_last_client_drains_work_and_releases_the_real_database_owner() {
     let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();
     let gate=guard("abandoned-client");let lock=write_lock(&file);

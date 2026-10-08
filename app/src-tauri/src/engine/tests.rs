@@ -43,7 +43,7 @@ fn test_data_directory() -> PathBuf {
     assert_eq!(path.canonicalize().unwrap(), path, "fixture directory must not be redirected");
     path
 }
-fn hub() -> Arc<AppHub> {
+pub(super) fn hub() -> Arc<AppHub> {
     Arc::new(AppHub {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
@@ -60,7 +60,7 @@ fn hub() -> Arc<AppHub> {
     })
 }
 
-fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
+pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
     let prefs = hub.db.preferences().unwrap();
     let config = hub.db.provider_config().unwrap();
     assert!(config.region.is_none(), "configuration must fail before any credential lookup");
@@ -68,14 +68,14 @@ fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_released: bool) {
     let mut i=hub.inner.lock().unwrap();i.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),7)));
     i.active = Some(ActiveSession {
         diagnostic_trace:None,caption_render_token:None,
-        id: id.into(), generation: 7, phase, prefs, config, mode,
+        id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
         started_at: "2026-10-04T10:00:00+08:00".into(),
         ended_at: Some("2026-10-04T10:00:12+08:00".into()), capture_duration_ms: 12_000, recording_limit_remaining_ms:None,
         first_samples: true, provider_ready: true, level: 0.0, captions: vec![], error: None,
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,
         processing_worker_released: true,db_pending:0,cancel_pending:false,
         source: None, output: None, pending: None, cache: None, cache_complete: false,
-        cache_created: None, target: None, target_capture_pending:false, delivery_failure_reason:None, delivery: None,
+        cache_created: None, target: None, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
         original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,
         reason: CreationReason::NormalInitial, asr_attempt_id: Some(format!("attempt-{id}")),
@@ -123,6 +123,147 @@ fn usage_count(hub: &AppHub) -> u64 { hub.db.usage_today("2026-10-04").unwrap().
 fn fault(hub: &AppHub, sql: &str) { hub.db.test_sql(sql).unwrap(); }
 async fn command(hub: &Arc<AppHub>, name: &str, payload: Value) -> Result<Value> {
     hub.command("main", CommandRequest { name: name.into(), payload }).await
+}
+
+#[tokio::test]
+async fn correction_remembers_only_the_selected_term_and_preserves_source_and_undo() {
+    let h=hub();install(&h,"correct-term",SessionPhase::FinalizingAsr,true);ready(&h,"correct-term");
+    let before=h.db.get_result("correct-term").unwrap();
+    let result=command(&h,"revision.correctTerm",json!({"sessionId":"correct-term","expectedCurrentRevisionId":"output-correct-term","requestId":"correct-first","patch":{"blockId":"block-0","start":0,"end":2,"expectedText":"会议","replacement":"PolyU"},"remember":true,"expectedDictionaryVersion":1})).await.unwrap();
+    let detail:HistoryDetail=serde_json::from_value(result["detail"].clone()).unwrap();
+    assert_eq!(detail.output.as_ref().unwrap().blocks[0].text,"PolyU未确认前，不要订机票；先保留行程。");
+    assert_eq!(detail.source,before.source);assert!(detail.can_undo);
+    assert_eq!(result["dictionaryStatus"],"added");assert_eq!(result["dictionary"]["entries"][0]["term"],"PolyU");
+    assert_eq!(h.db.snapshot().dictionary.entries[0].term,"PolyU");
+    let undone:HistoryDetail=serde_json::from_value(command(&h,"revision.undo",json!({"sessionId":"correct-term","expectedCurrentRevisionId":detail.output.unwrap().id,"requestId":"correct-undo"})).await.unwrap()).unwrap();
+    assert_eq!(undone.output.unwrap().blocks,before.output.unwrap().blocks);
+    assert_eq!(h.db.snapshot().dictionary.entries[0].term,"PolyU","undo text keeps the explicitly remembered dictionary word");
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+}
+
+fn correction_payload(id:&str,revision:&str,replacement:&str,remember:bool)->Value {
+    json!({"sessionId":id,"expectedCurrentRevisionId":revision,"requestId":Uuid::new_v4().to_string(),"patch":{"blockId":"block-0","start":0,"end":2,"expectedText":"会议","replacement":replacement},"remember":remember,"expectedDictionaryVersion":1})
+}
+
+#[tokio::test]
+async fn correction_dictionary_failure_and_stale_versions_commit_neither_side() {
+    let h=hub();install(&h,"correction-atomic",SessionPhase::FinalizingAsr,true);ready(&h,"correction-atomic");
+    let original=h.db.get_result("correction-atomic").unwrap();
+    fault(&h,"CREATE TRIGGER reject_correction_word BEFORE INSERT ON dictionary_entries BEGIN SELECT RAISE(ABORT,'synthetic dictionary failure'); END;");
+    let payload=correction_payload("correction-atomic","output-correction-atomic","SpeakMode",true);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"storageFailed");
+    assert_eq!(h.db.get_result("correction-atomic").unwrap(),original);assert_eq!(h.db.snapshot().dictionary,DictionarySnapshot::default());
+    fault(&h,"DROP TRIGGER reject_correction_word;");
+    command(&h,"dictionary.import",json!({"terms":["Figma"],"expectedVersion":1,"requestId":"correction-dictionary-change"})).await.unwrap();
+    let payload=correction_payload("correction-atomic","output-correction-atomic","SpeakMode",true);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"revisionConflict");
+    assert_eq!(h.db.get_result("correction-atomic").unwrap(),original);assert_eq!(h.db.snapshot().dictionary.entries[0].term,"Figma");
+    let edited:HistoryDetail=serde_json::from_value(command(&h,"revision.edit",edit_payload("correction-atomic","output-correction-atomic","已有新版本")).await.unwrap()).unwrap();
+    let mut payload=correction_payload("correction-atomic","output-correction-atomic","SpeakMode",true);payload["expectedDictionaryVersion"]=json!(2);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"revisionConflict");
+    assert_eq!(h.db.get_result("correction-atomic").unwrap(),edited);assert_eq!(h.db.snapshot().dictionary.entries.len(),1);
+}
+
+#[tokio::test]
+async fn correction_duplicate_word_is_idempotent_and_replay_cannot_resurrect_a_deleted_word() {
+    let h=hub();install(&h,"correction-replay",SessionPhase::FinalizingAsr,true);ready(&h,"correction-replay");
+    let dictionary=command(&h,"dictionary.import",json!({"terms":["SpeakMode"],"expectedVersion":1,"requestId":"correction-existing"})).await.unwrap();
+    let mut payload=correction_payload("correction-replay","output-correction-replay","ＳＰＥＡＫＭＯＤＥ",true);payload["expectedDictionaryVersion"]=json!(2);
+    let result=command(&h,"revision.correctTerm",payload.clone()).await.unwrap();
+    assert_eq!(result["dictionaryStatus"],"existing");assert_eq!(result["dictionary"],dictionary);assert_eq!(h.db.snapshot().dictionary.version,2);
+    assert_eq!(command(&h,"revision.correctTerm",payload.clone()).await.unwrap(),result);
+    assert_eq!(h.db.get_result("correction-replay").unwrap().output.unwrap().blocks[0].text,"ＳＰＥＡＫＭＯＤＥ未确认前，不要订机票；先保留行程。");
+    command(&h,"dictionary.delete",json!({"entryId":dictionary["entries"][0]["id"],"expectedVersion":2,"requestId":"correction-delete-existing"})).await.unwrap();
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"request_already_processed");
+    assert!(h.db.snapshot().dictionary.entries.is_empty());
+}
+
+#[tokio::test]
+async fn correction_capacity_is_atomic_and_user_may_correct_without_remembering() {
+    let h=hub();install(&h,"correction-full",SessionPhase::FinalizingAsr,true);ready(&h,"correction-full");
+    let terms:Vec<_>=(0..200).map(|index|format!("term{index}")).collect();
+    command(&h,"dictionary.import",json!({"terms":terms,"expectedVersion":1,"requestId":"correction-fill"})).await.unwrap();
+    let original=h.db.get_result("correction-full").unwrap();
+    let mut payload=correction_payload("correction-full","output-correction-full","SpeakMode",true);payload["expectedDictionaryVersion"]=json!(2);
+    assert_eq!(command(&h,"revision.correctTerm",payload).await.unwrap_err().code,"dictionary_entry_limit");
+    assert_eq!(h.db.get_result("correction-full").unwrap(),original);assert_eq!(h.db.snapshot().dictionary.entries.len(),200);
+    let result=command(&h,"revision.correctTerm",correction_payload("correction-full","output-correction-full","SpeakMode",false)).await.unwrap();
+    assert_eq!(result["dictionaryStatus"],"notRequested");assert!(result["dictionary"].is_null());assert_eq!(h.db.snapshot().dictionary.entries.len(),200);
+    assert_eq!(result["detail"]["output"]["blocks"][0]["text"],"SpeakMode未确认前，不要订机票；先保留行程。");
+}
+
+#[tokio::test]
+async fn correction_rejects_wrong_occurrence_invalid_terms_and_recording_window_without_mutation() {
+    let h=hub();install(&h,"correction-validate",SessionPhase::FinalizingAsr,true);ready(&h,"correction-validate");
+    let original=h.db.get_result("correction-validate").unwrap();
+    for change in [json!({"start":0,"end":0}),json!({"expectedText":"不是这里"}),json!({"blockId":"other"}),json!({"replacement":"x".repeat(81)}),json!({"replacement":"name\n"}),json!({"replacement":"name\u{200b}"})] {
+        let mut payload=correction_payload("correction-validate","output-correction-validate","SpeakMode",true);
+        for (key,value) in change.as_object().unwrap(){payload["patch"][key]=value.clone();}
+        assert!(command(&h,"revision.correctTerm",payload).await.is_err());
+        assert_eq!(h.db.get_result("correction-validate").unwrap(),original);assert_eq!(h.db.snapshot().dictionary.version,1);
+    }
+    let request=CommandRequest{name:"revision.correctTerm".into(),payload:correction_payload("correction-validate","output-correction-validate","SpeakMode",true)};
+    assert_eq!(h.command("recording",request).await.unwrap_err().code,"forbidden");
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn correction_revokes_prepared_delivery_without_clipboard_or_input() {
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");enable_fixture_delivery(&h);
+    let copies=Arc::new(std::sync::atomic::AtomicUsize::new(0));let chords=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let native=h.native_io.lock().unwrap();let delivery=fake_delivery(h.clone(),copies.clone(),chords.clone());wait_prepared(&h).await;
+    let result=command(&h,"revision.correctTerm",correction_payload("s","output-s","SpeakMode",true)).await.unwrap();
+    assert_eq!(h.inner.lock().unwrap().active.as_ref().unwrap().output.as_ref().unwrap().id,result["detail"]["output"]["id"].as_str().unwrap());
+    drop(native);delivery.await.unwrap();assert_eq!(copies.load(Ordering::SeqCst),0);assert_eq!(chords.load(Ordering::SeqCst),0);assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+}
+
+#[tokio::test]
+async fn dictionary_ipc_lists_without_request_id_and_mutations_return_authoritative_snapshots() {
+    let h=hub();let empty=command(&h,"dictionary.list",json!({})).await.unwrap();
+    assert_eq!(empty["version"],1);assert_eq!(empty["entries"],json!([]));
+    let saved=command(&h,"dictionary.save",json!({"draft":{"term":"SpeakMode"},"expectedVersion":1,"requestId":"dictionary-save"})).await.unwrap();
+    assert_eq!(saved["version"],2);assert_eq!(saved["entries"][0]["term"],"SpeakMode");
+    assert_eq!(h.snapshot("main").unwrap()["dictionary"],saved);
+    assert!(h.snapshot("recording").unwrap().get("dictionary").is_none());
+    let rejected=h.command("recording",CommandRequest{name:"dictionary.list".into(),payload:json!({})}).await.unwrap_err();assert_eq!(rejected.code,"forbidden");
+    let duplicate=command(&h,"dictionary.import",json!({"terms":["ＳＰＥＡＫＭＯＤＥ"],"expectedVersion":2,"requestId":"dictionary-duplicate"})).await.unwrap();
+    assert_eq!(duplicate,saved);
+    let deleted=command(&h,"dictionary.delete",json!({"entryId":saved["entries"][0]["id"],"expectedVersion":2,"requestId":"dictionary-delete"})).await.unwrap();
+    assert_eq!(deleted["version"],3);assert_eq!(deleted["entries"],json!([]));
+}
+
+#[tokio::test]
+async fn dictionary_conflicts_and_capacity_errors_are_specific_and_do_not_apply_a_draft() {
+    let h=hub();command(&h,"dictionary.import",json!({"terms":["PolyU"],"expectedVersion":1,"requestId":"dictionary-seed"})).await.unwrap();
+    let stale=command(&h,"dictionary.save",json!({"draft":{"term":"StaleDraft"},"expectedVersion":1,"requestId":"dictionary-stale"})).await.unwrap_err();
+    assert_eq!(stale.code,"revisionConflict");assert_eq!(stale.stage,"dictionary");
+    let invalid=command(&h,"dictionary.save",json!({"draft":{"term":"x".repeat(81)},"expectedVersion":2,"requestId":"dictionary-long"})).await.unwrap_err();
+    assert_eq!(invalid.code,"dictionary_term_limit");assert_eq!(invalid.stage,"dictionary");
+    let duplicate=command(&h,"dictionary.save",json!({"draft":{"term":"ＰＯＬＹＵ"},"expectedVersion":2,"requestId":"dictionary-existing"})).await.unwrap_err();
+    assert_eq!(duplicate.code,"dictionary_duplicate");assert_eq!(h.db.snapshot().dictionary.entries[0].term,"PolyU");assert_eq!(h.db.snapshot().dictionary.version,2);
+}
+
+#[tokio::test]
+async fn dictionary_replay_never_resurrects_deleted_terms_or_repeats_an_import() {
+    let h=hub();let request=json!({"terms":["PrivateTerm"],"expectedVersion":1,"requestId":"dictionary-replay"});
+    let saved=command(&h,"dictionary.import",request.clone()).await.unwrap();
+    assert_eq!(command(&h,"dictionary.import",request.clone()).await.unwrap(),saved);assert_eq!(h.db.snapshot().dictionary.version,2);
+    assert!(matches!(h.inner.lock().unwrap().requests["main:dictionary-replay"].outcome.lock().unwrap().as_ref().unwrap(),Ok(ReplayValue::Dictionary(2))));
+    command(&h,"dictionary.delete",json!({"entryId":saved["entries"][0]["id"],"expectedVersion":2,"requestId":"dictionary-delete-replay"})).await.unwrap();
+    assert_eq!(command(&h,"dictionary.import",request).await.unwrap_err().code,"request_already_processed");
+    assert!(h.db.snapshot().dictionary.entries.is_empty());
+}
+
+#[tokio::test]
+async fn dictionary_changes_during_capture_only_apply_to_the_next_session() {
+    let h=hub();let saved=command(&h,"dictionary.import",json!({"terms":["FrozenVocabulary"],"expectedVersion":1,"requestId":"dictionary-before-capture"})).await.unwrap();
+    install(&h,"dictionary-frozen",SessionPhase::Recording,true);
+    let (frozen,mode)={let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();(active.dictionary.clone(),active.mode.clone())};
+    command(&h,"dictionary.delete",json!({"entryId":saved["entries"][0]["id"],"expectedVersion":2,"requestId":"dictionary-while-capture"})).await.unwrap();
+    command(&h,"dictionary.import",json!({"terms":["NextVocabulary"],"expectedVersion":3,"requestId":"dictionary-next-capture"})).await.unwrap();
+    {let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();assert_eq!(active.dictionary,frozen);assert_eq!(active.mode,mode);assert_eq!(active.phase,SessionPhase::Recording);}
+    assert!(!h.db.snapshot().dictionary.asr_context().unwrap().contains("FrozenVocabulary"));
+    install(&h,"dictionary-next",SessionPhase::Recording,true);
+    let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();assert_eq!(active.dictionary.version,4);assert!(active.dictionary.asr_context().unwrap().contains("NextVocabulary"));
 }
 fn events(hub: &AppHub) -> Arc<Mutex<Vec<AppEvent>>> {
     let values = Arc::new(Mutex::new(vec![])); let target = values.clone();
@@ -214,6 +355,109 @@ fn coverage_failure_keeps_checkpoint_and_offers_recovery_without_ready_usage_or_
     let saved=h.db.get_result("s").unwrap();assert_eq!(saved.source,source("s"));assert!(saved.output.is_none());assert_eq!(usage_count(&h),0);
     assert!(h.inner.lock().unwrap().active.as_ref().unwrap().delivery.is_none());
     assert_eq!(h.diagnostics.snapshot().unwrap().traces[0].error_code.as_deref(),Some("incomplete_source_coverage"));
+}
+
+fn range_rewrite_source()->SourceRevision {
+    let mut value=source("s");
+    value.items[0].text="今天用 SpeakMode 比较 Typeless。".into();
+    value.items[1].text="音频采集用 WASAPI。".into();
+    value
+}
+fn range_rewrite_content(retain_today:bool,include_tail:bool)->String {
+    let mut blocks=vec![json!({"text":if retain_today{"今天用 SpeakMode 比较 Typeless。"}else{"用 SpeakMode 比较 Typeless。"},"sourceRange":[0,0]})];
+    if include_tail{blocks.push(json!({"text":"音频采集用 WASAPI。","sourceRange":[1,1]}));}
+    json!({"resolvedMode":"structure","blocks":blocks}).to_string()
+}
+fn range_rewrite_checkpoint(h:&AppHub) {
+    install(h,"s",SessionPhase::FinalizingAsr,true);install_trace(h);
+    h.checkpoint("s",7,range_rewrite_source()).unwrap();
+}
+async fn finish_parsed_fixture(h:&Arc<AppHub>,content:String) {
+    h.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel|async move{
+        rewrite::parse_model_output(&content,&mode,&source)
+    }).await;
+}
+fn assert_range_rewrite_rejected(h:&AppHub,expected_code:&str) {
+    let live=view(h);assert_eq!(live.state,SessionPhase::Failed);
+    assert_eq!(live.error_code.as_deref(),Some(expected_code));
+    assert!(live.can_retry_rewrite&&live.can_use_source&&live.can_copy_recovery);
+    assert!(!live.can_retry_asr);assert!(live.worker_released);
+    let saved=h.db.get_result("s").unwrap();assert_eq!(saved.source,range_rewrite_source());
+    assert_eq!(saved.session.status,StoredSessionStatus::Checkpointed);assert!(saved.output.is_none());
+    assert_eq!(usage_count(h),0);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+    let inner=h.inner.lock().unwrap();let active=inner.active.as_ref().unwrap();
+    assert!(active.output.is_none()&&active.delivery.is_none()&&active.delivery_permit.is_none());
+}
+
+#[tokio::test]
+async fn parsed_complete_ranges_commit_stable_source_refs_without_changing_source() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    h.inner.lock().unwrap().active.as_mut().unwrap().prefs.delivery_mode=DeliveryMode::Preview;
+    finish_parsed_fixture(&h,range_rewrite_content(true,true)).await;
+    let live=view(&h);assert_eq!(live.state,SessionPhase::Ready);assert!(live.error.is_none());
+    let stored=h.db.get_result("s").unwrap();assert_eq!(stored.source,range_rewrite_source());
+    let output=stored.output.unwrap();assert_eq!(output.source_revision_id,"source-s");
+    assert_eq!(output.blocks[0].source_refs,["item-s-0"]);assert_eq!(output.blocks[1].source_refs,["item-s-1"]);
+    assert_eq!(output.resolved_mode,BaseMode::Structure);assert_eq!(output.creation_reason,CreationReason::NormalInitial);
+    assert_eq!(usage_count(&h),1);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+}
+
+#[tokio::test]
+async fn parsed_missing_time_qualifier_keeps_checkpoint_and_never_readies_or_claims_input() {
+    let h=hub();range_rewrite_checkpoint(&h);let seen=events(&h);
+    {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
+    finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
+    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+    assert_eq!(h.diagnostics.snapshot().unwrap().traces[0].error_code.as_deref(),Some("rewrite_meaning_risk"));
+    assert!(seen.lock().unwrap().iter().any(|event|event.kind=="session"&&event.payload["state"]=="failed"&&event.payload["errorCode"]=="rewrite_meaning_risk"));
+    h.initial_delivery_with("s",7,|_|panic!("rejected output must not validate a target"),|_,_,_,_|panic!("rejected output must not inject text"));
+    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+}
+
+#[tokio::test]
+async fn parsed_range_gap_keeps_checkpoint_and_never_readies_or_counts_usage() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    finish_parsed_fixture(&h,range_rewrite_content(true,false)).await;
+    assert_range_rewrite_rejected(&h,"incomplete_source_coverage");
+}
+
+#[tokio::test]
+async fn cancellation_rejects_late_successfully_parsed_range_output_before_commit() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    let (parsed_tx,parsed_rx)=tokio::sync::oneshot::channel();let(release_tx,release_rx)=tokio::sync::oneshot::channel();
+    let worker=h.clone();let job=tokio::spawn(async move{
+        worker.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel|async move{
+            let parsed=rewrite::parse_model_output(&range_rewrite_content(true,true),&mode,&source);
+            assert!(parsed.is_ok());parsed_tx.send(()).unwrap();
+            // Deliberately ignore cancellation in the fixture transport: the
+            // AppHub receipt gate must still reject this already-parsed result.
+            release_rx.await.unwrap();parsed
+        }).await;
+    });
+    parsed_rx.await.unwrap();h.cancel_session_async(&identity("s")).await.unwrap();
+    release_tx.send(()).unwrap();job.await.unwrap();
+    let live=view(&h);assert_eq!(live.state,SessionPhase::Cancelled);assert!(!live.can_copy_recovery);
+    assert!(h.db.get_result("s").is_err());assert_eq!(usage_count(&h),0);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+    let trace=h.diagnostics.snapshot().unwrap();assert!(!trace.traces[0].marks.iter().any(|mark|mark.stage==Stage::RewriteValidated||mark.stage==Stage::ReadyCommitted));
+}
+
+#[tokio::test]
+async fn rejected_range_output_never_falls_back_or_reinputs_after_explicit_source_adoption() {
+    let h=hub();range_rewrite_checkpoint(&h);
+    {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
+    finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
+    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+    h.initial_delivery_with("s",7,|_|panic!("failure cannot enter input"),|_,_,_,_|panic!("failure cannot fall back to source input"));
+    let adopted=h.use_source_async(&identity("s")).await.unwrap();
+    assert_eq!(adopted["source"],serde_json::to_value(range_rewrite_source()).unwrap());
+    let saved=h.db.get_result("s").unwrap();let output=saved.output.unwrap();
+    let original=range_rewrite_source();
+    assert_eq!(output.kind,RevisionKind::UseSource);assert_eq!(output.creation_reason,CreationReason::UseSource);
+    assert_eq!(output.blocks.iter().map(|block|block.text.as_str()).collect::<Vec<_>>(),original.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>());
+    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(usage_count(&h),1);
+    h.initial_delivery_with("s",7,|_|panic!("explicit source adoption cannot reclaim the original target"),|_,_,_,_|panic!("explicit source adoption cannot automatically input"));
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
 }
 
 #[test]
@@ -1267,6 +1511,132 @@ fn delivery_missing_or_changed_target_records_skip_without_focus_steal_or_retry(
     }
 }
 
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_stop_permission_failure_preserves_reason_and_once_only_skip(){
+    for fail_anchor in [false,true] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+        h.stop_session_at_with_target_result(&identity("s"),Instant::now(),
+            ||if fail_anchor{Err(platform::PlatformError::TargetHigherIntegrity)}else{Ok(Some(delivery_anchor_fixture()))},
+            move |_|{assert!(!fail_anchor,"anchor failure must not inspect another surface");Err(platform::PlatformError::TargetHigherIntegrity)}).await.unwrap();
+        {let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(s.stop.load(Ordering::SeqCst));assert!(!s.target_capture_pending);assert!(s.target.is_none());assert_eq!(s.target_capture_failure_reason.as_deref(),Some("targetHigherIntegrity"));}
+        ready(&h,"s");
+        h.initial_delivery_with("s",7,|_|panic!("failed capture cannot validate a target"),|_,_,_,_|panic!("permission failure cannot mutate clipboard or inject input"));
+        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some("targetHigherIntegrity"));
+        assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some("targetHigherIntegrity"));
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);assert!(view(&h).can_copy_recovery);
+        h.initial_delivery_with("s",7,|_|panic!("terminal skip must not inspect again"),|_,_,_,_|panic!("terminal skip must not dispatch again"));
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+    }
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_typed_stop_failures_keep_reason_and_result_without_native_input(){
+    use platform::{PlatformError, TargetCaptureFailure};
+    for (failure,expected) in [
+        (TargetCaptureFailure::StopAnchorUnavailable,"stopAnchorUnavailable"),
+        (TargetCaptureFailure::StopFocusChanged,"stopFocusChanged"),
+        (TargetCaptureFailure::TargetNotEditable,"targetNotEditable"),
+        (TargetCaptureFailure::TargetCapabilityUnsupported,"targetCapabilityUnsupported"),
+        (TargetCaptureFailure::TargetInspectionTimeout,"targetInspectionTimeout"),
+    ] {
+        for at_anchor in [true,false] {
+            let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+            h.stop_session_at_with_target_result(&identity("s"),Instant::now(),
+                ||if at_anchor{Err(PlatformError::TargetCapture(failure))}else{Ok(Some(delivery_anchor_fixture()))},
+                move |_|{assert!(!at_anchor,"failed anchor must not inspect another target");Err(PlatformError::TargetCapture(failure))}).await.unwrap();
+            {let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();
+                assert!(s.stop.load(Ordering::SeqCst));assert!(!s.target_capture_pending);
+                assert!(s.target.is_none());assert_eq!(s.target_capture_failure_reason.as_deref(),Some(expected));}
+            ready(&h,"s");
+            h.initial_delivery_with("s",7,|_|panic!("failed target must not validate"),|_,_,_,_|panic!("failed target must not copy or paste"));
+            assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+            assert_eq!(current_delivery(&h).reason.as_deref(),Some(expected));
+            assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some(expected));
+            assert_eq!(view(&h).state,SessionPhase::Ready);assert!(view(&h).can_copy_recovery);
+            // stop_session records today's real ended_at, unlike the fixture's
+            // original date. Count the once-only event across all dates.
+            assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);
+            h.initial_delivery_with("s",7,|_|panic!("terminal skip must not inspect again"),|_,_,_,_|panic!("terminal skip must not paste again"));
+            assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+        }
+    }
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_stop_control_classifies_agreed_codes_without_parsing_private_messages(){
+    for (code,expected) in [
+        ("stop_target_changed","stopFocusChanged"),
+        ("stop_target_unavailable","stopAnchorUnavailable"),
+        ("stop_anchor_unavailable","stopAnchorUnavailable"),
+        ("stop_focus_changed","stopFocusChanged"),
+        ("target_not_editable","targetNotEditable"),
+        ("target_capability_unsupported","targetCapabilityUnsupported"),
+        ("window_timeout","targetInspectionTimeout"),
+        ("target_inspection_timeout","targetInspectionTimeout"),
+        ("unexpected_code","targetUnavailableAtStop"),
+    ] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+        h.set_stop_target_control(Arc::new(move |_|Err(ApiError::new(code,"native","private title / body; stop_target_changed; target_higher_integrity"))));
+        h.stop_session_at_with_target_result(&identity("s"),Instant::now(),||Ok(Some(delivery_anchor_fixture())),
+            |_|panic!("failed stop coordinator must not inspect another target")).await.unwrap();
+        ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("no target"),|_,_,_,_|panic!("no native input"));
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some(expected));
+        let live=serde_json::to_string(&view(&h)).unwrap();
+        assert!(!live.contains("private title / body"));
+        assert_eq!(view(&h).state,SessionPhase::Ready);assert!(view(&h).can_copy_recovery);
+    }
+}
+
+#[test]
+fn typed_target_error_survives_desktop_api_boundary_without_provider_details(){
+    use platform::{PlatformError,TargetCaptureFailure};
+    for failure in [TargetCaptureFailure::StopAnchorUnavailable,TargetCaptureFailure::StopFocusChanged,
+        TargetCaptureFailure::TargetNotEditable,TargetCaptureFailure::TargetCapabilityUnsupported,
+        TargetCaptureFailure::TargetInspectionTimeout] {
+        let api:ApiError=PlatformError::TargetCapture(failure).into();
+        assert_eq!(api.code,failure.api_code());assert_eq!(api.stage,"native");
+        assert!(matches!(stop_control_failure(api),PlatformError::TargetCapture(restored) if restored==failure));
+    }
+}
+
+#[test]
+fn late_stop_permission_error_cannot_pollute_a_new_generation(){
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+    let(id,generation)=h.begin_stop_target(&identity("s"),Instant::now()).unwrap().unwrap();
+    h.resolve_stop_target_result(&id,generation,||{
+        install(&h,"new",SessionPhase::Recording,true);
+        Err(platform::PlatformError::TargetHigherIntegrity)
+    });
+    let i=h.inner.lock().unwrap();let current=i.active.as_ref().unwrap();
+    assert_eq!(current.id,"new");assert!(current.target_capture_failure_reason.is_none());assert!(current.delivery_failure_reason.is_none());
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_stop_mode_return_preserves_permission_reason_without_target_inspection(){
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+    h.set_stop_target_control(Arc::new(|_|Err(platform::PlatformError::TargetHigherIntegrity.into())));
+    h.stop_session_at_with_target_result(&identity("s"),Instant::now(),||Ok(Some(delivery_anchor_fixture())),
+        |_|panic!("failed mode return must not inspect another input target")).await.unwrap();
+    ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("unverified target cannot validate"),|_,_,_,_|panic!("unverified target cannot inject"));
+    assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);assert_eq!(current_delivery(&h).reason.as_deref(),Some("targetHigherIntegrity"));
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);assert!(view(&h).can_copy_recovery);
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn restore_at_scalar_caret_after_emoji_preserves_other_text_and_undo(){
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");
+    let original_source=serde_json::to_value(h.db.get_result("s").unwrap().source).unwrap();
+    let edited:HistoryDetail=serde_json::from_value(command(&h,"revision.edit",edit_payload("s","output-s","😀订机票前核对会议。")).await.unwrap()).unwrap();
+    let edited_id=edited.output.unwrap().id;
+    let restored:HistoryDetail=serde_json::from_value(command(&h,"revision.restore",json!({"sessionId":"s","expectedCurrentRevisionId":edited_id,"requestId":"caret-after-emoji","patch":{"blockId":"block-0","start":1,"end":1,"sourceSelections":[{"itemId":"item-s-0","start":8,"end":10}]}})).await.unwrap()).unwrap();
+    let result=restored.output.unwrap();assert_eq!(result.blocks[0].text,"😀不要订机票前核对会议。");
+    assert_eq!(serde_json::to_value(restored.source).unwrap(),original_source);assert!(restored.can_undo);
+    let undone:HistoryDetail=serde_json::from_value(command(&h,"revision.undo",json!({"sessionId":"s","expectedCurrentRevisionId":result.id,"requestId":"caret-undo"})).await.unwrap()).unwrap();
+    assert_eq!(undone.output.unwrap().blocks[0].text,"😀订机票前核对会议。");assert_eq!(serde_json::to_value(undone.source).unwrap(),original_source);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);assert_eq!(usage_count(&h),1);
+}
+
 #[test]
 fn delivery_stop_target_failure_or_panicked_probe_clears_lease_and_old_caret(){
     for panic_probe in [false,true]{
@@ -1367,7 +1737,9 @@ async fn delivery_stop_anchor_missing_or_focus_switched_during_ui_handoff_cannot
             |_|panic!("no anchor or a changed foreground must not inspect the new window")).await.unwrap();
         assert!(h.inner.lock().unwrap().active.as_ref().unwrap().target.is_none());assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().target_capture_pending);
         ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("no target to validate"),|_,_,_,_|panic!("focus switch must not dispatch input"));
-        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);assert_eq!(current_delivery(&h).reason.as_deref(),Some("targetUnavailableAtStop"));
+        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some(if anchor_missing{"stopAnchorUnavailable"}else{"stopFocusChanged"}));
+        assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some(if anchor_missing{"stopAnchorUnavailable"}else{"stopFocusChanged"}));
     }
 }
 
