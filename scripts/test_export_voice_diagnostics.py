@@ -31,6 +31,16 @@ def fixture():
 
 
 class ExportBoundaries(unittest.TestCase):
+    def test_fixed_target_capture_codes_preserved_without_arbitrary_details(self):
+        for code in ('stop_anchor_unavailable','stop_focus_changed','target_not_editable',
+                     'target_capability_unsupported','target_inspection_timeout'):
+            raw = fixture()
+            raw['traces'][0]['errorCode'] = code
+            raw['traces'][0]['targetText'] = 'PRIVATE_SENTINEL'
+            value = module.filter_snapshot(raw)
+            self.assertEqual(value['traces'][0]['errorCode'], code)
+            self.assertNotIn('PRIVATE_SENTINEL', json.dumps(value))
+
     def setUp(self):
         self.exe = (module.ROOT / "output/releases/fake-test/SpeakMode.exe").resolve()
 

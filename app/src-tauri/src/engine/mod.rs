@@ -32,6 +32,7 @@ impl From<StoreError> for ApiError {
 }
 impl From<platform::PlatformError> for ApiError {fn from(error:platform::PlatformError)->Self {match error {
     platform::PlatformError::TargetHigherIntegrity=>Self::new("target_higher_integrity","native","目标应用以管理员权限运行，请查看成稿后手动粘贴"),
+    platform::PlatformError::TargetCapture(reason)=>Self::new(reason.api_code(),"native",reason.message()),
     _=>Self::new("native_unavailable","native","本机操作未完成，请检查设备、快捷键或目标位置"),
 }}}
 pub type Result<T> = std::result::Result<T,ApiError>;

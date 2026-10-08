@@ -1,6 +1,6 @@
 # Local source modification boundary
 
-Updated 2026-10-04. This note accompanies the dependency inventory and is included in the staged
+Updated 2026-10-08. This note accompanies the dependency inventory and is included in the staged
 installer resource manifest. It is a source-modification record, not release/legal
 approval or evidence of a successful installation.
 
@@ -17,7 +17,7 @@ approval or evidence of a successful installation.
   an ordered observed key/lifecycle stream, physical/reconciled origin, lifecycle
   and hook reinstallation status, and injected-event filtering. This is a scope
   summary, not an exhaustive upstream source diff or new test claim.
-- This repair changes only `src/platform/windows/listener.rs` in the vendored tree:
+- The 2026-10-04 repair changed only `src/platform/windows/listener.rs` in the vendored tree:
   readiness timeout/disconnect requests stop **and joins the native hook thread**
   before the constructor returns its error. It no longer detaches an unfinished
   native thread. The explicit readiness-error branch already joined.
@@ -26,6 +26,15 @@ approval or evidence of a successful installation.
   its error, and supports retryable shutdown. The vendored constructor itself can
   wait beyond its readiness deadline for real cleanup; it must not be invoked on
   UI/engine-lock paths. This is a local behavioral change, not an upstream promise.
+- SpeakMode 0.1.9 adds a narrow observed-listener standalone Alt/Win tap policy in
+  `src/listener.rs`, exported through `src/lib.rs` and used by
+  `src/platform/windows/listener.rs`. On a configured independent short tap,
+  one native batch sends an inert menu mask followed by the corresponding
+  modifier release. Only a fully accepted batch replaces the physical release.
+  Chords, AltGr, long holds, disabled/capture policies and injected events do not
+  use this replacement. Original license and upstream checkout remain unchanged.
+  Behavioral tests and real physical-key acceptance are reported separately in
+  the 0.1.9 experiment record; this source notice does not certify host input.
 
 The first-party wrapper and lifecycle tests are in `platform/hotkeys.rs`; they
 are separate from the upstream library license. Isolated thread-owner regression

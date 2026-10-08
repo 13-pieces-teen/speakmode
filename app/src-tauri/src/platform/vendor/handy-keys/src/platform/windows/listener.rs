@@ -12,7 +12,7 @@ use windows::Win32::System::RemoteDesktop::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RMENU,
+    KEYEVENTF_KEYUP, KEYEVENTF_EXTENDEDKEY, VIRTUAL_KEY, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RMENU,
     VK_RSHIFT, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -25,7 +25,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::error::{Error, Result};
-use crate::listener::{ObservedEvent, KeyOrigin, Lifecycle};
+use crate::listener::{ObservedEvent, KeyOrigin, Lifecycle, StandaloneTapMaskControl, StandaloneTapMenuMask,
+    standalone_menu_release_batch, standalone_release_disposition, StandaloneReleaseDisposition,
+    observed_keyboard_event_is_physical, standalone_tap_has_other_modifier};
 use crate::platform::state::{release_events, stale_modifiers, BlockingHotkeys, RECONCILABLE};
 use crate::types::{Key, KeyEvent, Modifiers};
 
@@ -98,6 +100,7 @@ struct HookContext {
     /// hold defuses the shell's menu heuristic for the whole hold; cleared
     /// once no Win/Alt modifier remains held.
     menu_mask_sent: bool,
+    standalone_tap: Option<StandaloneTapMenuMask>,
 }
 
 thread_local! {
@@ -240,6 +243,7 @@ fn reconcile_modifiers(ctx: &mut HookContext) {
         ctx.current_modifiers,
         stale_modifiers(ctx.current_modifiers, physical),
     ) {
+        if let Some(mask)=ctx.standalone_tap.as_mut(){mask.reset();}
         ctx.current_modifiers = event.modifiers;
         emit_key(ctx, event, KeyOrigin::Reconciled);
     }
@@ -263,7 +267,10 @@ fn emit_key(ctx: &HookContext, event: KeyEvent, origin: KeyOrigin) {
 
 fn lifecycle_event(event: Lifecycle) {
     HOOK_CONTEXT.with(|cell| {
-        if let Some(ctx) = cell.borrow().as_ref() {
+        if let Some(ctx) = cell.borrow_mut().as_mut() {
+            // Invalidate at the native event boundary, before a queued worker
+            // can observe a later physical release after lock/suspend/resume.
+            if let Some(mask)=ctx.standalone_tap.as_mut(){mask.disable();}
             if let Some(sender) = &ctx.observed_sender {
                 let _ = sender.send(ObservedEvent::Lifecycle(event));
             }
@@ -423,14 +430,15 @@ pub(crate) struct WindowsListenerState {
 
 /// Spawn a Windows low-level keyboard hook listener
 pub(crate) fn spawn(blocking_hotkeys: Option<BlockingHotkeys>) -> Result<WindowsListenerState> {
-    spawn_internal(blocking_hotkeys, false)
+    spawn_internal(blocking_hotkeys, false, None)
 }
 
-pub(crate) fn spawn_observed() -> Result<WindowsListenerState> {
-    spawn_internal(None, true)
+pub(crate) fn spawn_observed(control: Option<StandaloneTapMaskControl>) -> Result<WindowsListenerState> {
+    spawn_internal(None, true, control)
 }
 
-fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool) -> Result<WindowsListenerState> {
+fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
+                  standalone_tap: Option<StandaloneTapMaskControl>) -> Result<WindowsListenerState> {
     let (tx, rx) = mpsc::channel();
     let (observe_tx, observe_rx) = mpsc::channel();
     let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
@@ -448,6 +456,7 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool) -> 
                 blocking_hotkeys: thread_blocking,
                 altgr_phantom_ctrl: false,
                 menu_mask_sent: false,
+                standalone_tap: standalone_tap.map(StandaloneTapMenuMask::new),
             });
         });
 
@@ -590,6 +599,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
 
     let mut should_block = false;
     let mut needs_mask = false;
+    let mut standalone_release:Option<(u16,KeyEvent)>=None;
 
     // Process the keyboard event
     HOOK_CONTEXT.with(|ctx_cell| {
@@ -606,13 +616,9 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
             // Our own injected menu mask: pass it through untouched. It
             // exists solely for the shell's benefit and must not update
             // modifier state, trigger reconciliation, or be emitted.
-            if vk_code == MENU_MASK_VK && kb_struct.dwExtraInfo == MENU_MASK_EXTRA_INFO {
-                return;
-            }
-
-            // Never let synthetic clipboard chords or other injected keys toggle
-            // recording. Keep them available to subsequent/native hooks.
-            if kb_struct.flags.0 & 0x10 != 0 { return; } // LLKHF_INJECTED
+            // Inert masks, their replacement modifier release and synthetic
+            // clipboard chords bypass both the recognizer and observer stream.
+            if !observed_keyboard_event_is_physical(vk_code,kb_struct.flags.0,kb_struct.dwExtraInfo){return;}
 
             // On AltGr layouts Windows synthesizes a Left Ctrl press/release
             // around every Right Alt event (captured live on UK layout:
@@ -637,6 +643,13 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
 
                 // Only emit event if modifiers actually changed
                 if ctx.current_modifiers != prev_modifiers {
+                    let event=KeyEvent {modifiers:ctx.current_modifiers,key:None,is_key_down,
+                        changed_modifier:Some(modifier)};
+                    let unrelated=ctx.standalone_tap.is_some()&&modifier.intersects(MENU_MODIFIERS)&&
+                        (standalone_tap_has_other_modifier(modifier,physical_modifiers(),ctx.altgr_phantom_ctrl)||
+                         standalone_unrelated_key_is_held());
+                    let standalone=ctx.standalone_tap.as_mut().is_some_and(|mask|
+                        mask.feed(event,KeyOrigin::Physical,std::time::Instant::now(),unrelated));
                     // Check if modifier-only combo should be blocked
                     should_block =
                         should_block_hotkey(&ctx.blocking_hotkeys, ctx.current_modifiers, None);
@@ -649,12 +662,8 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                         needs_mask = true;
                     }
 
-                    emit_key(ctx, KeyEvent {
-                        modifiers: ctx.current_modifiers,
-                        key: None,
-                        is_key_down,
-                        changed_modifier: Some(modifier),
-                    }, KeyOrigin::Physical);
+                    if standalone {standalone_release=Some((vk_code,event));}
+                    else {emit_key(ctx,event,KeyOrigin::Physical);}
                 }
 
                 // The hold ends once no Win/Alt modifier remains held; the
@@ -663,6 +672,9 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                     ctx.menu_mask_sent = false;
                 }
             } else {
+                // Any real non-modifier cancels the standalone gesture, even
+                // if the key has no portable handy-keys mapping.
+                if let Some(mask)=ctx.standalone_tap.as_mut(){mask.reset();}
                 // Non-modifier key: reconcile tracked modifiers against the
                 // physical keyboard first, so a key-up missed during a secure
                 // desktop transition can't stick a modifier onto this event.
@@ -693,6 +705,11 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                         is_key_down,
                         changed_modifier: None,
                     }, KeyOrigin::Physical);
+                }else if ctx.observed_sender.is_some(){
+                    // The app's tap recognizer must also cancel on real unmapped
+                    // keys; injected/own inert keys were filtered above.
+                    emit_key(ctx,KeyEvent{modifiers:ctx.current_modifiers,key:None,is_key_down,
+                        changed_modifier:None},KeyOrigin::Physical);
                 }
             }
         }
@@ -702,6 +719,17 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
     // hook (where the dwExtraInfo marker passes them straight through).
     if needs_mask {
         send_menu_mask();
+    }
+    if let Some((virtual_key,event))=standalone_release {
+        let still_current=HOOK_CONTEXT.with(|cell|cell.borrow().as_ref().is_some_and(|ctx|
+            ctx.standalone_tap.as_ref().is_some_and(StandaloneTapMenuMask::policy_is_current)));
+        // Do not rely on SendInput(mask) versus CallNextHookEx(real AltUp)
+        // ordering. Replace only this accepted release, with one serial batch.
+        // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput
+        if still_current&&replace_standalone_release(virtual_key){should_block=true;}
+        // Even an injection failure must release the policy's physical hold and
+        // reach the existing gesture observer. Failure retains original key-up.
+        HOOK_CONTEXT.with(|cell|{if let Some(ctx)=cell.borrow().as_ref(){emit_key(ctx,event,KeyOrigin::Physical);}});
     }
 
     if should_block {
@@ -748,6 +776,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             let mouse_struct = &*(lparam.0 as *const MSLLHOOKSTRUCT);
 
             if mouse_struct.flags & 1 != 0 { return; } // LLMHF_INJECTED
+            if let Some(mask)=ctx.standalone_tap.as_mut(){mask.reset();}
 
             // Stale modifiers must not gate button reporting (or decorate the
             // event), so reconcile before reading them.
@@ -858,6 +887,33 @@ fn send_menu_mask() {
         // Rare (e.g. UIPI filtering); the cost is the pre-mask behavior:
         // the shell may open its menu when the modifier is released.
         eprintln!("handy-keys: menu mask injection failed");
+    }
+}
+
+fn standalone_unrelated_key_is_held()->bool {
+    // Include mouse buttons and keys held before the hook was installed.
+    // Generic + side-specific modifiers are already present in the KeyEvent.
+    (0x01..=0xfe).filter(|vk|!matches!(*vk,0x10..=0x12|0x5b..=0x5c|0xa0..=0xa5|0xe8))
+        .any(|vk|unsafe{GetAsyncKeyState(vk)} as u16 & 0x8000!=0)
+}
+fn replace_standalone_release(virtual_key:u16)->bool {
+    let Some(batch)=standalone_menu_release_batch(virtual_key) else{return false;};
+    let inputs=batch.map(|event|INPUT{r#type:INPUT_KEYBOARD,Anonymous:INPUT_0{ki:KEYBDINPUT{
+        wVk:VIRTUAL_KEY(event.virtual_key),
+        dwFlags:(if event.key_up{KEYEVENTF_KEYUP}else{KEYBD_EVENT_FLAGS(0)})|
+            (if event.extended{KEYEVENTF_EXTENDEDKEY}else{KEYBD_EVENT_FLAGS(0)}),
+        dwExtraInfo:event.extra_info,..Default::default()}}});
+    let inserted=unsafe{SendInput(&inputs,std::mem::size_of::<INPUT>() as i32)};
+    match standalone_release_disposition(inserted) {
+        StandaloneReleaseDisposition::ReplacePhysicalRelease=>true,
+        StandaloneReleaseDisposition::PreservePhysicalRelease=>{
+            if inserted==1 {
+                // Only the inert down entered the stream; balance our own key.
+                let _=unsafe{SendInput(&inputs[1..2],std::mem::size_of::<INPUT>() as i32)};
+            }
+            eprintln!("handy-keys: standalone menu mask/release unavailable ({inserted}/3); original release retained");
+            false
+        }
     }
 }
 
@@ -1145,6 +1201,7 @@ mod tests {
             blocking_hotkeys: None,
             altgr_phantom_ctrl: false,
             menu_mask_sent: true,
+            standalone_tap: None,
         };
         reconcile_modifiers(&mut ctx);
         assert_eq!(ctx.current_modifiers, Modifiers::empty());

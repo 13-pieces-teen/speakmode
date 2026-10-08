@@ -1439,6 +1439,76 @@ async fn delivery_stop_permission_failure_preserves_reason_and_once_only_skip(){
     }
 }
 
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_typed_stop_failures_keep_reason_and_result_without_native_input(){
+    use platform::{PlatformError, TargetCaptureFailure};
+    for (failure,expected) in [
+        (TargetCaptureFailure::StopAnchorUnavailable,"stopAnchorUnavailable"),
+        (TargetCaptureFailure::StopFocusChanged,"stopFocusChanged"),
+        (TargetCaptureFailure::TargetNotEditable,"targetNotEditable"),
+        (TargetCaptureFailure::TargetCapabilityUnsupported,"targetCapabilityUnsupported"),
+        (TargetCaptureFailure::TargetInspectionTimeout,"targetInspectionTimeout"),
+    ] {
+        for at_anchor in [true,false] {
+            let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+            h.stop_session_at_with_target_result(&identity("s"),Instant::now(),
+                ||if at_anchor{Err(PlatformError::TargetCapture(failure))}else{Ok(Some(delivery_anchor_fixture()))},
+                move |_|{assert!(!at_anchor,"failed anchor must not inspect another target");Err(PlatformError::TargetCapture(failure))}).await.unwrap();
+            {let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();
+                assert!(s.stop.load(Ordering::SeqCst));assert!(!s.target_capture_pending);
+                assert!(s.target.is_none());assert_eq!(s.target_capture_failure_reason.as_deref(),Some(expected));}
+            ready(&h,"s");
+            h.initial_delivery_with("s",7,|_|panic!("failed target must not validate"),|_,_,_,_|panic!("failed target must not copy or paste"));
+            assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+            assert_eq!(current_delivery(&h).reason.as_deref(),Some(expected));
+            assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some(expected));
+            assert_eq!(view(&h).state,SessionPhase::Ready);assert!(view(&h).can_copy_recovery);
+            // stop_session records today's real ended_at, unlike the fixture's
+            // original date. Count the once-only event across all dates.
+            assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);
+            h.initial_delivery_with("s",7,|_|panic!("terminal skip must not inspect again"),|_,_,_,_|panic!("terminal skip must not paste again"));
+            assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+        }
+    }
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn delivery_stop_control_classifies_agreed_codes_without_parsing_private_messages(){
+    for (code,expected) in [
+        ("stop_target_changed","stopFocusChanged"),
+        ("stop_target_unavailable","stopAnchorUnavailable"),
+        ("stop_anchor_unavailable","stopAnchorUnavailable"),
+        ("stop_focus_changed","stopFocusChanged"),
+        ("target_not_editable","targetNotEditable"),
+        ("target_capability_unsupported","targetCapabilityUnsupported"),
+        ("window_timeout","targetInspectionTimeout"),
+        ("target_inspection_timeout","targetInspectionTimeout"),
+        ("unexpected_code","targetUnavailableAtStop"),
+    ] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
+        h.set_stop_target_control(Arc::new(move |_|Err(ApiError::new(code,"native","private title / body; stop_target_changed; target_higher_integrity"))));
+        h.stop_session_at_with_target_result(&identity("s"),Instant::now(),||Ok(Some(delivery_anchor_fixture())),
+            |_|panic!("failed stop coordinator must not inspect another target")).await.unwrap();
+        ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("no target"),|_,_,_,_|panic!("no native input"));
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some(expected));
+        let live=serde_json::to_string(&view(&h)).unwrap();
+        assert!(!live.contains("private title / body"));
+        assert_eq!(view(&h).state,SessionPhase::Ready);assert!(view(&h).can_copy_recovery);
+    }
+}
+
+#[test]
+fn typed_target_error_survives_desktop_api_boundary_without_provider_details(){
+    use platform::{PlatformError,TargetCaptureFailure};
+    for failure in [TargetCaptureFailure::StopAnchorUnavailable,TargetCaptureFailure::StopFocusChanged,
+        TargetCaptureFailure::TargetNotEditable,TargetCaptureFailure::TargetCapabilityUnsupported,
+        TargetCaptureFailure::TargetInspectionTimeout] {
+        let api:ApiError=PlatformError::TargetCapture(failure).into();
+        assert_eq!(api.code,failure.api_code());assert_eq!(api.stage,"native");
+        assert!(matches!(stop_control_failure(api),PlatformError::TargetCapture(restored) if restored==failure));
+    }
+}
+
 #[test]
 fn late_stop_permission_error_cannot_pollute_a_new_generation(){
     let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
@@ -1576,7 +1646,9 @@ async fn delivery_stop_anchor_missing_or_focus_switched_during_ui_handoff_cannot
             |_|panic!("no anchor or a changed foreground must not inspect the new window")).await.unwrap();
         assert!(h.inner.lock().unwrap().active.as_ref().unwrap().target.is_none());assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().target_capture_pending);
         ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("no target to validate"),|_,_,_,_|panic!("focus switch must not dispatch input"));
-        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);assert_eq!(current_delivery(&h).reason.as_deref(),Some("targetUnavailableAtStop"));
+        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some(if anchor_missing{"stopAnchorUnavailable"}else{"stopFocusChanged"}));
+        assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some(if anchor_missing{"stopAnchorUnavailable"}else{"stopFocusChanged"}));
     }
 }
 

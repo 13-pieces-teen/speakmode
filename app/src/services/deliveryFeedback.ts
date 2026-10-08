@@ -10,6 +10,11 @@ export interface DeliveryFeedback {
 
 const failureMessages:Record<string,string>={
  targetUnavailableAtStop:'未找到可输入的位置，成稿已保留。',
+ stopAnchorUnavailable:'未能确认当前输入窗口，成稿已保留。',
+ stopFocusChanged:'结束口述时输入位置已改变，成稿已保留。',
+ targetNotEditable:'当前位置不是可编辑的文本输入框，成稿已保留。',
+ targetCapabilityUnsupported:'这个输入框无法确认光标位置，成稿已保留，请查看成稿后手动粘贴。',
+ targetInspectionTimeout:'输入框响应较慢，未能及时确认输入位置。成稿已保留。',
  targetHigherIntegrity:'目标应用以管理员权限运行，本次未自动输入。成稿已保留，请查看成稿后手动粘贴。',
  targetChangedBeforeDelivery:'输入位置已改变，本次未自动输入。成稿已保留。',
  modifiersNotReleased:'快捷键尚未松开，本次未自动输入。成稿已保留。',

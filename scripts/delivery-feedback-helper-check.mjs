@@ -25,6 +25,16 @@ await test('Every stable failure reason gives an actionable visible explanation 
   assert(feedback.warning&&feedback.canCopyOutput&&feedback.canViewOutput);assert(feedback.message.includes(words));assert(feedback.message.includes('成稿已保留'));assert(!feedback.message.includes(code));
  }
 });
+await test('Stop target diagnostics distinguish lost focus, unsupported fields and slow inspection without exposing codes',()=>{
+ const codes={stopAnchorUnavailable:'输入窗口',stopFocusChanged:'位置已改变',targetNotEditable:'文本输入框',targetCapabilityUnsupported:'无法确认光标',targetInspectionTimeout:'响应较慢'};
+ for(const [code,words] of Object.entries(codes)){
+  const feedback=deliveryFeedback(session('ready','skipped',code));
+  assert(feedback.warning&&feedback.canCopyOutput&&feedback.canViewOutput);
+  assert(feedback.message.includes(words),`${code} needs a specific explanation`);
+  assert(feedback.message.includes('成稿已保留'));
+  assert(!feedback.message.includes(code));
+ }
+});
 await test('Unknown future failure reasons remain readable without showing internal codes',()=>{
  for(const state of ['skipped','failed']){
   const feedback=deliveryFeedback(session('ready',state,'opaque_future_reason'));

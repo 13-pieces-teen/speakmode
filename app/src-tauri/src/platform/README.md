@@ -25,8 +25,12 @@ The Windows constructor also joins its native hook thread before returning a
 readiness error/timeout. SpeakMode calls it only inside its dedicated outer
 startup owner thread, so this cleanup cannot block the UI or an engine lock.
 See the [local-source modification record](../../../../docs/third-party/LOCAL-SOURCE-MODIFICATIONS.md) for the local-source boundary.
-The app uses a nonblocking observer; standalone Alt's native menu side effects
-remain a real keyboard acceptance item.
+The app observes native chords without blocking them. In 0.1.9 a configured
+independent short Alt/Win tap replaces only its release with one ordered inert
+menu-mask/modifier-up batch, and only after the full batch is accepted. Injected
+events never produce recording toggles. Chords, AltGr, long holds, Capture and
+disabled policies retain native handling. Physical-key/menu behavior remains a
+separate real Windows acceptance item; synthetic injected keys cannot prove it.
 
 ## Hotkeys
 

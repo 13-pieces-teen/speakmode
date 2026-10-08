@@ -8,6 +8,31 @@ use super::diagnostics::{Stage,Origin,TraceHandle,BridgeTelemetry,DiagnosticsRec
 #[path="retry_audio.rs"]
 mod retry_audio;
 
+fn stop_capture_failure_reason(error: &platform::PlatformError) -> &'static str {
+    match error {
+        platform::PlatformError::TargetHigherIntegrity => "targetHigherIntegrity",
+        platform::PlatformError::TargetCapture(reason) => reason.delivery_reason(),
+        platform::PlatformError::Timeout(_) => platform::TargetCaptureFailure::TargetInspectionTimeout.delivery_reason(),
+        _ => "targetUnavailableAtStop",
+    }
+}
+
+/// The desktop callback is an API boundary. Classify only agreed error codes,
+/// never provider strings or the callback's arbitrary message.
+fn stop_control_failure(error: ApiError) -> platform::PlatformError {
+    use platform::{PlatformError, TargetCaptureFailure};
+    let reason = match error.code.as_str() {
+        "target_higher_integrity" => return PlatformError::TargetHigherIntegrity,
+        "stop_target_changed" | "stop_focus_changed" => TargetCaptureFailure::StopFocusChanged,
+        "stop_target_unavailable" | "stop_anchor_unavailable" => TargetCaptureFailure::StopAnchorUnavailable,
+        "target_not_editable" => TargetCaptureFailure::TargetNotEditable,
+        "target_capability_unsupported" => TargetCaptureFailure::TargetCapabilityUnsupported,
+        "window_timeout" | "target_inspection_timeout" => TargetCaptureFailure::TargetInspectionTimeout,
+        _ => return PlatformError::Unavailable("stop target coordination unavailable".into()),
+    };
+    PlatformError::TargetCapture(reason)
+}
+
 #[cfg(test)]
 #[path="tests.rs"]
 mod tests;
@@ -231,7 +256,7 @@ impl AppHub {
         if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending){
             match target {
                 Ok(target)=>{s.target=target;s.target_capture_failure_reason=None;}
-                Err(error)=>{s.target=None;s.target_capture_failure_reason=Some(if matches!(error,platform::PlatformError::TargetHigherIntegrity){"targetHigherIntegrity"}else{"targetUnavailableAtStop"}.into());}
+                Err(error)=>{s.target=None;s.target_capture_failure_reason=Some(stop_capture_failure_reason(&error).into());}
             }
         }
     }
@@ -248,7 +273,8 @@ impl AppHub {
             let mut stop_lease=StopTargetLease{hub:self,id:&id,generation,armed:true};
             let control=self.stop_target_control.lock().unwrap().clone();
             let anchor=anchor().and_then(|anchor|match (anchor,control){
-                (Some(anchor),Some(control))=>control(anchor).map(Some).map_err(|error|if error.code=="target_higher_integrity"{platform::PlatformError::TargetHigherIntegrity}else{platform::PlatformError::Unavailable("mode return could not verify stop target".into())}),
+                (Some(anchor),Some(control))=>control(anchor).map(Some).map_err(stop_control_failure),
+                (None,_)=>Err(platform::PlatformError::TargetCapture(platform::TargetCaptureFailure::StopAnchorUnavailable)),
                 (anchor,_)=>Ok(anchor),
             });
             // Freeze/close Mode before announcing a phase change that asks
@@ -581,7 +607,7 @@ impl AppHub {
         };
         let eligible={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!self.quitting.load(Ordering::SeqCst)&&!s.original_delivery_revoked&&s.phase==SessionPhase::Ready&&s.prefs.delivery_mode==DeliveryMode::Direct&&s.reason==CreationReason::NormalInitial).and_then(|s|s.output.clone().map(|output|(if target_timed_out{None}else{s.target.clone()},output,s.target_capture_failure_reason.clone())))};
         let Some((target,output,capture_failure))=eligible else{let _=self.native_action("recording",false);if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.phase==SessionPhase::Ready&&!s.cancel.is_cancelled()&&s.prefs.delivery_mode==DeliveryMode::Preview){let _=self.native_action("showMain",true);}return;};
-        let rejection=match &target{None=>Some(if target_timed_out{"targetUnavailableAtStop"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some("targetChangedBeforeDelivery"),_=>None};
+        let rejection=match &target{None=>Some(if target_timed_out{"targetInspectionTimeout"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some("targetChangedBeforeDelivery"),_=>None};
         // A skipped automatic delivery is still a once-only decision. Preserve
         // an opaque ledger receipt even when no input target could be captured.
         let fingerprint=target.as_ref().map(|target|format!("{}:{}:{}",target.hwnd,target.process_id,target.process_created_at)).unwrap_or_else(||"unavailableAtStop".into());
