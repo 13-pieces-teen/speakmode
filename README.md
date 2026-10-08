@@ -30,6 +30,8 @@ npm run build
 npm run tauri -- dev --target x86_64-pc-windows-msvc
 ```
 
+开发热更新也应复用同一个 `CARGO_TARGET_DIR`，不要按版本复制编译缓存。桌面检查、测试和打包统一使用下方带磁盘预检的入口；目录选择、12 GiB 缓存预算及 8 GiB 可用空间要求见 [构建与缓存管理](docs/build-cache.md)。
+
 在应用“设置 → 云端服务”中配置自己的 Key 和所属地域。默认模型为 `qwen3-asr-flash-realtime` 和 `qwen-flash`；模型可用性、额度和地域取决于你的账号。Key 通过 Windows Credential Manager 保存，不写入 Git 文件或发送到前端日志。
 
 浏览器单独运行 `npm run dev` 可检查界面，但不生成示例数据或执行原生操作，不能代替桌面语音、系统快捷键或跨应用输入验收。
@@ -49,16 +51,18 @@ node scripts/correction-selection-helper-check.mjs
 node scripts/term-correction-component-check.mjs
 ```
 
-从 `app/` 运行 Windows 桌面库测试和安装包构建：
+从仓库根目录运行 Windows 桌面检查、库测试和安装包构建：
 
 ```powershell
-cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --features desktop --lib -- --test-threads=4
-npm.cmd run desktop:build -- --ci -- --locked
+.\scripts\build-desktop.ps1 -Task Check -ValidateOnly
+.\scripts\build-desktop.ps1 -Task Check
+.\scripts\build-desktop.ps1 -Task Test
+.\scripts\build-desktop.ps1 -Task Package
 ```
 
 合成 helper 不打开麦克风或请求云模型；Rust 测试使用项目专有 `.test-data/`。不要直接运行被忽略的 maintenance child 测试，它由父测试在受控目录启动。
 
-PowerShell 中带 `--` 分隔的打包命令使用 `npm.cmd`，避免 `npm.ps1` 吞掉参数分隔符。
+统一脚本复用一份 MSVC target，禁用增量缓存，并在构建前后检查体积和磁盘余量；不会自动删除文件。打包直接调用本地 Tauri CLI，避免 PowerShell 的 npm 包装器吞掉 `--` 分隔参数。
 
 验证状态与实际验收边界见 [docs/validation.md](docs/validation.md)。安装包构建、真实口述、实际宿主输入及安装/升级/卸载是不同的验证范围，不把源码测试等同于整体产品验收。
 
