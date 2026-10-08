@@ -58,6 +58,8 @@ PowerShell 中带 `--` 分隔的打包命令使用 `npm.cmd`，避免 `npm.ps1` 
 
 0.1.5 的词典规则、采音改动、测量口径与实际口述对比见 [语音增量计划](docs/plans/voice-0.1.5.md)。
 
+固定 TTS 的真实云端对比、默认麦克风采音与自有 Windows 控件实验见 [真实语音实验报告](docs/experiments/voice-real-lab-2026-10-08.md)。目前已观察到 Mode 来源映射失败与时间限定遗漏；实验通过的范围和未完成的用户验收分别记录。`app/src-tauri/examples/` 中的实验工具须显式运行，正常程序启动不执行实验。
+
 ## 目录
 
 | 路径 | 内容 |
