@@ -233,6 +233,15 @@ pub struct DailyUsage {
     pub capture_duration_ms: u64,
 }
 
+/// Lifetime counts of completed dictations, independent of retained history bodies.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTotals {
+    pub count: u64,
+    pub source_char_count: u64,
+    pub capture_duration_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistorySummary {

@@ -32,7 +32,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  font-weight: 550;
+  font-weight: var(--sm-font-title-weight);
   line-height: 22px;
 }
 .history-record-preview {

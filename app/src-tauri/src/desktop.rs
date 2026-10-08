@@ -127,7 +127,7 @@ async fn app_command(window: WebviewWindow, state: State<'_, Arc<DesktopState>>,
     let exit = state.exit.load(Ordering::Acquire);
     let allowed_during_exit = matches!(request.name.as_str(), "state.snapshot" | "app.showMain" | "app.quit") ||
         exit == 3 && matches!(request.name.as_str(), "preferences.get" | "mode.list" | "provider.status" |
-            "credential.status" | "history.get" | "history.list" | "usage.today" | "result.copy" | "recoverable.copy");
+            "credential.status" | "history.get" | "history.list" | "usage.today" | "usage.total" | "result.copy" | "recoverable.copy");
     if exit != 0 && !allowed_during_exit {
         return Err(native_error("app_exiting", if exit == 3 { "退出尚未完成，可核对复制已有内容，并从托盘再次选择退出" } else { "正在退出，请等待本机任务释放" }));
     }

@@ -10,7 +10,8 @@ export interface SessionRecord { id:string; generation:number; startedAt:string;
 export interface HistoryDetail { session:SessionRecord; source:SourceRevision; output:OutputRevision|null; canUndo:boolean }
 export interface HistorySummary { sessionId:string; title:string; preview:string; endedAt:string; endLocalDate:string; modeId:string; modeName:string; resolvedMode:BaseMode|null; currentRevisionId:string|null; sourceRevisionId:string; status:string; sourceCharCount:number; captureDurationMs:number }
 export interface HistoryPage { items:HistorySummary[]; total:number; nextCursor:number|null }
-export interface DailyUsage { date:string; count:number; sourceCharCount:number; captureDurationMs:number }
+export interface UsageTotals { count:number; sourceCharCount:number; captureDurationMs:number }
+export interface DailyUsage extends UsageTotals { date:string }
 export interface ProviderConfig { version:number; provider:string; region:string|null; workspace:string|null; asrModel:string; rewriteModel:string; adapterVersion:string }
 export interface ProviderModelOption { id:string; label:string; implemented:boolean; adapterVersion?:string|null; dictionarySupport?:string; protocol?:string; timestamps?:boolean; recognitionLanguages?:string[]; productAudioLimitSeconds?:number; jsonSchema?:boolean }
 export interface ProviderModelCatalog { asr:ProviderModelOption[]; rewrite:ProviderModelOption[] }

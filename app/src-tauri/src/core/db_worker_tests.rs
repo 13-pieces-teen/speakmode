@@ -110,6 +110,10 @@ async fn usage(db: &DbClient) -> DailyUsage {
     match invoke(db, DbCommand::UsageToday { date: DATE.into() }, None).await.unwrap() {
         DbValue::Usage(value) => value, other => panic!("expected usage, got {other:?}") }
 }
+async fn usage_totals(db: &DbClient) -> UsageTotals {
+    match invoke(db, DbCommand::UsageTotal, None).await.unwrap() {
+        DbValue::UsageTotal(value) => value, other => panic!("expected usage totals, got {other:?}") }
+}
 async fn stop(db: &DbClient) {
     let ticket = db.submit(DbCommand::Shutdown, None, DbPriority::Critical).unwrap();
     assert!(matches!(wait(&ticket).await.unwrap(), DbValue::Unit));
@@ -429,6 +433,66 @@ async fn memory_only_keeps_all_body_tables_empty_but_usage_survives_clear_and_re
     let reopened = Store::open(&h.file.0).unwrap();
     assert!(reopened.latest_temporary_result().unwrap().is_none());
     assert_eq!(reopened.usage_today(DATE).unwrap(), totals);
+}
+
+#[tokio::test]
+async fn usage_totals_and_today_bootstrap_survive_restart_and_history_deletion() {
+    let h = Harness::new(options());
+    assert_eq!(usage_totals(&h.db).await, UsageTotals::default());
+    let today = chrono::Local::now().date_naive();
+    let yesterday = today.pred_opt().unwrap().to_string();
+    let today = today.to_string();
+    for (id, date, policy) in [
+        ("usage-today", today.as_str(), StoragePolicy::History),
+        ("usage-private", today.as_str(), StoragePolicy::MemoryOnly),
+        ("usage-yesterday", yesterday.as_str(), StoragePolicy::History),
+    ] {
+        let gate = guard(id);
+        let mut metadata = seed(id, policy);
+        metadata.started_at = format!("{date}T23:59:45+08:00");
+        metadata.ended_at = format!("{date}T23:59:57+08:00");
+        metadata.end_local_date = date.into();
+        invoke(&h.db, DbCommand::Checkpoint { seed: metadata, source: source(id) }, Some(&gate)).await.unwrap();
+        let mut result = output(id);
+        // Completion after midnight must still count on the local recording-end day.
+        let following_day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap().succ_opt().unwrap();
+        result.created_at = format!("{following_day}T00:00:01+08:00");
+        invoke(&h.db, DbCommand::Ready { output: result.clone() }, Some(&gate)).await.unwrap();
+        invoke(&h.db, DbCommand::Ready { output: result }, Some(&gate)).await.unwrap();
+    }
+    let waiting = guard("usage-unfinished");
+    checkpoint(&h.db, "usage-unfinished", StoragePolicy::History, &waiting).await;
+    let chars = super::store::source_character_count(&source("usage-today").text());
+    let totals = UsageTotals { count: 3, source_char_count: chars * 3, capture_duration_ms: 36_000 };
+    let daily = DailyUsage { date: today.clone(), count: 2, source_char_count: chars * 2, capture_duration_ms: 24_000 };
+    assert_eq!(usage_totals(&h.db).await, totals);
+    assert_eq!(h.db.snapshot().usage, daily);
+    let verify = h.file.connect();
+    assert_eq!(count(&verify, "usage_events"), 3, "replayed Ready and unfinished sources do not add usage");
+    drop(verify);
+    stop(&h.db).await;
+
+    let reopened = DbClient::open_with_options(&h.file.0, options()).unwrap();
+    assert_eq!(reopened.snapshot().usage, daily, "startup restores today's persisted counters");
+    assert_eq!(usage_totals(&reopened).await, totals);
+    assert!(reopened.snapshot().temporary_result.is_none(), "private body is not persisted");
+    match invoke(&reopened, DbCommand::UsageToday { date: yesterday.clone() }, None).await.unwrap() {
+        DbValue::Usage(value) => assert_eq!(value, DailyUsage { date: yesterday, count: 1, source_char_count: chars, capture_duration_ms: 12_000 }),
+        other => panic!("expected previous-day usage, got {other:?}"),
+    }
+    for id in ["usage-today", "usage-yesterday", "usage-unfinished"] {
+        invoke(&reopened, DbCommand::DeleteHistory { session_id: id.into() }, None).await.unwrap();
+    }
+    assert_eq!(usage_totals(&reopened).await, totals, "usage is independent of retained history");
+    stop(&reopened).await;
+
+    let deleted_reopened = DbClient::open_with_options(&h.file.0, options()).unwrap();
+    assert_eq!(deleted_reopened.snapshot().usage, daily);
+    assert_eq!(usage_totals(&deleted_reopened).await, totals);
+    match invoke(&deleted_reopened, DbCommand::HistoryList { query: String::new(), cursor: 0, limit: 20 }, None).await.unwrap() {
+        DbValue::HistoryPage(page) => assert_eq!(page.total, 0), other => panic!("{other:?}"),
+    }
+    stop(&deleted_reopened).await;
 }
 
 #[tokio::test]

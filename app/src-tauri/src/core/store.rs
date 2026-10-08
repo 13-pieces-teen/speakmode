@@ -608,6 +608,10 @@ impl Store {
         Ok(DailyUsage {date:date.into(),count,source_char_count:chars,capture_duration_ms:duration})
     }
 
+    pub fn usage_totals(&self) -> StoreResult<UsageTotals> {
+        Ok(self.connection.query_row("SELECT COUNT(*),COALESCE(SUM(source_char_count),0),COALESCE(SUM(capture_duration_ms),0) FROM usage_events",[],|r|Ok(UsageTotals{count:r.get(0)?,source_char_count:r.get(1)?,capture_duration_ms:r.get(2)?}))?)
+    }
+
     /// Only grants the database permission. Target/native readiness checks remain the caller's job.
     pub fn prepare_delivery(&mut self, attempt:DeliveryAttempt) -> StoreResult<DeliveryAttempt> {
         if attempt.state!=DeliveryState::Prepared || attempt.reason.is_some() { return Err(invalid("new delivery must be Prepared")); }

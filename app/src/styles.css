@@ -4,9 +4,14 @@
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
+  /* This bundled subset does not contain every Chinese character. Keep CJK
+     on one system family instead of mixing Noto and YaHei within a title. */
+  unicode-range: U+0000-024F;
 }
 /* SpeakMode's shared visual contract. Page components only own layout. */
 :root {
+  --sm-font-sans: 'SpeakMode Sans', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --sm-font-title-weight: 600;
   --sm-canvas: #f2f4f7;
   --sm-paper: #ffffff;
   --sm-mist: #f6f8fb;
@@ -22,17 +27,18 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--sm-canvas); }
+body { margin: 0; background: var(--sm-canvas); font-family: var(--sm-font-sans); }
 button, a, input { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 button:focus-visible, a:focus-visible { outline: 3px solid #85aff5; outline-offset: 3px; }
 a { color: var(--sm-accent); text-underline-offset: 3px; }
 svg { flex-shrink: 0; }
 .radix-themes {
-  --default-font-family: 'SpeakMode Sans', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
-  --heading-font-family: 'SpeakMode Sans', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  --default-font-family: var(--sm-font-sans);
+  --heading-font-family: var(--sm-font-sans);
+  --strong-font-family: var(--sm-font-sans);
   --code-font-family: 'Cascadia Code', Consolas, monospace;
   --cursor-button: pointer;
   --radius-3: 9px;
@@ -74,7 +80,7 @@ svg { flex-shrink: 0; }
 .window-control:focus-visible { outline: 2px solid var(--sm-accent); outline-offset: -3px; }
 .app-shell { display: grid; grid-template-columns: var(--sm-sidebar-width) minmax(0, 1fr); min-height: 0; border: 0; background: #f9fafc; border-radius: 0; overflow: hidden; box-shadow: none; }
 .app-sidebar { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 20px 16px 18px; background: #f4f6f9; border-radius: 0; border-right: 1px solid var(--sm-line); }
-.brand { display: flex; align-items: center; gap: 9px; padding: 0 9px; margin-bottom: 33px; font-size: 20px; line-height: 30px; font-weight: 650; letter-spacing: -.6px; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 0 9px; margin-bottom: 33px; font-size: 20px; line-height: 30px; font-weight: var(--sm-font-title-weight); letter-spacing: -.6px; }
 .brand-mode { color: #557ba9; }
 .brand-mark { width: 27px; height: 31px; display: grid; place-items: center; border-radius: 8px; color: var(--sm-accent); background: #e6eefc; }
 .brand-mark svg { width: 20px; height: 20px; }
@@ -89,17 +95,17 @@ svg { flex-shrink: 0; }
 .app-main { position: relative; padding: 24px 32px 32px; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: clip; scrollbar-gutter: stable; }
 .sidebar-record.rt-Button { width: 100%; }
 .page-heading { margin-bottom: 28px; }
-.page-heading h1 { font-size: 28px; line-height: 1.4; font-weight: 650; letter-spacing: -.6px; margin: 0; }
+.page-heading h1 { font-size: 28px; line-height: 1.4; font-weight: var(--sm-font-title-weight); letter-spacing: -.6px; margin: 0; }
 .page-heading p { font-size: 14px; color: var(--sm-muted); margin: 8px 0 0; line-height: 1.8; }
 .page-stack { display: grid; gap: 24px; }
 .page-stack > .page-heading { margin-bottom: 0; }
 .surface { padding: 24px; background: var(--sm-paper); border: 1px solid var(--sm-line); border-radius: var(--sm-radius); box-shadow: var(--sm-shadow); }
-.section-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 24px; color: var(--sm-secondary); }
+.section-title { margin: 0; font-size: 14px; font-weight: var(--sm-font-title-weight); line-height: 24px; color: var(--sm-secondary); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .muted { color: var(--sm-muted); font-size: 13px; }
 .eyebrow { color: var(--sm-secondary); font-size: 13px; font-weight: 500; }
 .home-hero { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 3px 0 24px; }
-.home-hero h1 { font-size: clamp(25px, 2.2vw, 30px); line-height: 1.4; letter-spacing: -.7px; font-weight: 650; margin: 0 0 12px; }
+.home-hero h1 { font-size: clamp(25px, 2.2vw, 30px); line-height: 1.4; letter-spacing: -.7px; font-weight: var(--sm-font-title-weight); margin: 0 0 12px; }
 .home-hero p { font-size: 14px; color: var(--sm-secondary); margin: 0; line-height: 1.9; }
 .hero-continuation { display: block; margin-top: 4px; font-size: 12px; line-height: 20px; color: var(--sm-muted); }
 .shortcut-object { padding: 0 15px 0 12px; perspective: 500px; }
@@ -107,7 +113,7 @@ svg { flex-shrink: 0; }
 .keycap span { font-size: 25px; line-height: 1; font-weight: 500; letter-spacing: -.8px; }
 .keycap small { align-self: flex-end; font-size: 11px; color: #99a8ba; }
 .usage-overview { display: grid; grid-template-columns: 1fr 3fr; align-items: center; margin-bottom: 24px; padding: 18px 24px; border-radius: 12px; background: #edf1f6; }
-.usage-period h2 { margin: 0; color: var(--sm-secondary); font-size: 13px; font-weight: 500; line-height: 22px; }
+.usage-period h2 { margin: 0; color: var(--sm-secondary); font-size: 13px; font-weight: var(--sm-font-title-weight); line-height: 22px; }
 .usage-period p { margin: 2px 0 0; color: var(--sm-muted); font-size: 11px; }
 .usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
 .usage-metric { display: flex; flex-direction: column-reverse; justify-content: flex-end; min-width: 0; padding-left: 24px; border-left: 1px solid var(--sm-line); }
@@ -136,7 +142,7 @@ svg { flex-shrink: 0; }
 .rt-Button:disabled { box-shadow: none; }
 .rt-Button, .rt-SelectTrigger, .rt-SwitchRoot { scroll-margin-block: 20px; }
 .latest-card .section-heading time { font-size: 12px; color: var(--sm-muted); font-variant-numeric: tabular-nums; }
-.latest-title-row h3 { font-size: 21px; line-height: 1.5; font-weight: 600; margin: 0; min-width: 0; overflow-wrap: anywhere; text-wrap: balance; }
+.latest-title-row h3 { font-size: 21px; line-height: 1.5; font-weight: var(--sm-font-title-weight); margin: 0; min-width: 0; overflow-wrap: anywhere; text-wrap: balance; }
 .mode-badge { font-size: 11px; font-weight: 500; gap: 5px; padding: 4px 8px; line-height: 18px; }
 .mode-badge svg { height: 12px; width: 12px; }
 .record-text { font-size: 15px; color: #39495e; line-height: 1.95; overflow-wrap: anywhere; }
@@ -154,7 +160,7 @@ svg { flex-shrink: 0; }
 .recent-icon { width: 36px; height: 38px; display: grid; place-items: center; background: #f0f3f8; color: #657d9c; border-radius: 10px; flex-shrink: 0; }
 .recent-icon svg { width: 17px; height: 17px; }
 .recent-copy { min-width: 0; flex: 1; }
-.recent-copy strong { display: block; font-size: 14px; font-weight: 500; line-height: 22px; overflow-wrap: anywhere; }
+.recent-copy strong { display: block; font-size: 14px; font-weight: var(--sm-font-title-weight); line-height: 22px; overflow-wrap: anywhere; }
 .recent-copy>span { display: block; font-size: 12px; color: var(--sm-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
 .recent-item time { flex-shrink: 0; white-space: nowrap; font-size: 12px; color: var(--sm-muted); }
 .recent-item>svg { width: 15px; height: 15px; color: #a1afc0; }
@@ -169,7 +175,7 @@ svg { flex-shrink: 0; }
 .mode-option-icon svg { width: 20px; height: 20px; }
 .mode-option[data-state=checked] .mode-option-icon { color: #4479cb; }
 .mode-option-copy { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; text-align: left; }
-.mode-option-copy strong { font-size: 14px; line-height: 22px; font-weight: 550; overflow-wrap: anywhere; }
+.mode-option-copy strong { font-size: 14px; line-height: 22px; font-weight: var(--sm-font-title-weight); overflow-wrap: anywhere; }
 .mode-option-copy>span { font-size: 12px; line-height: 18px; color: var(--sm-muted); }
 .mode-option-check { width: 15px; height: 15px; color: #477bcd; flex-shrink: 0; }
 .mode-option-check svg { width: 15px; height: 15px; }

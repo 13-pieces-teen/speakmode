@@ -76,6 +76,8 @@ BRIDGE = r"""
   if(command!=='app_command')throw new Error('Blocked synthetic IPC: '+command);
   const {name,payload}=args.request;ledger.push({name,payload:copy(payload)});
   if(name==='state.snapshot')return copy(fixture.snapshot);
+  if(name==='usage.today'){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;return {...copy(fixture.snapshot.usage),date};}
+  if(name==='usage.total'){const {date,...totals}=fixture.snapshot.usage;return copy(totals);}
   if(name==='audio.listDevices')return copy(fixture.snapshot.devices);
   if(name==='history.list'){if(window.__speakmodeQA.delayHistory)await new Promise(resolve=>window.__speakmodeQA.pendingHistory.push(resolve));const items=fixture.details.filter(d=>!payload.query||JSON.stringify(d).includes(payload.query)).map(summary);return {items,total:items.length,nextCursor:null};}
   if(name==='history.get'){const d=fixture.details.find(d=>d.session.id===payload.sessionId);if(!d)throw new Error('Unknown synthetic ID');return copy(d);}

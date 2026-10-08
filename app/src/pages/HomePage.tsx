@@ -6,6 +6,7 @@ import { ModeBadge, ModeSelector } from '../components/ui';
 import { LatestDictationPreview } from '../components/LatestDictationPreview';
 import { CopyAction } from '../components/CopyAction';
 import { HomeSectionCard } from '../components/HomeSectionCard';
+import { UsageOverview } from '../components/UsageOverview';
 import { languageLabels, type Preferences } from '../preferences';
 
 interface HomePageProps {
@@ -13,23 +14,10 @@ interface HomePageProps {
   records: Dictation[];
   defaultMode: Mode;
   onDefaultModeChange: (mode: Mode) => void;
-  stats: { count: number; characters: number; durationSec: number };
   onOpen: (id: string) => void;
   onHistory: () => void;
   onSettings: () => void;
   onManageModes: () => void;
-}
-
-const usageNumber = new Intl.NumberFormat('zh-CN');
-function UsageOverview({ stats }: Pick<HomePageProps, 'stats'>) {
-  return <section className="usage-overview" aria-label="今日概览">
-    <div className="usage-period"><h2>今日概览</h2><p>按本机日期统计</p></div>
-    <dl className="usage-metrics">
-      <div className="usage-metric"><dt>口述次数</dt><dd><strong>{usageNumber.format(stats.count)}</strong><span>次</span></dd></div>
-      <div className="usage-metric"><dt>输入字数</dt><dd><strong>{usageNumber.format(stats.characters)}</strong><span>字</span></dd></div>
-      <div className="usage-metric"><dt>口述时长</dt><dd><strong>{Math.floor(stats.durationSec / 60)}</strong><span>分</span><strong>{stats.durationSec % 60}</strong><span>秒</span></dd></div>
-    </dl>
-  </section>;
 }
 
 function QuickSettings({ onSettings, preferences }: Pick<HomePageProps, 'onSettings' | 'preferences'>) {
@@ -41,7 +29,7 @@ function QuickSettings({ onSettings, preferences }: Pick<HomePageProps, 'onSetti
   </HomeSectionCard>;
 }
 
-export function HomePage({ preferences, records, defaultMode, onDefaultModeChange, stats, onOpen, onHistory, onSettings, onManageModes }: HomePageProps) {
+export function HomePage({ preferences, records, defaultMode, onDefaultModeChange, onOpen, onHistory, onSettings, onManageModes }: HomePageProps) {
   const latest = records[0];
   const desktop = useDesktop();
   return <div className="home-page">
@@ -50,7 +38,7 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
         <p>按下 <Kbd>{preferences.shortcut}</Kbd> 开始，再按一次结束。<span className="hero-continuation">停顿或查资料时，录音继续。</span></p></div>
       {preferences.shortcut === '右 Alt' && <div className="shortcut-object" aria-hidden="true"><div className="keycap"><span>Alt</span><small>R</small></div></div>}
     </header>
-    <UsageOverview stats={stats} />
+    <UsageOverview />
     <div className="home-grid">
       <div className="home-records">
         <HomeSectionCard className="latest-card" titleId="latest-title" title="最近一次口述"

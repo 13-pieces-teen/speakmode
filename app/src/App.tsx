@@ -36,7 +36,7 @@ function AppContent(){
   {(error||desktop.error)&&<div role="alert" className="environment-banner environment-error"><p>{error||desktop.error}</p><Button variant="soft" color="gray" onClick={()=>{setError('');void desktop.refresh();}}>重新读取</Button></div>}
   {desktop.available&&<SessionRecovery onOpen={openRecord}/>} 
   {desktop.available&&<RetainedRecovery/>}
-  {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={mode=>void updateDefault(mode).catch(showError)} stats={dictations.stats} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onManageModes={()=>manageModes('home')}/>}
+  {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={mode=>void updateDefault(mode).catch(showError)} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onManageModes={()=>manageModes('home')}/>}
   {view==='history'&&<HistoryPage selectedId={selectedId} onSelect={setSelectedId}/>}
   {view==='dictionary'&&<DictionaryPage/>}
   {view==='settings'&&<SettingsPage preferences={preferences} onPreferencesChange={updatePreferences} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onManageModes={()=>manageModes('settings')}/>}
