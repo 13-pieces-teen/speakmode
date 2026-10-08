@@ -6,7 +6,12 @@
 }
 
 .history-index.surface {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  max-height: calc(100dvh - 208px);
   padding: 20px 12px 12px;
 }
 
@@ -24,6 +29,9 @@
 .history-search.rt-TextFieldRoot:focus-within { outline: 2px solid #85aff5; outline-offset: 2px; }
 .history-search input::placeholder { color: var(--sm-muted); opacity: 1; }
 .history-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.history-index-heading, .history-search { flex-shrink: 0; }
+.history-list-scroll { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding: 2px; margin-top: 4px; }
+.history-load-more.rt-Button { width: calc(100% - 16px); margin: 12px 8px 4px; }
 .history-record-groups, .history-date-group { min-width: 0; }
 .history-date-label { margin: 22px 12px 8px; color: var(--sm-muted); font-size: 12px; font-weight: 500; line-height: 20px; }
 .history-record-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; list-style: none; padding: 0; margin: 0; }
@@ -44,6 +52,8 @@
 
 @media (max-width: 1000px) {
   .history-layout { display: block; }
+  .history-index.surface { position: static; max-height: none; }
+  .history-list-scroll { overflow: visible; overscroll-behavior-y: auto; scrollbar-gutter: auto; }
   .history-page[data-view='detail'] .history-index { display: none; }
   .history-page[data-view='list'] .history-detail-shell { display: none; }
 }

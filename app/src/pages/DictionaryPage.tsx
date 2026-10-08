@@ -27,6 +27,10 @@ export function DictionaryPage() {
   const mounted = useRef(false), readRun = useRef(0), actionPending = useRef(false);
   const input = useRef<HTMLInputElement>(null), bulkInput = useRef<HTMLTextAreaElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  const listHeading = useRef<HTMLHeadingElement>(null), searchInput = useRef<HTMLInputElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null), bulkButton = useRef<HTMLButtonElement>(null);
+  const editButtons = useRef(new Map<string, HTMLButtonElement>()), deleteButtons = useRef(new Map<string, HTMLButtonElement>());
+  const keepButton = useRef<HTMLButtonElement>(null), editorOrigin = useRef<HTMLButtonElement | null>(null);
   const snapshotRef = useRef(dictionary);
   snapshotRef.current = dictionary;
   const dirty = Boolean(editor && editor.text !== editor.initialText);
@@ -98,14 +102,27 @@ export function DictionaryPage() {
     return () => navigation.register(null);
   }, [navigation.register, dirty, busy, save]);
 
-  function openEditor(kind: Editor['kind'], entry?: DictionaryEntry) {
+  function focusAfterRender(resolve: () => HTMLElement | null | undefined) {
+    requestAnimationFrame(() => {
+      if (!mounted.current) return;
+      const target = resolve();
+      focusInView(target?.isConnected ? target : listHeading.current);
+    });
+  }
+  function openEditor(kind: Editor['kind'], entry?: DictionaryEntry, trigger?: HTMLButtonElement) {
     if (!dictionary || busy) return;
     navigation.request(() => {
+      editorOrigin.current = trigger ?? (entry ? editButtons.current.get(entry.id) : kind === 'bulk' ? bulkButton.current : addButton.current) ?? null;
       setEditor({kind, id: entry?.id, text: entry?.term ?? '', initialText: entry?.term ?? '', version: dictionary.version, conflict: false});
       setDeleteIntent(null); setActionError(''); setNotice(''); setTriedSave(false);
     });
   }
-  function closeEditor() {navigation.request(() => {setEditor(null); setActionError(''); setTriedSave(false);});}
+  function closeEditor() {navigation.request(() => {setEditor(null); setActionError(''); setTriedSave(false); focusAfterRender(() => editorOrigin.current);});}
+  function closeDelete() {
+    const id = deleteIntent?.entry.id;
+    setDeleteIntent(null); setActionError('');
+    focusAfterRender(() => id ? deleteButtons.current.get(id) : listHeading.current);
+  }
   async function reload() {
     const refreshed = await read();
     if (!mounted.current || !refreshed) return;
@@ -113,12 +130,15 @@ export function DictionaryPage() {
   }
   async function remove() {
     if (!available || actionPending.current || !deleteIntent) return;
+    const deletedIndex = filtered.findIndex(entry => entry.id === deleteIntent.entry.id);
+    const adjacentIds = [...filtered.slice(deletedIndex + 1), ...filtered.slice(0, deletedIndex).reverse()].map(entry => entry.id);
     actionPending.current = true; setBusy(true); setActionError(''); setNotice('');
     try {
       const next = await command<DictionarySnapshot>('dictionary.delete', {entryId: deleteIntent.entry.id, expectedVersion: deleteIntent.version});
       if (!isDictionarySnapshot(next)) throw new Error('删除结果未能确认，请重新读取词库后核对。');
       if (!mounted.current) return;
       acceptDictionary(next); setDeleteIntent(null); setNotice('词条已删除，下次录音不再使用。');
+      focusAfterRender(() => adjacentIds.map(id => editButtons.current.get(id)).find(Boolean) ?? listHeading.current);
     } catch (error) {
       if (dictionaryConflict(error)) {
         const refreshed = await read();
@@ -132,7 +152,7 @@ export function DictionaryPage() {
   }
 
   return <div className="dictionary-page">
-    <header className="dictionary-heading"><div className="page-heading"><h1 ref={heading} tabIndex={-1}>个人词典</h1><p>告诉 SpeakMode 常用的名字、术语与专有词。</p></div><div className="dictionary-actions"><Button variant="soft" color="gray" disabled={!available || !dictionary || busy} onClick={() => openEditor('bulk')}>批量添加</Button><Button disabled={!available || !dictionary || busy} onClick={() => openEditor('single')}><PlusIcon/>添加词条</Button></div></header>
+    <header className="dictionary-heading"><div className="page-heading"><h1 ref={heading} tabIndex={-1}>个人词典</h1><p>告诉 SpeakMode 常用的名字、术语与专有词。</p></div><div className="dictionary-actions"><Button ref={bulkButton} variant="soft" color="gray" disabled={!available || !dictionary || busy} onClick={event => openEditor('bulk', undefined, event?.currentTarget)}>批量添加</Button><Button ref={addButton} disabled={!available || !dictionary || busy} onClick={event => openEditor('single', undefined, event?.currentTarget)}><PlusIcon/>添加词条</Button></div></header>
     <p className="dictionary-notice" role="status" aria-live="polite">{notice}</p>
     {!available && <p className="dictionary-help" role="status">在桌面应用中维护自己的词库，此浏览器页面不生成示例词条。</p>}
     {readError && <div className="dictionary-error" role="alert"><p>{readError}</p><Button variant="soft" color="gray" disabled={loading || busy} onClick={() => void reload()}>重新读取</Button></div>}
@@ -150,9 +170,9 @@ export function DictionaryPage() {
       </form>
     </section>}
     <section className="dictionary-library surface" aria-labelledby="dictionary-list-title" aria-busy={loading || busy}>
-      <div className="dictionary-list-toolbar"><div className="dictionary-section-heading"><h2 id="dictionary-list-title">我的词库</h2><span>{dictionary ? entries.length : '—'} / {dictionaryLimits.entries}</span></div><div className="dictionary-search"><TextField.Root aria-label="搜索词条" value={query} placeholder="搜索词条" onChange={event => setQuery(event.target.value)}><TextField.Slot><MagnifyingGlassIcon/></TextField.Slot>{query && <TextField.Slot side="right"><IconButton size="1" variant="ghost" color="gray" aria-label="清除搜索" onClick={() => setQuery('')}><Cross2Icon/></IconButton></TextField.Slot>}</TextField.Root><IconButton variant="ghost" color="gray" aria-label="重新读取词库" disabled={!available || loading || busy} onClick={() => void reload()}><ReloadIcon className={loading ? 'dictionary-spinning' : ''}/></IconButton></div></div>
+      <div className="dictionary-list-toolbar"><div className="dictionary-section-heading"><h2 ref={listHeading} tabIndex={-1} id="dictionary-list-title">我的词库</h2><span>{dictionary ? entries.length : '—'} / {dictionaryLimits.entries}</span></div><div className="dictionary-search"><TextField.Root ref={searchInput} aria-label="搜索词条" value={query} placeholder="搜索词条" onChange={event => setQuery(event.target.value)}><TextField.Slot><MagnifyingGlassIcon/></TextField.Slot>{query && <TextField.Slot side="right"><IconButton size="1" variant="ghost" color="gray" aria-label="清除搜索" onClick={() => {setQuery(''); focusAfterRender(() => searchInput.current);}}><Cross2Icon/></IconButton></TextField.Slot>}</TextField.Root><IconButton variant="ghost" color="gray" aria-label="重新读取词库" disabled={!available || loading || busy} onClick={() => void reload()}><ReloadIcon className={loading ? 'dictionary-spinning' : ''}/></IconButton></div></div>
       {dictionary && <div className="dictionary-capacity"><div className="dictionary-capacity-label"><span>已用 {usedBytes} / {dictionaryLimits.contextBytes} 字节</span><span>剩余 {Math.max(0, dictionaryLimits.contextBytes - usedBytes)} 字节</span></div><meter aria-label="词库容量" min={0} max={dictionaryLimits.contextBytes} value={usedBytes} low={3200} high={3600} optimum={0}/></div>}
-      {loading && !dictionary ? <div className="dictionary-empty" role="status"><p>正在读取词库…</p></div> : filtered.length === 0 ? <div className="dictionary-empty" role="status"><span className="dictionary-empty-icon"><ReaderIcon/></span><h3>{query ? '没有找到这个词条' : '让常用词更容易被听见'}</h3><p>{query ? '试试其他拼写，或清除搜索查看全部。' : '添加经常被识别错的人名、产品名或专业术语。'}</p>{!query && <Button variant="soft" disabled={!available || !dictionary || busy} onClick={() => openEditor('single')}><PlusIcon/>添加第一个词条</Button>}</div> : <ul className="dictionary-list">{filtered.map(entry => <li key={entry.id} className="dictionary-row"><div className="dictionary-word"><ReaderIcon aria-hidden="true"/><span>{entry.term}</span></div><div className="dictionary-actions"><IconButton variant="ghost" color="gray" disabled={!available || busy} aria-label={`编辑词条 ${entry.term}`} onClick={() => openEditor('single', entry)}><Pencil2Icon/></IconButton><IconButton variant="ghost" color="gray" disabled={!available || busy} aria-label={`删除词条 ${entry.term}`} onClick={() => {if (!dictionary) return; navigation.request(() => {setEditor(null); setDeleteIntent({entry, version: dictionary.version, conflict: false}); setActionError('');});}}><TrashIcon/></IconButton></div>{deleteIntent?.entry.id === entry.id && <div className="dictionary-delete-confirm" role="alert"><p>删除“<strong>{deleteIntent.entry.term}</strong>”？{deleteIntent.conflict && '这是重新读取后的当前词条。'}</p><div className="dictionary-actions"><Button variant="soft" color="gray" disabled={busy} onClick={() => {setDeleteIntent(null); setActionError('');}}>保留</Button><Button color="red" variant="soft" loading={busy} onClick={() => void remove()}>{deleteIntent.conflict ? '核对后删除' : '删除词条'}</Button></div></div>}</li>)}</ul>}
+      {loading && !dictionary ? <div className="dictionary-empty" role="status"><p>正在读取词库…</p></div> : filtered.length === 0 ? <div className="dictionary-empty" role="status"><span className="dictionary-empty-icon"><ReaderIcon/></span><h3>{query ? '没有找到这个词条' : '让常用词更容易被听见'}</h3><p>{query ? '试试其他拼写，或清除搜索查看全部。' : '添加经常被识别错的人名、产品名或专业术语。'}</p>{!query && <Button variant="soft" disabled={!available || !dictionary || busy} onClick={event => openEditor('single', undefined, event?.currentTarget)}><PlusIcon/>添加第一个词条</Button>}</div> : <ul className="dictionary-list">{filtered.map(entry => <li key={entry.id} className="dictionary-row"><div className="dictionary-word"><ReaderIcon aria-hidden="true"/><span>{entry.term}</span></div><div className="dictionary-actions"><IconButton ref={element => {if (element) editButtons.current.set(entry.id, element); else editButtons.current.delete(entry.id);}} variant="ghost" color="gray" disabled={!available || busy} aria-label={`编辑词条 ${entry.term}`} onClick={event => openEditor('single', entry, event?.currentTarget)}><Pencil2Icon/></IconButton><IconButton ref={element => {if (element) deleteButtons.current.set(entry.id, element); else deleteButtons.current.delete(entry.id);}} variant="ghost" color="gray" disabled={!available || busy} aria-label={`删除词条 ${entry.term}`} onClick={() => {if (!dictionary) return; navigation.request(() => {setEditor(null); setDeleteIntent({entry, version: dictionary.version, conflict: false}); setActionError(''); focusAfterRender(() => keepButton.current);});}}><TrashIcon/></IconButton></div>{deleteIntent?.entry.id === entry.id && <div className="dictionary-delete-confirm" role="alert" onKeyDown={event => {if (event.key === 'Escape' && !busy) {event.preventDefault(); event.stopPropagation(); closeDelete();}}}><p>删除“<strong>{deleteIntent.entry.term}</strong>”？{deleteIntent.conflict && '这是重新读取后的当前词条。'}</p><div className="dictionary-actions"><Button ref={keepButton} variant="soft" color="gray" disabled={busy} onClick={closeDelete}>保留</Button><Button color="red" variant="soft" loading={busy} onClick={() => void remove()}>{deleteIntent.conflict ? '核对后删除' : '删除词条'}</Button></div></div>}</li>)}</ul>}
       <footer className="dictionary-library-footer"><p>词库作为识别提示提交给当前云端服务，有助于专有词识别；效果仍需以实际口述为准。</p><details><summary>使用说明</summary><p>词条手动维护，不会自动从历史记录中学习。批量添加时，相近的全半角及大小写重复词条会合并，保留先添加的拼写。最多 200 条，每条 80 字符；SpeakMode 的词库预算为 4000 UTF-8 字节，包含固定提示、引号与分隔符。中文、英文和符号占用不同，不能按字数换算；所选语音模型还会单独校验请求容量。修改不影响正在进行的录音，也不替换已有识别稿。</p></details></footer>
     </section>
   </div>;

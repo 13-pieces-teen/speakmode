@@ -2,7 +2,8 @@ import { Button, Kbd } from '@radix-ui/themes';
 import { ArrowRightIcon, ChevronRightIcon, CounterClockwiseClockIcon, GearIcon, KeyboardIcon, GlobeIcon, SpeakerLoudIcon } from '@radix-ui/react-icons';
 import type { Dictation, Mode } from '../model';
 import { useDesktop } from '../services/DesktopProvider';
-import { ModeBadge, ModeSelector, RecordText } from '../components/ui';
+import { ModeBadge, ModeSelector } from '../components/ui';
+import { LatestDictationPreview } from '../components/LatestDictationPreview';
 import { CopyAction } from '../components/CopyAction';
 import { HomeSectionCard } from '../components/HomeSectionCard';
 import { languageLabels, type Preferences } from '../preferences';
@@ -19,12 +20,13 @@ interface HomePageProps {
   onManageModes: () => void;
 }
 
+const usageNumber = new Intl.NumberFormat('zh-CN');
 function UsageOverview({ stats }: Pick<HomePageProps, 'stats'>) {
   return <section className="usage-overview" aria-label="今日概览">
     <div className="usage-period"><h2>今日概览</h2><p>按本机日期统计</p></div>
     <dl className="usage-metrics">
-      <div className="usage-metric"><dt>口述次数</dt><dd><strong>{stats.count}</strong><span>次</span></dd></div>
-      <div className="usage-metric"><dt>输入字数</dt><dd><strong>{stats.characters}</strong><span>字</span></dd></div>
+      <div className="usage-metric"><dt>口述次数</dt><dd><strong>{usageNumber.format(stats.count)}</strong><span>次</span></dd></div>
+      <div className="usage-metric"><dt>输入字数</dt><dd><strong>{usageNumber.format(stats.characters)}</strong><span>字</span></dd></div>
       <div className="usage-metric"><dt>口述时长</dt><dd><strong>{Math.floor(stats.durationSec / 60)}</strong><span>分</span><strong>{stats.durationSec % 60}</strong><span>秒</span></dd></div>
     </dl>
   </section>;
@@ -55,7 +57,7 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
           action={latest ? <time>{latest.temporary ? '临时结果' : latest.group} {latest.time}</time> : undefined}>
           {latest ? <>
           <div className="latest-title-row"><h3>{latest.title}</h3><ModeBadge mode={latest.mode} resolved={latest.resolved} name={latest.modeName} sourceState={latest.sourceState} /></div>
-          <RecordText record={latest} />
+          <LatestDictationPreview key={`${latest.id}:${latest.revision}`} record={latest} />
           <div className="latest-actions"><CopyAction record={latest} label="复制结果"><Button variant="soft" color="gray" onClick={() => onOpen(latest.id)}>查看与调整<ArrowRightIcon /></Button>{latest.modified && <span className="modified-label">已在本页修改</span>}</CopyAction></div>
           </> : <div className="home-empty"><strong>还没有口述结果</strong><p>{desktop.available ? '完成一次口述后，在这里查看或复制。' : '在桌面应用中完成口述，真实结果会显示在这里。'}</p><Button variant="soft" onClick={onSettings}>查看设置</Button></div>}
         </HomeSectionCard>

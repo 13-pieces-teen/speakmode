@@ -13,8 +13,8 @@ export function SettingsSection({ title, icon, className = '', children }: {
     </section>;
 }
 
-export function SettingRow({ title, description, htmlFor, children, className = '' }: {
-  title: string; description: string; htmlFor?: string; children: ReactNode; className?: string;
+export function SettingRow({ title, description, htmlFor, children, feedback, className = '' }: {
+  title: string; description: string; htmlFor?: string; children: ReactNode; feedback?: ReactNode; className?: string;
 }) {
   return <div className={`setting-row ${className}`}>
     <div className="setting-row-copy">
@@ -22,5 +22,6 @@ export function SettingRow({ title, description, htmlFor, children, className = 
       <p id={htmlFor ? `${htmlFor}-description` : undefined}>{description}</p>
     </div>
     <div className="setting-row-control">{children}</div>
+    {feedback}
   </div>;
 }
