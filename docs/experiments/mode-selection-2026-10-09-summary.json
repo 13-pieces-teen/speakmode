@@ -1,0 +1,229 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-09",
+  "sourceCommit": "55a5b3ba582328635d798d77256e9cd006d43f1a",
+  "uniqueSyntheticCases": 20,
+  "cloudCalls": 240,
+  "screen": {
+    "ranking": [
+      "typed-flash",
+      "typed-plus",
+      "fewshot-flash",
+      "baseline-flash"
+    ],
+    "repeats": 1,
+    "arms": {
+      "baseline-flash": {
+        "planned": 24,
+        "attempted": 24,
+        "protocolAccepted": 20,
+        "semanticPass": 20,
+        "criticalErrors": 0,
+        "unreviewable": 4,
+        "modeTaskPass": 15,
+        "routePass": 16,
+        "deliveredTaskPass": 12,
+        "inputTokens": 26199,
+        "outputTokens": 1912,
+        "byMode": {
+          "light": {
+            "planned": 8,
+            "deliveredTaskPass": 5
+          },
+          "structure": {
+            "planned": 8,
+            "deliveredTaskPass": 5
+          },
+          "auto": {
+            "planned": 8,
+            "deliveredTaskPass": 2
+          }
+        },
+        "p50Ms": 1160,
+        "p95Ms": 1858,
+        "deliveredTaskRate": 0.5,
+        "requestsPerSuccessfulTask": 2.0
+      },
+      "fewshot-flash": {
+        "planned": 24,
+        "attempted": 24,
+        "protocolAccepted": 21,
+        "semanticPass": 21,
+        "criticalErrors": 0,
+        "unreviewable": 3,
+        "modeTaskPass": 16,
+        "routePass": 17,
+        "deliveredTaskPass": 13,
+        "inputTokens": 25647,
+        "outputTokens": 1477,
+        "byMode": {
+          "light": {
+            "planned": 8,
+            "deliveredTaskPass": 5
+          },
+          "structure": {
+            "planned": 8,
+            "deliveredTaskPass": 6
+          },
+          "auto": {
+            "planned": 8,
+            "deliveredTaskPass": 2
+          }
+        },
+        "p50Ms": 1055,
+        "p95Ms": 1294,
+        "deliveredTaskRate": 0.5416666666666666,
+        "requestsPerSuccessfulTask": 1.8461538461538463
+      },
+      "typed-flash": {
+        "planned": 24,
+        "attempted": 24,
+        "protocolAccepted": 24,
+        "semanticPass": 24,
+        "criticalErrors": 0,
+        "unreviewable": 0,
+        "modeTaskPass": 20,
+        "routePass": 21,
+        "deliveredTaskPass": 17,
+        "inputTokens": 38679,
+        "outputTokens": 2984,
+        "byMode": {
+          "light": {
+            "planned": 8,
+            "deliveredTaskPass": 7
+          },
+          "structure": {
+            "planned": 8,
+            "deliveredTaskPass": 6
+          },
+          "auto": {
+            "planned": 8,
+            "deliveredTaskPass": 4
+          }
+        },
+        "p50Ms": 1556,
+        "p95Ms": 1830,
+        "deliveredTaskRate": 0.7083333333333334,
+        "requestsPerSuccessfulTask": 1.411764705882353
+      },
+      "typed-plus": {
+        "planned": 24,
+        "attempted": 24,
+        "protocolAccepted": 23,
+        "semanticPass": 23,
+        "criticalErrors": 0,
+        "unreviewable": 1,
+        "modeTaskPass": 19,
+        "routePass": 21,
+        "deliveredTaskPass": 17,
+        "inputTokens": 38679,
+        "outputTokens": 2963,
+        "byMode": {
+          "light": {
+            "planned": 8,
+            "deliveredTaskPass": 7
+          },
+          "structure": {
+            "planned": 8,
+            "deliveredTaskPass": 6
+          },
+          "auto": {
+            "planned": 8,
+            "deliveredTaskPass": 4
+          }
+        },
+        "p50Ms": 3424,
+        "p95Ms": 3793,
+        "deliveredTaskRate": 0.7083333333333334,
+        "requestsPerSuccessfulTask": 1.411764705882353
+      }
+    },
+    "cases": 8
+  },
+  "confirmation": {
+    "pairedTaskLosses": 0,
+    "pairedTaskWins": 12,
+    "pairedTaskTies": 60,
+    "ranking": [
+      "typed-flash",
+      "baseline-flash"
+    ],
+    "arms": {
+      "baseline-flash": {
+        "planned": 72,
+        "attempted": 72,
+        "protocolAccepted": 37,
+        "semanticPass": 35,
+        "criticalErrors": 0,
+        "unreviewable": 35,
+        "modeTaskPass": 30,
+        "routePass": 30,
+        "deliveredTaskPass": 22,
+        "inputTokens": 79998,
+        "outputTokens": 7217,
+        "byMode": {
+          "light": {
+            "planned": 24,
+            "deliveredTaskPass": 11
+          },
+          "structure": {
+            "planned": 24,
+            "deliveredTaskPass": 7
+          },
+          "auto": {
+            "planned": 24,
+            "deliveredTaskPass": 4
+          }
+        },
+        "p50Ms": 1528,
+        "p95Ms": 2534,
+        "deliveredTaskRate": 0.3055555555555556,
+        "requestsPerSuccessfulTask": 3.272727272727273
+      },
+      "typed-flash": {
+        "planned": 72,
+        "attempted": 72,
+        "protocolAccepted": 57,
+        "semanticPass": 54,
+        "criticalErrors": 3,
+        "unreviewable": 15,
+        "modeTaskPass": 44,
+        "routePass": 45,
+        "deliveredTaskPass": 34,
+        "inputTokens": 117438,
+        "outputTokens": 10852,
+        "byMode": {
+          "light": {
+            "planned": 24,
+            "deliveredTaskPass": 16
+          },
+          "structure": {
+            "planned": 24,
+            "deliveredTaskPass": 12
+          },
+          "auto": {
+            "planned": 24,
+            "deliveredTaskPass": 6
+          }
+        },
+        "p50Ms": 2005,
+        "p95Ms": 2586,
+        "deliveredTaskRate": 0.4722222222222222,
+        "requestsPerSuccessfulTask": 2.1176470588235294
+      }
+    },
+    "repeats": 2,
+    "cases": 12
+  },
+  "experimentalRoute": "typed-flash",
+  "productionDecision": "baseline-flash",
+  "productionChanged": false,
+  "reviewType": "arm-label-hidden-Agent-review-not-human",
+  "semanticScope": "protocol-accepted-outputs-only; rejected raw outputs require separate diagnostic review",
+  "latencyScope": "pre-call-durable-journal-plus-cloud-request-plus-parser-not-end-to-end",
+  "fixtureSha256": "ce8dd6198703b696325181e2b188118ebff5ac3ec83545b74f45aaff1c0bb972",
+  "rawReceipts": {
+    "confirmation": "22a4a4e7a52373f96b9dac8ae149de18f419daa243ad2589a156ae40929477fd",
+    "screen": "3c31d351e4da8e629e08841223c2afce5ca8b8092d5cce155e28ae12c492fbb8"
+  }
+}
