@@ -293,11 +293,34 @@ fn scoped_candidates(text: &str) -> Vec<String> {
         if !is_bullet && plain.chars().count() <= 24 && !plain.chars().any(is_separator) {
             header = plain.to_owned();
         } else if !is_bullet { header.clear(); }
+        let mut previous: Option<(&str, usize)> = None;
         for clause in facts::clauses(plain) {
-            candidates.push(if is_bullet && !header.is_empty() { format!("{header} {clause}") } else { clause.to_owned() });
+            // A trailing subject-less pending phrase can qualify the immediately
+            // preceding statement: "会议地点在图书馆，还没确认". The comma
+            // splitter must not discard that subject. This is intentionally
+            // narrow: no borrowing across sentences/bullets or from another
+            // explicit subject such as "预算还没确认".
+            let search_start = previous.map_or(0, |(_, end)| end);
+            let start = search_start + plain[search_start..].find(clause).expect("clause is a slice of this line");
+            let scoped = match previous {
+                Some((before, end)) if subjectless_pending(clause)
+                    && plain[end..start].chars().any(|c| matches!(c, ',' | '，'))
+                    && plain[end..start].chars().all(|c| c.is_whitespace() || matches!(c, ',' | '，')) => format!("{before} {clause}"),
+                _ => clause.to_owned(),
+            };
+            candidates.push(if is_bullet && !header.is_empty() { format!("{header} {scoped}") } else { scoped });
+            previous = Some((clause, start + clause.len()));
         }
     }
     candidates
+}
+
+fn subjectless_pending(text: &str) -> bool {
+    let qualifiers = anchors(text);
+    if qualifiers.is_empty() || qualifiers.iter().any(|anchor| anchor.kind != Kind::Pending) { return false; }
+    // Do not use the bigram scope fingerprint to test emptiness: a one-character
+    // subject such as "他" has no bigram but is still a different subject.
+    matches!(without_anchors(text).trim(), "" | "但" | "但是" | "不过" | "目前" | "现在" | "仍" | "仍然" | "也")
 }
 
 fn english_negative_scope<'a>(text: &'a str, anchor: &Anchor<'_>) -> &'a str {
