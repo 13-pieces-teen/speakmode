@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge, Button, IconButton, RadioCards, Select, TextArea, TextField } from '@radix-ui/themes';
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, CheckCircledIcon, FileTextIcon, Pencil2Icon, PlusIcon, TrashIcon, UpdateIcon } from '@radix-ui/react-icons';
 import type { Dictation, ResolvedMode } from '../model';
@@ -14,6 +14,19 @@ interface ModePreviewResult {
   blocks: { id: string; text: string; sourceRefs: unknown[] }[];
   resolvedMode: 'light' | 'structure';
 }
+interface PreviewSource {
+  sourceKind: 'history' | 'synthetic';
+  sourceItemCount: number;
+  sourceRevisionId: string;
+  promptVersion: string;
+}
+interface ModeComparisonResult extends PreviewSource {
+  comparison: { light: ModePreviewResult; structure: ModePreviewResult };
+}
+type TrialResult = PreviewSource & { fingerprint: string } & (
+  { kind: 'personal'; output: ModePreviewResult } |
+  { kind: 'comparison'; comparison: ModeComparisonResult['comparison'] }
+);
 const desktopRequired = '请在 SpeakMode 桌面应用中保存、管理和试用 Mode。当前页面可编辑草稿与输入样例，但不会联网或保存。';
 
 function scalarCount(value: string) {
@@ -36,6 +49,19 @@ function isPreviewResult(value: unknown): value is ModePreviewResult {
   return (value.resolvedMode === 'light' || value.resolvedMode === 'structure') && Array.isArray(value.blocks)
     && value.blocks.length > 0 && value.blocks.every(block => block && typeof block.id === 'string'
       && typeof block.text === 'string' && Array.isArray(block.sourceRefs));
+}
+function hasPreviewSource(value: unknown): value is PreviewSource {
+  if (!value || typeof value !== 'object') return false;
+  return 'sourceKind' in value && (value.sourceKind === 'history' || value.sourceKind === 'synthetic')
+    && 'sourceItemCount' in value && typeof value.sourceItemCount === 'number'
+    && Number.isInteger(value.sourceItemCount) && value.sourceItemCount > 0
+    && 'sourceRevisionId' in value && typeof value.sourceRevisionId === 'string'
+    && 'promptVersion' in value && typeof value.promptVersion === 'string';
+}
+function isComparisonResult(value: unknown): value is ModeComparisonResult {
+  if (!hasPreviewSource(value) || !('comparison' in value) || !value.comparison || typeof value.comparison !== 'object') return false;
+  return 'light' in value.comparison && isPreviewResult(value.comparison.light) && value.comparison.light.resolvedMode === 'light'
+    && 'structure' in value.comparison && isPreviewResult(value.comparison.structure) && value.comparison.structure.resolvedMode === 'structure';
 }
 interface Props {
   records: Dictation[];
@@ -65,8 +91,9 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
   const [draft, setDraft] = useState<Draft>(initial);
   const [sampleId, setSampleId] = useState('project');
   const [sample, setSample] = useState(projectSample);
-  const [preview, setPreview] = useState<(ModePreviewResult & { fingerprint: string }) | null>(null);
+  const [preview, setPreview] = useState<TrialResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [trialKind, setTrialKind] = useState<'personal' | 'comparison'>('personal');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [previewError, setPreviewError] = useState('');
@@ -82,30 +109,19 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
   const instructionsRef = useRef<HTMLTextAreaElement>(null);
   const previewHeading = useRef<HTMLHeadingElement>(null);
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
-  const fingerprint = JSON.stringify([draft.name, draft.base, draft.instructions, sample]);
-  const stale = preview !== null && preview.fingerprint !== fingerprint;
+  const isHistorySample = sampleId !== 'project' && sampleId !== 'custom';
+  const historySample = isHistorySample ? records.find(record => record.id === sampleId) : undefined;
+  const sampleText = isHistorySample ? historySample?.source.join('\n') ?? '' : sample;
+  const inputFingerprint = JSON.stringify([sampleId, isHistorySample ? historySample?.sourceRevisionId ?? null : sample]);
+  const fingerprint = JSON.stringify([draft.name, draft.base, draft.instructions, inputFingerprint]);
+  const stale = preview !== null && preview.fingerprint !== (preview.kind === 'comparison' ? inputFingerprint : fingerprint);
   const currentMode = modes.find(mode => mode.id === draft.id);
   const changedElsewhere = !isNew && (!currentMode || currentMode.version !== initial.expectedRevision);
   const nameLength = scalarCount(draft.name.trim());
   const rulesLength = scalarCount(draft.instructions.trim());
   const nameError = nameLength === 0 ? '给这个 Mode 起一个名字。' : nameLength < 0 || nameLength > 40 ? '名称需为 1–40 个有效 Unicode 字符。' : builtinModes.some(mode => mode.id === draft.name.trim()) || modes.some(mode => mode.id !== draft.id && mode.name.toLocaleLowerCase() === draft.name.trim().toLocaleLowerCase()) ? '已经有同名 Mode，换个名字便于区分。' : '';
   const instructionError = rulesLength === 0 ? '写下你希望怎样整理这段表达。' : rulesLength < 0 || rulesLength > 4000 ? '整理要求需为 1–4000 个有效 Unicode 字符。' : '';
-  useEffect(() => { focusInView(nameRef.current); }, []);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      runGeneration.current += 1;
-      const active = activePreview.current;
-      activePreview.current = null;
-      if (active) void command('mode.cancelPreview', {runId: active.runId}).catch(() => {});
-    };
-  }, [command]);
-  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
-  useEffect(() => () => { onDirtyChange(false); }, [onDirtyChange]);
-  useEffect(() => { if (!available) invalidatePreview(); }, [available]);
-
-  function invalidatePreview(cancelling = false) {
+  const invalidatePreview = useCallback((cancelling = false) => {
     // Invalidate locally before the IPC round trip. Each native cancellation is
     // scoped to its run: a slow old cancel cannot stop a later preview.
     const generation = ++runGeneration.current;
@@ -125,7 +141,7 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
         setPreviewError('未能确认服务已取消；本次返回仍会忽略，可重新试用。');
       }
     });
-  }
+  }, [command]);
   function changeDraft(next: Draft) {
     invalidatePreview();
     setDraft(next);
@@ -141,31 +157,58 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
   function chooseSample(id: string) {
     invalidatePreview();
     setSampleId(id);
-    if (id !== 'custom') setSample(id === 'project' ? projectSample : records.find(record => record.id === id)?.source.join('\n') ?? '');
+    if (id === 'project') setSample(projectSample);
+    else if (id === 'custom') setSample(sampleText);
     setSampleError('');
   }
-  async function runPreview() {
-    if (!available || busy || saving) return;
-    if (!sample.trim()) { setSampleError('先输入一段想试用的文本。'); return; }
-    if (nameError || instructionError) { setTriedSubmit(true); focusInView(nameError ? nameRef.current : instructionsRef.current); return; }
+  useEffect(() => { focusInView(nameRef.current); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      runGeneration.current += 1;
+      const active = activePreview.current;
+      activePreview.current = null;
+      if (active) void command('mode.cancelPreview', {runId: active.runId}).catch(() => {});
+    };
+  }, [command]);
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => { onDirtyChange(false); }, [onDirtyChange]);
+  useEffect(() => { if (!available) invalidatePreview(); }, [available, invalidatePreview]);
+  // A source replaced or removed by another window must invalidate an in-flight
+  // trial even though the user has not touched the sample picker in this window.
+  useEffect(() => { invalidatePreview(); }, [inputFingerprint, invalidatePreview]);
+  async function runPreview(kind: 'personal' | 'comparison') {
+    if (!available || busy || saving || activePreview.current) return;
+    if (isHistorySample && !historySample) { setSampleError('这条记录已不可用，请重新选择试用文本。'); return; }
+    if (!sampleText.trim()) { setSampleError('先输入一段想试用的文本。'); return; }
+    if (kind === 'personal' && (nameError || instructionError)) { setTriedSubmit(true); focusInView(nameError ? nameRef.current : instructionsRef.current); return; }
     const generation = ++runGeneration.current;
     const runId = crypto.randomUUID();
     activePreview.current = {runId, generation};
     setSampleError('');
     setPreviewError('');
     setPreviewStatus('');
+    setTrialKind(kind);
     setBusy(true);
     try {
-      const result = await command<ModePreviewResult>('mode.preview', {
-        draft: { name: draft.name.trim(), baseMode: draft.base === '轻整理' ? 'light' : 'structure', rules: draft.instructions.trim() },
-        sample: sample.trim(),
+      const result = await command<unknown>('mode.preview', {
+        ...(kind === 'comparison' ? { compareBuiltins: true } : {
+          draft: { name: draft.name.trim(), baseMode: draft.base === '轻整理' ? 'light' : 'structure', rules: draft.instructions.trim() },
+        }),
+        ...(historySample ? { source: { sessionId: historySample.id, sourceRevisionId: historySample.sourceRevisionId } } : { sample: sampleText.trim() }),
         runId,
         requestId: crypto.randomUUID(),
       });
       if (!mounted.current || generation !== runGeneration.current || activePreview.current?.runId !== runId) return;
-      if (!isPreviewResult(result)) throw new Error('未收到有效的整理结果，请重新试用。');
-      setPreview({ ...result, fingerprint });
-      setPreviewStatus('预览已更新');
+      if (kind === 'comparison') {
+        if (!isComparisonResult(result)) throw new Error('未收到完整的模式对比，请重新试用。');
+        setPreview({ ...result, kind: 'comparison', fingerprint: inputFingerprint });
+      } else {
+        if (!isPreviewResult(result) || !hasPreviewSource(result)) throw new Error('未收到有效的整理结果，请重新试用。');
+        setPreview({ ...result, kind: 'personal', output: result, fingerprint });
+      }
+      setPreviewStatus(kind === 'comparison' ? '同一输入，对比已更新' : '预览已更新');
       requestAnimationFrame(() => {
         if (mounted.current && generation === runGeneration.current) focusInView(previewHeading.current);
       });
@@ -218,7 +261,7 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
           <RadioCards.Root className="mode-base-options" aria-labelledby="mode-base-label" value={draft.base} onValueChange={value => setBase(value as ResolvedMode)} columns="2" size="1">
             {(['轻整理', '结构'] as const).map(base => <RadioCards.Item key={base} value={base} disabled={saving}><ModeIcon mode={base} /><span>{base}</span>{draft.base === base && <CheckIcon />}</RadioCards.Item>)}
           </RadioCards.Root>
-          <p className="mode-field-hint">{draft.base === '轻整理' ? '保留说话顺序。' : '按要点分组。'}</p>
+          <p className="mode-field-hint">{draft.base === '轻整理' ? '让口语更自然，保留叙述顺序。' : '把同一主题的补充和条件放在一起。'}</p>
         </div>
         <div className="mode-field">
           <ExpressionPreferences value={draft.instructions} disabled={saving} onChange={instructions => changeDraft({ ...draft, instructions })} />
@@ -237,16 +280,38 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
             <Select.Content position="popper"><Select.Item value="project">项目进展示例</Select.Item><Select.Item value="custom">自行输入</Select.Item><Select.Separator />{records.map(record => <Select.Item value={record.id} key={record.id}>{record.title}</Select.Item>)}</Select.Content>
           </Select.Root>
         </div>
-        <TextArea id="mode-sample" className="mode-sample" value={sample} disabled={saving} maxLength={4000} onChange={event => { invalidatePreview(); setSample(event.target.value); setSampleId('custom'); setSampleError(''); }} aria-invalid={Boolean(sampleError)} aria-describedby="mode-sample-error mode-preview-boundary" />
+        <TextArea id="mode-sample" className="mode-sample" value={sampleText} disabled={saving} readOnly={isHistorySample} maxLength={4000} onChange={event => { invalidatePreview(); setSample(event.target.value); setSampleId('custom'); setSampleError(''); }} aria-invalid={Boolean(sampleError)} aria-describedby="mode-sample-error mode-sample-origin" />
+        <div className="mode-sample-origin" id="mode-sample-origin">
+          <span>{isHistorySample
+            ? historySample ? `历史识别稿 · ${historySample.detail?.source.items.length ?? historySample.source.length} 个原始片段 · 只读` : '所选历史记录已不可用'
+            : '文本样例 · 换行区分输入片段'}</span>
+          {isHistorySample && historySample && <Button type="button" size="1" variant="ghost" disabled={saving} onClick={() => chooseSample('custom')}>转为自行输入</Button>}
+        </div>
         <p className="mode-field-error" id="mode-sample-error" role="alert">{sampleError}</p>
-        <div className="mode-try-action"><span id="mode-preview-boundary">上方是输入样例，试用后才会生成结果。</span><div className="mode-inline-actions">{busy && <Button type="button" variant="ghost" color="gray" onClick={cancelPreview}>取消试用</Button>}<Button type="button" variant="soft" disabled={!available || busy || saving} onClick={() => { void runPreview(); }}>{busy ? <UpdateIcon className="mode-busy-icon" /> : <ArrowRightIcon />}{busy ? '正在试用' : '试用这一段'}</Button></div></div>
+        <div className="mode-try-action">
+          <div className="mode-inline-actions">
+            <Button type="button" variant="soft" disabled={!available || busy || saving} onClick={() => { void runPreview('personal'); }}>{busy && trialKind === 'personal' ? <UpdateIcon className="mode-busy-icon" /> : <ArrowRightIcon />}试用我的 Mode</Button>
+            <Button type="button" variant="outline" color="gray" disabled={!available || busy || saving} onClick={() => { void runPreview('comparison'); }}>{busy && trialKind === 'comparison' && <UpdateIcon className="mode-busy-icon" />}对比轻整理与结构</Button>
+            {busy && <Button type="button" variant="ghost" color="gray" onClick={cancelPreview}>取消试用</Button>}
+          </div>
+          <p id="mode-preview-boundary">内置模式对比会发起两次云端请求，不使用上方自定义规则。</p>
+        </div>
         {previewError && <p className="mode-field-error" role="alert">{previewError}</p>}
         <div className="mode-preview" data-stale={stale} aria-busy={busy}>
-          <div className="mode-preview-header"><h3 ref={previewHeading} tabIndex={-1}>整理预览</h3><span role="status" aria-live="polite">{busy ? '正在生成预览' : previewStatus || (stale ? '规则或文本已修改，待更新' : previewError ? '试用未完成' : preview ? '预览已更新' : '尚未试用')}</span></div>
-          {preview ? <OutputBlocks texts={preview.blocks.map(block => block.text)} className="mode-preview-text" />
-            : <div className="mode-preview-empty"><p>点击“试用这一段”查看结果。</p></div>}
+          <div className="mode-preview-header"><h3 ref={previewHeading} tabIndex={-1}>{preview?.kind === 'comparison' ? '内置模式对比' : '整理预览'}</h3><span role="status" aria-live="polite">{busy ? trialKind === 'comparison' ? '正在生成两份结果…' : '正在生成预览…' : stale ? preview?.kind === 'comparison' ? '输入已变化，请重新对比' : '规则或输入已变化，请重新试用' : previewStatus || (previewError ? '试用未完成' : preview ? '预览已更新' : '尚未试用')}</span></div>
+          {preview ? <>
+            <p className="mode-preview-origin">{preview.sourceKind === 'history' ? '历史识别稿' : '文本样例'} · {preview.sourceItemCount} 个输入片段</p>
+            {preview.kind === 'comparison' ? <div className="mode-comparison" role="group" aria-label="同一输入的内置模式对比">
+              {(['light', 'structure'] as const).map(mode => <section key={mode} className="mode-comparison-pane" aria-label={mode === 'light' ? '轻整理结果' : '结构结果'}>
+                <div className="mode-comparison-title"><ModeIcon mode={mode === 'light' ? '轻整理' : '结构'} /><h4>{mode === 'light' ? '轻整理' : '结构'}</h4></div>
+                <p className="mode-comparison-intent">{mode === 'light' ? '自然表达，保持叙述顺序' : '按主题归组，合并补充说明'}</p>
+                <OutputBlocks texts={preview.comparison[mode].blocks.map(block => block.text)} className="mode-preview-text" />
+              </section>)}
+            </div> : <OutputBlocks texts={preview.output.blocks.map(block => block.text)} className="mode-preview-text" />}
+            {preview.kind === 'comparison' && <p className="mode-comparison-note">简短、清楚的输入，两种结果可能相近。请一并检查事实、条件和否定是否保留。</p>}
+          </> : <div className="mode-preview-empty"><p>试用你的规则，或用同一段话对比两种内置模式。</p></div>}
         </div>
-        <details className="mode-preview-help"><summary>预览说明</summary><p>模板提供整理规则和输入样例；点击试用后，使用当前模型生成结果。试用不新增历史、不计入口述统计，也不修改已有记录。取消、修改规则/样例或离开时会按本次请求身份通知服务取消，并忽略迟到结果。</p></details>
+        <details className="mode-preview-help"><summary>预览说明</summary><p>使用当前整理模型生成结果。历史样例保留原始识别分片；自行输入按换行分片，不代表真实录音。内置对比仅比较轻整理与结构，不运行自动模式。试用不新增历史、不计入口述统计，也不修改已有记录。取消、修改规则/样例或离开时会取消本次请求，并忽略迟到结果。</p></details>
       </section>
     </form>
   </div>;
@@ -335,7 +400,7 @@ export function ModesPage({ records, origin, onBack, onDirtyChange, leaving, onK
         </article>)}</div>}
     </section>
     <section className="mode-builtins surface" aria-labelledby="builtin-modes-title"><div className="mode-library-section-heading"><h2 id="builtin-modes-title">内置模式</h2></div>
-      <div className="builtin-mode-grid">{builtinModes.map(mode => <div className="builtin-mode-tile" key={mode.id}><ModeIcon mode={mode.id} /><div><strong>{mode.id}</strong><p>{mode.caption}</p>{mode.id !== '自动' && <Button size="1" variant="ghost" disabled={pendingAction !== null} onClick={() => create(mode.id === '结构' ? 1 : 0)}>以此创建<ArrowRightIcon /></Button>}</div></div>)}</div>
+      <div className="builtin-mode-grid">{builtinModes.map(mode => <div className="builtin-mode-tile" key={mode.id}><ModeIcon mode={mode.id} /><div><strong>{mode.id}</strong><p>{mode.detail}</p>{mode.id !== '自动' && <Button size="1" variant="ghost" disabled={pendingAction !== null} onClick={() => create(mode.id === '结构' ? 1 : 0)}>以此创建<ArrowRightIcon /></Button>}</div></div>)}</div>
     </section>
   </div>;
 }

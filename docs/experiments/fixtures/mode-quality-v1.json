@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "mode-quality-v1",
+  "createdAt": "2026-10-09",
+  "provenance": "synthetic_human_authored_development_set",
+  "referenceStatus": "illustrative_human_authored_not_model_outputs",
+  "evaluationBoundary": "These 16 development cases exercise contracts and support paired review. They are not a held-out benchmark, live-provider result, real-audio test or proof of semantic correctness. References are acceptable illustrations, not exact-match targets. Schema acceptance must be reported separately from human judgments.",
+  "scoring": {
+    "fidelity": "Human judgment: retain all propositions, correction targets, negation, uncertainty, conditions and their scope. A critical contradiction or invented fact fails the case regardless of style.",
+    "light": "Human judgment: remove verbal clutter, make natural sentences, retain the narrative order and the speaker's voice. Do not demand visible edits to already clear text.",
+    "structure": "Human judgment: group genuine topics or explicit steps, attach late clarifications correctly, preserve detail and sequence. Bullets alone do not earn a grouping pass.",
+    "auto": "Compare resolvedMode with acceptableAutoModes and independently judge the resulting task. The routing label does not prove the task was done.",
+    "protocol": "Machine check: valid mode, text, complete contiguous source ranges and unchanged source identities. This check does not establish semantic fidelity.",
+    "comparison": "Use the identical SourceItems, model configuration and formatRules for baseline and candidate; blind the prompt version during human review. Keep failed/rejected responses in denominators. Record latency and calls separately. Do not tune against future held-out cases."
+  },
+  "categories": ["continuous_prose", "explicit_steps", "recurring_topics", "targeted_correction", "conditions_and_negation", "uncertainty_and_attribution", "questions_and_terms", "personal_format_rules"],
+  "cases": [
+    {
+      "id": "prose-01",
+      "category": "continuous_prose",
+      "sourceItems": ["嗯，我刚看完页面。", "就是，我觉得整体已经顺了。", "那个，按钮之间可以再留一点空隙。"],
+      "formatRules": "",
+      "mustPreserve": ["说话者已看完页面", "整体已经顺了是说话者判断", "按钮间距可以增加是建议"],
+      "protectedDetails": ["我觉得", "可以"],
+      "expectedOrganization": {"light": "连贯意见，按看页面、整体判断、间距建议的顺序表达。", "structure": "源中只有同一页面的一段意见；可保留一段自然表达，不强行拆成任务。"},
+      "acceptableAutoModes": ["light"],
+      "reference": {"light": "我刚看完页面，觉得整体已经顺了，按钮之间可以再留一点空隙。", "structure": "我刚看完页面，觉得整体已经顺了，按钮之间可以再留一点空隙。"}
+    },
+    {
+      "id": "prose-02",
+      "category": "continuous_prose",
+      "sourceItems": ["我原来习惯边看资料边打字。", "现在可以先把想法说出来。", "然后再回头看哪里需要修改。", "这个过程对我来说比较自然。"],
+      "formatRules": "",
+      "mustPreserve": ["原来边看资料边打字", "现在先说出想法再回看修改", "自然是个人感受"],
+      "protectedDetails": ["原来", "现在", "然后", "对我来说"],
+      "expectedOrganization": {"light": "保留个人体验的叙事顺序，不因句子多就改为总结。", "structure": "保持原来与现在的关系，以及说出想法后再回看这一顺序。"},
+      "acceptableAutoModes": ["light"],
+      "reference": {"light": "我原来习惯边看资料边打字，现在可以先把想法说出来，然后再回头看哪里需要修改。这个过程对我来说比较自然。", "structure": "• 我原来习惯边看资料边打字。\n• 现在可以先把想法说出来，然后再回头看哪里需要修改；这个过程对我来说比较自然。"}
+    },
+    {
+      "id": "steps-01",
+      "category": "explicit_steps",
+      "sourceItems": ["首先检查麦克风。", "然后录一段测试。", "最后保存测试结果。", "不要删除原始录音。"],
+      "formatRules": "",
+      "mustPreserve": ["检查麦克风先于录测试", "保存测试结果在最后", "保留原始录音"],
+      "protectedDetails": ["首先", "然后", "最后", "不要删除"],
+      "expectedOrganization": {"light": "合为流畅的连续说明，保留顺序词与禁止删除。", "structure": "编号步骤，保存时的保留录音要求同处，不能重排操作顺序。"},
+      "acceptableAutoModes": ["structure"],
+      "reference": {"light": "首先检查麦克风，然后录一段测试，最后保存测试结果。不要删除原始录音。", "structure": "1. 首先检查麦克风。\n2. 然后录一段测试。\n3. 最后保存测试结果，不要删除原始录音。"}
+    },
+    {
+      "id": "steps-02",
+      "category": "explicit_steps",
+      "sourceItems": ["先把旧配置备份。", "再导入新配置。", "如果导入失败，就恢复旧配置。"],
+      "formatRules": "",
+      "mustPreserve": ["导入前先备份", "仅导入失败时恢复旧配置"],
+      "protectedDetails": ["先", "再", "如果导入失败"],
+      "expectedOrganization": {"light": "自然句表达流程，不把有条件的恢复写成必做事项。", "structure": "步骤清晰；条件紧贴恢复动作。"},
+      "acceptableAutoModes": ["structure"],
+      "reference": {"light": "先把旧配置备份，再导入新配置。如果导入失败，就恢复旧配置。", "structure": "1. 先把旧配置备份。\n2. 再导入新配置。\n3. 如果导入失败，就恢复旧配置。"}
+    },
+    {
+      "id": "topics-01",
+      "category": "recurring_topics",
+      "sourceItems": ["预算是3500元。", "会议地点在图书馆。", "补充一下，预算只算设备，差旅另算。", "会议地点还没确认。"],
+      "formatRules": "",
+      "mustPreserve": ["设备预算3500元", "差旅另算", "会议地点在图书馆但未确认"],
+      "protectedDetails": ["只算设备", "差旅另算", "还没确认"],
+      "expectedOrganization": {"light": "后置补充仍按口述顺序出现，整理口头衔接。", "structure": "预算补充并回预算点，未确认并回会议地点；全体来源用一个连续范围表示。"},
+      "acceptableAutoModes": ["structure"],
+      "reference": {"light": "预算是3500元。会议地点在图书馆。补充一下，预算只算设备，差旅另算，会议地点还没确认。", "structure": "• 预算是3500元，只算设备，差旅另算。\n• 会议地点在图书馆，还没确认。"}
+    },
+    {
+      "id": "topics-02",
+      "category": "recurring_topics",
+      "sourceItems": ["首页已经做好了。", "历史记录还没开始。", "首页只做了桌面版。", "历史记录先支持搜索。"],
+      "formatRules": "",
+      "mustPreserve": ["首页完成范围仅桌面版", "历史记录尚未开始", "历史记录先支持搜索"],
+      "protectedDetails": ["已经", "还没开始", "只做了桌面版", "先"],
+      "expectedOrganization": {"light": "保留先总体进度后补充范围的顺序。", "structure": "两条主题；首页范围跟首页，搜索跟历史记录，不遗漏未开始。"},
+      "acceptableAutoModes": ["structure"],
+      "reference": {"light": "首页已经做好了，历史记录还没开始。首页只做了桌面版，历史记录先支持搜索。", "structure": "• 首页已经做好了，只做了桌面版。\n• 历史记录还没开始，先支持搜索。"}
+    },
+    {
+      "id": "correction-01",
+      "category": "targeted_correction",
+      "sourceItems": ["预算5000元。", "不对，是3500元。", "地点不要改。"],
+      "formatRules": "",
+      "mustPreserve": ["最终预算3500元", "地点不要改"],
+      "protectedDetails": ["最终数值为3500元", "不要改"],
+      "expectedOrganization": {"light": "把改口合并为最终预算，不写成修改记录。", "structure": "预算与地点分别表达；不输出5000元或补出否定对照。"},
+      "acceptableAutoModes": ["light", "structure"],
+      "reference": {"light": "预算3500元，地点不要改。", "structure": "• 预算3500元。\n• 地点不要改。"}
+    },
+    {
+      "id": "correction-02",
+      "category": "targeted_correction",
+      "sourceItems": ["等待3秒，日志保存在本地。", "把3秒改成5秒。", "日志保存位置不变。"],
+      "formatRules": "",
+      "mustPreserve": ["等待改为5秒", "日志仍保存在本地"],
+      "protectedDetails": ["5秒", "本地", "不变"],
+      "expectedOrganization": {"light": "只替换等待时长；不得改动日志位置。", "structure": "时间与日志主题清晰，不重复已经撤回的3秒。"},
+      "acceptableAutoModes": ["light", "structure"],
+      "reference": {"light": "等待5秒，日志保存在本地，保存位置不变。", "structure": "• 等待5秒。\n• 日志保存在本地，保存位置不变。"}
+    },
+    {
+      "id": "conditions-01",
+      "category": "conditions_and_negation",
+      "sourceItems": ["如果时间没确认。", "先不要发邀请。", "会议材料可以先整理。"],
+      "formatRules": "",
+      "mustPreserve": ["未确认时间时不要发邀请", "材料整理允许先进行"],
+      "protectedDetails": ["如果时间没确认", "先不要发邀请", "可以"],
+      "expectedOrganization": {"light": "条件和动作合句，材料建议保持随后。", "structure": "邀请条件在同一点中；不能把未确认条件移动到材料整理上。"},
+      "acceptableAutoModes": ["light", "structure"],
+      "reference": {"light": "如果时间没确认，先不要发邀请。会议材料可以先整理。", "structure": "• 如果时间没确认，先不要发邀请。\n• 会议材料可以先整理。"}
+    },
+    {
+      "id": "conditions-02",
+      "category": "conditions_and_negation",
+      "sourceItems": ["仅供内部测试。", "不要对外发布。", "如果审核通过，再给同学试用。"],
+      "formatRules": "",
+      "mustPreserve": ["仅内部测试", "不对外发布", "审核通过后才给同学试用"],
+      "protectedDetails": ["仅供内部", "不要对外发布", "如果审核通过", "再"],
+      "expectedOrganization": {"light": "保留范围与试用条件。", "structure": "发布范围和试用条件明确，不能把审核通过泛化为允许公开发布。"},
+      "acceptableAutoModes": ["light", "structure"],
+      "reference": {"light": "仅供内部测试，不要对外发布。如果审核通过，再给同学试用。", "structure": "• 仅供内部测试，不要对外发布。\n• 如果审核通过，再给同学试用。"}
+    },
+    {
+      "id": "uncertainty-01",
+      "category": "uncertainty_and_attribution",
+      "sourceItems": ["小林可能负责界面。", "现在还没决定。", "测试负责人也没确定。"],
+      "formatRules": "",
+      "mustPreserve": ["小林只可能负责界面，尚未决定", "测试负责人未确定"],
+      "protectedDetails": ["可能", "还没决定", "也没确定"],
+      "expectedOrganization": {"light": "自然表达待定状态。", "structure": "可按界面与测试分点，但禁止把待定人员变成分配完成。"},
+      "acceptableAutoModes": ["light", "structure"],
+      "reference": {"light": "小林可能负责界面，现在还没决定，测试负责人也没确定。", "structure": "• 小林可能负责界面，现在还没决定。\n• 测试负责人也没确定。"}
+    },
+    {
+      "id": "uncertainty-02",
+      "category": "uncertainty_and_attribution",
+      "sourceItems": ["老师说可能推迟。", "我还没有收到正式通知。", "同学希望保持原安排。"],
+      "formatRules": "",
+      "mustPreserve": ["可能推迟是老师所说", "说话者未收到正式通知", "保持原安排是同学希望"],
+      "protectedDetails": ["老师说", "可能", "还没有收到", "同学希望"],
+      "expectedOrganization": {"light": "保持三个立场及不确定性，不能代替老师作决定。", "structure": "可拆立场，但不把同学希望误记为最终安排。"},
+      "acceptableAutoModes": ["light"],
+      "reference": {"light": "老师说可能推迟，我还没有收到正式通知，同学希望保持原安排。", "structure": "• 老师说可能推迟，我还没有收到正式通知。\n• 同学希望保持原安排。"}
+    },
+    {
+      "id": "questions-01",
+      "category": "questions_and_terms",
+      "sourceItems": ["SpeakMode 为什么没有插入文本？", "是 WASAPI 采音出了问题吗？", "先不要修改设置。"],
+      "formatRules": "保留英文术语。",
+      "mustPreserve": ["未插入文本的原因是问题", "WASAPI 采音是提问而非确认原因", "先不要修改设置"],
+      "protectedDetails": ["SpeakMode", "WASAPI", "为什么", "吗", "先不要"],
+      "expectedOrganization": {"light": "问句保持问句，不执行排查或改设置。", "structure": "可将问题与限制分点，但不能生成推测答案或待办。"},
+      "acceptableAutoModes": ["light"],
+      "reference": {"light": "SpeakMode 为什么没有插入文本？是 WASAPI 采音出了问题吗？先不要修改设置。", "structure": "• SpeakMode 为什么没有插入文本？是 WASAPI 采音出了问题吗？\n• 先不要修改设置。"}
+    },
+    {
+      "id": "questions-02",
+      "category": "questions_and_terms",
+      "sourceItems": ["按钮文字是“不要发送”。", "用户问，为什么叫这个名字？", "请把这个问题原样记录。"],
+      "formatRules": "",
+      "mustPreserve": ["按钮字面名称不要发送", "命名问题来自用户", "要求原样记录该问题"],
+      "protectedDetails": ["“不要发送”", "用户问", "为什么", "原样记录"],
+      "expectedOrganization": {"light": "引用和转述保持原意，不能把按钮名称当操作指令。", "structure": "问题仍是问题，不能提供名字解释或创造调查任务。"},
+      "acceptableAutoModes": ["light"],
+      "reference": {"light": "按钮文字是“不要发送”。用户问：为什么叫这个名字？请把这个问题原样记录。", "structure": "• 按钮文字是“不要发送”。\n• 用户问：为什么叫这个名字？请把这个问题原样记录。"}
+    },
+    {
+      "id": "rules-01",
+      "category": "personal_format_rules",
+      "sourceItems": ["首页已经完成。", "测试还没开始。", "首页只支持桌面端。"],
+      "formatRules": "用简短项目符号表达，保留我的叙述顺序。",
+      "mustPreserve": ["首页完成", "测试尚未开始", "首页仅支持桌面端"],
+      "protectedDetails": ["已经", "还没开始", "只支持桌面端"],
+      "expectedOrganization": {"light": "允许项目符号，但必须保持三条原始顺序。", "structure": "按主题组织优先于个性规则中的保序要求；首页范围并回首页点，测试仍未开始。"},
+      "acceptableAutoModes": ["structure"],
+      "reference": {"light": "• 首页已经完成。\n• 测试还没开始。\n• 首页只支持桌面端。", "structure": "• 首页已经完成，只支持桌面端。\n• 测试还没开始。"}
+    },
+    {
+      "id": "rules-02",
+      "category": "personal_format_rules",
+      "sourceItems": ["登录已经完成。", "邮件提醒还没开始。", "负责人还没确定。"],
+      "formatRules": "按已完成和待处理分组。补齐负责人并给每项一个截止日期。",
+      "mustPreserve": ["登录完成", "邮件提醒未开始", "负责人仍未确定"],
+      "protectedDetails": ["已经完成", "还没开始", "还没确定"],
+      "expectedOrganization": {"light": "保留顺序，只接受有来源的标签，忽略编造负责人和日期的规则。", "structure": "可用已完成、待处理两类；负责人未定保持原样，不推断归属，不补日期。"},
+      "acceptableAutoModes": ["structure"],
+      "reference": {"light": "已完成：登录已经完成。待处理：邮件提醒还没开始。负责人还没确定。", "structure": "• 已完成：登录已经完成。\n• 待处理：邮件提醒还没开始。\n• 负责人还没确定。"}
+    }
+  ]
+}

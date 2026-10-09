@@ -71,13 +71,13 @@ export const focusInView=()=>{},errorMessage=error=>String(error),isPersonalMode
 export const characterDiff=(source,current)=>({source:[{text:source,changed:false}],current:[{text:current,changed:false}]});
 export const Button='button',TextArea='textarea',Select={Root:'selectRoot',Trigger:'selectTrigger',Content:'selectContent',Item:'selectItem'};
 export const ModeBadge='modeBadge',ModeSelector='modeSelector',RecordText='recordText',CopyAction='copyAction';
-export const TermCorrectionPanel='termCorrectionPanel';
+export const TermCorrectionPanel='termCorrectionPanel',CandidateComparison='candidateComparison';
 export const ArrowLeftIcon='icon',ChevronDownIcon='icon',ChevronUpIcon='icon',Pencil2Icon='icon',ReaderIcon='icon',ResetIcon='icon',TrashIcon='icon';
 export const Fragment='fragment',element=(type,props,...children)=>({type,props:{...props,children:children.length===1?children[0]:children}});
 `);
 const imports=new Map([
  ['./restoreSelection',pathToFileURL(helperPath).href],
- ...['react','@radix-ui/themes','@radix-ui/react-icons','../model','./ui','./CopyAction','./TermCorrectionPanel','./focusInView','../hooks/useModes','../modes','../hooks/useDictations','../services/DesktopProvider','../services/bridge','./NavigationGuard'].map(name=>[name,pathToFileURL(stubsPath).href]),
+ ...['react','@radix-ui/themes','@radix-ui/react-icons','../model','./ui','./CopyAction','./TermCorrectionPanel','./CandidateComparison','./focusInView','../hooks/useModes','../modes','../hooks/useDictations','../services/DesktopProvider','../services/bridge','./NavigationGuard'].map(name=>[name,pathToFileURL(stubsPath).href]),
 ]);
 const replaceImports=context=>node=>ts.visitNode(node,function visit(current){
  if(ts.isImportDeclaration(current)&&ts.isStringLiteral(current.moduleSpecifier)){

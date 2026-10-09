@@ -35,8 +35,8 @@ export function serializeRecord(record:Dictation) {return record.current.join('\
 // guard, and bound asymmetric inputs before allocating Unicode-token arrays.
 const DIFF_MAX_SCALARS=4096,DIFF_MAX_INPUT_PRODUCT=250000;
 const DIFF_MAX_EDIT_LENGTH=512,DIFF_TIMEOUT_MS=16;
-export function characterDiff(source:string,target:string):{source:DiffSegment[];current:DiffSegment[]} {
- const whole=()=>({source:source?[{text:source,changed:source!==target}]:[],current:target?[{text:target,changed:source!==target}]:[]});
+export function characterDiff(source:string,target:string):{source:DiffSegment[];current:DiffSegment[];granularity:'characters'|'whole'|'unchanged'} {
+ const whole=()=>({source:source?[{text:source,changed:source!==target}]:[],current:target?[{text:target,changed:source!==target}]:[],granularity:source===target?'unchanged' as const:'whole' as const});
  if(source===target||!source||!target)return whole();
  // A scalar occupies at most two UTF-16 code units. Reject obviously oversized
  // inputs before Array.from; the exact scalar limit is checked immediately after.
@@ -53,5 +53,5 @@ export function characterDiff(source:string,target:string):{source:DiffSegment[]
  // Visual correspondence only: never infer sourceRefs or RestorePatch ranges
  // from these segments. Restoration continues to use explicit source/target IDs,
  // user-selected scalar ranges, and the native revision checks.
- return {source:a,current:b};
+ return {source:a,current:b,granularity:'characters'};
 }

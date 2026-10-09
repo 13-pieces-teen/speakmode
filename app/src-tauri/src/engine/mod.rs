@@ -62,6 +62,9 @@ pub(crate) struct Inner {
     recovery:Option<session::ActiveSession>,
     candidate:Option<CandidateSlot>,
     preview:Option<(String,CancellationToken)>,
+    // Source identity only; entries live as long as their actual request lease,
+    // including cancelled requests whose UI slot has already been replaced.
+    preview_sources:HashMap<String,String>,
     shortcut_capture:Option<String>,
     capture_commit_guard:Option<Arc<CommitGuard>>,
     used_operation_ids:HashSet<String>,
@@ -110,7 +113,7 @@ fn cancel_operation(inner:&mut Inner,key:&str)->Result<()> {
     inner.used_operation_ids.insert(key.into());inner.cancelled_operation_ids.insert(key.into());Ok(())
 }
 struct AuxiliaryLease {hub:Arc<AppHub>,key:String}
-impl Drop for AuxiliaryLease {fn drop(&mut self){self.hub.inner.lock().unwrap().auxiliary_workers.remove(&self.key);}}
+impl Drop for AuxiliaryLease {fn drop(&mut self){let mut i=self.hub.inner.lock().unwrap();i.auxiliary_workers.remove(&self.key);i.preview_sources.remove(&self.key);}}
 /// Drop the actual request future before releasing admission, including task abort.
 struct AuxiliaryFuture<F:Future>{future:Option<Pin<Box<F>>>,lease:Option<AuxiliaryLease>}
 impl<F:Future> Future for AuxiliaryFuture<F>{type Output=F::Output;fn poll(self:Pin<&mut Self>,cx:&mut Context<'_>)->Poll<Self::Output>{let this=self.get_mut();match this.future.as_mut().unwrap().as_mut().poll(cx){Poll::Pending=>Poll::Pending,Poll::Ready(value)=>{this.future.take();this.lease.take();Poll::Ready(value)}}}}
@@ -148,6 +151,8 @@ fn dictionary_error(error:StoreError)->ApiError {
     let mut error=ApiError::from(error);error.stage="dictionary".into();error
 }
 pub(crate) fn now()->String{chrono::Utc::now().to_rfc3339()}
+
+include!("preview.rs");
 
 fn correction_error(error:StoreError)->ApiError {
     if let StoreError::Invalid(reason)=&error {
@@ -194,7 +199,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let key_configured=credentials::configured(&config).unwrap_or(false);
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
@@ -353,6 +358,7 @@ impl AppHub {
             "history.delete"=>{let id=text(&p,"sessionId")?.to_owned();let guard=self.record_guard(&id,0);guard.delete();
                 {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id){s.revoke_for_deletion();}
                     if i.recovery.as_ref().is_some_and(|s|s.id==id){i.discard_retained_recovery();}
+                    Self::cancel_previews_for_source_locked(&mut i,&id);
                     if i.candidate.as_ref().is_some_and(|c|c.key==id){i.candidate.take().unwrap().cancel.cancel();}}
                 self.publish("recovery.changed",Value::Null);
                 let result=self.db.submit(DbCommand::DeleteHistory{session_id:id.clone()},None,DbPriority::Critical).map_err(ApiError::from)?.wait().await.map_err(ApiError::from);
@@ -557,24 +563,25 @@ impl AppHub {
     }
     async fn preview(self:&Arc<Self>,p:Value)->Result<Value> {
         let key=operation_id(&p,"runId")?.to_owned();let operation=format!("preview:{key}");
-        let draft:ModeDraft=parse(p["draft"].clone())?;
-        if draft.name.trim().is_empty()||draft.name.chars().count()>40||draft.rules.trim().is_empty()||draft.rules.chars().count()>4000||draft.base_mode==BaseMode::Auto{return Err(ApiError::new("invalidInput","mode","请填写名称、有效规则与基础方式"));}
-        let sample=p.get("sample").or_else(||p.get("text")).and_then(Value::as_str).ok_or_else(||ApiError::new("invalidInput","mode","请填写试用文本"))?;
-        if sample.trim().is_empty()||sample.chars().count()>80_000{return Err(ApiError::new("invalidInput","mode","试用文本为空或过长"));}
+        let (_,mode)=preview_options(&p)?;
+        let source_input=preview_source_input(&p)?;
         let cancel=CancellationToken::new();
         let (config,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;(self.db.snapshot().provider_config,self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
+        let source=self.load_preview_source(source_input,&key).await?;
+        rewrite::validate_source(&source.revision)?;
         cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
-        let lease={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;
-            if self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst)!=epoch{return Err(ApiError::new("cancelled","preview","系统状态变化，试用已取消"));}
-            if i.cancelled_operation_ids.contains(&operation){return Err(ApiError::new("cancelled","preview","试用已取消"));}
-            if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","preview","请先结束快捷键录制"));}
-            if let Some((_,old))=i.preview.take(){old.cancel();}i.preview=Some((key.clone(),cancel.clone()));i.auxiliary_workers.insert(operation.clone(),cancel.clone());AuxiliaryLease{hub:Arc::clone(self),key:operation}};
-        let mode=ModeSnapshot{mode_id:"preview".into(),name:draft.name,base_mode:draft.base_mode,rules:draft.rules,revision:0};
-        let source=SourceRevision{id:key.clone(),session_id:key.clone(),asr_attempt_id:"preview".into(),generation:0,provider:"preview".into(),model:String::new(),adapter_version:"v1".into(),complete:true,created_at:now(),items:vec![SourceItem{id:"preview:0".into(),provider_item_id:"0".into(),capture_order:0,text:sample.into(),is_final:true,start_ms:None,end_ms:None}]};
-        let result=match (AuxiliaryFuture{future:Some(Box::pin(rewrite::rewrite(&config,&secret,&mode,&source,cancel.clone()))),lease:Some(lease)}).await{Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}return Err(ApiError::from(error).for_operation("application",&key));}};
+        self.validate_preview_source(&source).await?;
+        let lease=self.reserve_preview(&key,&source,cancel.clone(),epoch)?;
+        let config=&config;let secret=&secret;
+        let work=async {
+            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {rewrite::rewrite(config,secret,&mode,&source,cancel).await}).await?;
+            self.validate_preview_source(&source).await?;
+            Ok::<_,ApiError>(result)
+        };
+        let result=match (AuxiliaryFuture{future:Some(Box::pin(work)),lease:Some(lease)}).await{Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}return Err(error.for_operation("application",&key));}};
         let mut i=self.inner.lock().unwrap();if cancel.is_cancelled()||!i.preview.as_ref().is_some_and(|(id,_)|id==&key){return Err(ApiError::new("cancelled","preview","试用已过期"));}i.preview=None;
-        Ok(json!({"id":key,"runId":key,"resolvedMode":result.resolved_mode,"blocks":result.blocks,"text":result.blocks.iter().map(|b|b.text.as_str()).collect::<Vec<_>>().join("\n\n")}))
+        Ok(preview_response(&key,&source,result))
     }
 
     async fn make_candidate(self:&Arc<Self>,p:&Value,retry:bool)->Result<Value> {
