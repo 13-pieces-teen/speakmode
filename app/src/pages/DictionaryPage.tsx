@@ -7,6 +7,7 @@ import type {DictionaryEntry, DictionarySnapshot} from '../services/contracts';
 import {dictionaryConflict, dictionaryContextBytes, dictionaryDraftCapacity, dictionaryLimits, dictionarySearchKey, dictionaryTermError, isDictionarySnapshot, parseDictionaryLines} from '../dictionary';
 import {useNavigationGuard} from '../components/NavigationGuard';
 import {focusInView} from '../components/focusInView';
+import {EmptyStateNote} from '../components/EmptyStateNote';
 import './dictionary.css';
 
 type Editor = {kind: 'single' | 'bulk'; id?: string; text: string; initialText: string; version: number; conflict: boolean};
@@ -192,7 +193,7 @@ export function DictionaryPage() {
       <div className="page-heading"><h1 ref={heading} tabIndex={-1}>个人词典</h1><p>记住常用词，让表达更准确。</p></div>
       <div className="dictionary-heading-actions">
         <Button className="dictionary-import" variant="soft" color="gray" loading={importingTypeless} aria-label={importingTypeless ? '正在导入 Typeless 词汇' : '导入 Typeless'} aria-busy={importingTypeless} title="读取本机缓存的 Typeless 词汇；如刚修改过词典，请先在 Typeless 中打开词典页。" disabled={!available || !dictionary || busy || Boolean(editor || deleteIntent)} onClick={() => void importTypeless()}><DownloadIcon/>{importingTypeless ? '正在导入…' : '导入 Typeless'}</Button>
-        <Button ref={addButton} className="dictionary-add" disabled={!available || !dictionary || busy} onClick={event => openEditor('single', undefined, event?.currentTarget)}><PlusIcon/>新词</Button>
+        <Button ref={addButton} className="dictionary-add sm-tactile" disabled={!available || !dictionary || busy} onClick={event => openEditor('single', undefined, event?.currentTarget)}><PlusIcon/>新词</Button>
       </div>
     </header>
     <p className="dictionary-notice" role="status" aria-live="polite">{notice}</p>
@@ -210,7 +211,7 @@ export function DictionaryPage() {
       </div>
       {loading && !dictionary ? <div className="dictionary-empty" role="status"><p>正在读取词库…</p></div>
         : !dictionary ? <div className="dictionary-empty" role="status"><ReaderIcon/><h3>{available ? '暂时无法显示词库' : '词汇会保存在桌面应用中'}</h3><p>{available ? '重新读取后，你的词条会出现在这里。' : '打开 SpeakMode，即可查看和添加常用词。'}</p></div>
-        : filtered.length === 0 ? <div className="dictionary-empty" role="status"><span className="dictionary-empty-icon"><ReaderIcon/></span><h3>{query ? '没有找到这个词条' : '从一个常用词开始'}</h3><p>{query ? '换个关键词试试，或清除搜索。' : '人名、产品名、专业术语，都可以放在这里。'}</p>{query ? <Button variant="soft" color="gray" onClick={() => {setQuery(''); focusAfterRender(() => searchInput.current);}}>清除搜索</Button> : <Button variant="soft" disabled={!available || busy} onClick={event => openEditor('single', undefined, event?.currentTarget)}><PlusIcon/>添加第一个词条</Button>}</div>
+        : filtered.length === 0 ? <div className="dictionary-empty" role="status">{query ? <span className="dictionary-empty-icon"><MagnifyingGlassIcon/></span> : <EmptyStateNote variant="dictionary"/>}<h3>{query ? '没有找到这个词条' : '从一个常用词开始'}</h3><p>{query ? '换个关键词试试，或清除搜索。' : '人名、产品名、专业术语，都可以放在这里。'}</p>{query ? <Button variant="soft" color="gray" onClick={() => {setQuery(''); focusAfterRender(() => searchInput.current);}}>清除搜索</Button> : <Button className="sm-tactile" variant="soft" disabled={!available || busy} onClick={event => openEditor('single', undefined, event?.currentTarget)}><PlusIcon/>添加第一个词条</Button>}</div>
         : <ul className="dictionary-list">{filtered.map(entry => <li key={entry.id} className="dictionary-row">
           <button className="dictionary-word" ref={element => {if (element) editButtons.current.set(entry.id, element); else editButtons.current.delete(entry.id);}} disabled={!available || busy} aria-label={'编辑词条 ' + entry.term} title={entry.term} onClick={event => openEditor('single', entry, event?.currentTarget)}>
             <span className="dictionary-word-mark" aria-hidden="true"><ReaderIcon/></span><span className="dictionary-word-text">{entry.term}</span>
@@ -258,7 +259,7 @@ export function DictionaryPage() {
             </details>}
             <div className="dictionary-editor-footer">
               {!editor.id && <Button type="button" className="dictionary-bulk-link" variant="ghost" color="gray" disabled={busy} onClick={() => openEditor(editor.kind === 'bulk' ? 'single' : 'bulk')}>{editor.kind === 'bulk' ? '单个添加' : '批量添加'}</Button>}
-              <div className="dictionary-actions"><Button type="button" variant="soft" color="gray" disabled={busy} onClick={closeEditor}>取消</Button><Button type="submit" loading={busy} disabled={!available || !editor.text.trim()}>{editor.conflict ? '核对后重试' : editor.kind === 'bulk' ? '添加词条' : editor.id ? '保存词条' : '添加词汇'}</Button></div>
+              <div className="dictionary-actions"><Button type="button" variant="soft" color="gray" disabled={busy} onClick={closeEditor}>取消</Button><Button className="sm-tactile" type="submit" loading={busy} disabled={!available || !editor.text.trim()}>{editor.conflict ? '核对后重试' : editor.kind === 'bulk' ? '添加词条' : editor.id ? '保存词条' : '添加词汇'}</Button></div>
             </div>
           </form>
         </>}
