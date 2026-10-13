@@ -78,6 +78,27 @@ class ReviewIntegrity(unittest.TestCase):
         self.assertEqual(review.distance("甲。乙。", "甲。\n乙。"), 1)
         self.assertEqual(review.distance("预算9000", "预算3500"), 2)
 
+    def test_layout_pair_counts_cloud_request_only_once(self):
+        corpus, _, receipt = fixture()
+        corpus["cases"] = corpus["cases"][:6]
+        corpus["split"] = "confirm"
+        encoded = json.dumps(corpus, ensure_ascii=False).encode()
+        allowed = {c["id"] for c in corpus["cases"]}
+        receipt.update(tool="scene-layout-lab-v1", split="confirm", maximumCalls=24, clientStartedCalls=12,
+                       fixtureSha256=hashlib.sha256(encoded).hexdigest())
+        receipt["plan"] = [p for p in receipt["plan"] if p["caseId"] in allowed and p["arm"] != "scene"]
+        receipt["results"] = [r for r in receipt["results"] if r["caseId"] in allowed and r["arm"] != "scene"]
+        for task in receipt["plan"]:
+            if task["arm"] == "natural":
+                task.update(arm="layout", maximumCalls=0)
+        for row in receipt["results"]:
+            if row["arm"] == "natural":
+                row.update(arm="layout", clientStartedCalls=0, derivedFromSameBaseline=True)
+        review.validate(receipt, corpus, encoded)
+        receipt["results"][1]["clientStartedCalls"] = 1
+        with self.assertRaises(ValueError):
+            review.validate(receipt, corpus, encoded)
+
 
 if __name__ == "__main__":
     unittest.main()

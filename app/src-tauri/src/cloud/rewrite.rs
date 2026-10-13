@@ -63,6 +63,8 @@ pub mod local_repair;
 pub mod minimum_pipeline;
 #[path="rewrite_scene.rs"]
 pub mod scene;
+#[path="rewrite_scene_layout.rs"]
+pub mod scene_layout;
 pub use manual_candidate::{ManualCandidate, ManualReviewIssue, rewrite_manual_candidate};
 
 // Identifies the task contract independently of the selected provider/model.

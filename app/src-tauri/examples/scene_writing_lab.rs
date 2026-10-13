@@ -40,14 +40,16 @@ fn write_row(file: &mut std::fs::File, value: &Value) -> anyhow::Result<()> { wr
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    anyhow::ensure!(args.len() == 4 && ["--plan-only", "--run", "--probe", "--refine-run"].contains(&args[3].as_str()), "scene_writing_lab CONFIG_DB FIXTURE NEW_OUT --plan-only|--run|--probe|--refine-run");
+    anyhow::ensure!(args.len() == 4 && ["--plan-only", "--run", "--probe", "--refine-run", "--layout-run"].contains(&args[3].as_str()), "scene_writing_lab CONFIG_DB FIXTURE NEW_OUT --plan-only|--run|--probe|--refine-run|--layout-run");
     let probe = args[3] == "--probe";
     let refinement = args[3] == "--refine-run";
     anyhow::ensure!(args[..3].iter().all(|p|PathBuf::from(p).is_absolute()), "absolute paths required");
     anyhow::ensure!(!PathBuf::from(&args[2]).exists() && !PathBuf::from(format!("{}.jsonl",args[2])).exists(), "fresh output required");
     let bytes = fs::read(&args[1])?; anyhow::ensure!(bytes.len() <= 1024 * 1024, "fixture too large");
     let fixture: Fixture = serde_json::from_slice(&bytes)?;
-    anyhow::ensure!(fixture.schema_version == 1 && ["dev","holdout"].contains(&fixture.split.as_str()) && fixture.cases.len() == 8, "frozen split must contain eight cases");
+    let layout = fixture.split == "confirm";
+    anyhow::ensure!(fixture.schema_version == 1 && ((layout && fixture.cases.len() == 6 && ["--layout-run","--plan-only"].contains(&args[3].as_str()))
+        || (!layout && ["dev","holdout"].contains(&fixture.split.as_str()) && fixture.cases.len() == 8 && args[3] != "--layout-run")), "invalid frozen split/action");
     let mut ids = std::collections::HashSet::new();
     for case in &fixture.cases {
         anyhow::ensure!(ids.insert(&case.id) && !case.id.is_empty() && case.id.len() <= 80 && case.id.bytes().all(|v|v.is_ascii_alphanumeric() || b"-_".contains(&v))
@@ -57,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let config = config(&args[0])?;
     anyhow::ensure!((!probe && !refinement) || fixture.split == "dev", "diagnostics may not expose the holdout");
-    let maximum = if probe {4} else if refinement {16} else {fixture.cases.len() * 8};
+    let maximum = if probe {4} else if refinement {16} else if layout {24} else {fixture.cases.len() * 8};
     let candidate_hash = sha(include_bytes!("../src/cloud/rewrite_scene.rs"));
     let baseline_hash = sha(include_bytes!("../src/cloud/rewrite_minimum_pipeline.rs"));
     let executable_hash = sha(&fs::read(std::env::current_exe()?)?);
@@ -71,15 +73,19 @@ async fn main() -> anyhow::Result<()> {
         let request = scene::prepare(&config, &mode, &source, &Default::default(), &scene)?;
         for arm in match index % 3 { 0 => ["baseline","natural","scene"], 1 => ["natural","scene","baseline"], _ => ["scene","baseline","natural"] } {
             if (probe || refinement) && arm == "baseline" { continue; }
-            plan.push(json!({"caseId":case.id,"arm":arm,"maximumCalls":if arm=="baseline"{4}else{2},"deadlineMs":if probe {20_000}else{rewrite::initial_wait_ms(&source)},
+            if layout && arm != "baseline" { continue; }
+            let task = json!({"caseId":case.id,"arm":arm,"maximumCalls":if arm=="baseline"{4}else{2},"deadlineMs":if probe {20_000}else{rewrite::initial_wait_ms(&source)},
                 "source":source,"mode":mode,"sceneSnapshot":scene,"category":case.category,"expectations":case.expectations,
-                "sceneRequestSha256":sha(&serde_json::to_vec(&request.body)?)}));
+                "sceneRequestSha256":sha(&serde_json::to_vec(&request.body)?)});
+            plan.push(task.clone());
+            if layout { let mut derived = task; derived["arm"] = json!("layout"); derived["maximumCalls"] = json!(0); plan.push(derived); }
         }
     }
-    let mut receipt = json!({"tool":"scene-writing-lab-v1","status":"planned","split":fixture.split,"fixtureSha256":sha(&bytes),
+    let mut receipt = json!({"tool":if layout{"scene-layout-lab-v1"}else{"scene-writing-lab-v1"},"status":"planned","split":fixture.split,"fixtureSha256":sha(&bytes),
         "candidateSourceSha256":candidate_hash,"baselinePipelineSha256":baseline_hash,"executableSha256":executable_hash,
+        "layoutSourceSha256":sha(include_bytes!("../src/cloud/rewrite_scene_layout.rs")),
         "candidateProtocol":scene::VERSION,"reviewProtocol":scene::REVIEW_VERSION,"model":config.rewrite_model,"region":config.region,
-        "maximumCalls":maximum,"clientStartedCalls":0,"automaticRetries":0,"scope":if probe{"EXTENDED_DEADLINE_DIAGNOSTIC_NOT_NORMAL_LATENCY"}else if refinement{"DEVELOPMENT_REFINEMENT_BASELINES_NOT_RERUN"}else{"THREE_ARM_FIXED_COMPARISON"},"actualNativeDelivery":"NOT_RUN","actualAudioRecognition":"NOT_RUN",
+        "maximumCalls":maximum,"clientStartedCalls":0,"automaticRetries":0,"scope":if probe{"EXTENDED_DEADLINE_DIAGNOSTIC_NOT_NORMAL_LATENCY"}else if refinement{"DEVELOPMENT_REFINEMENT_BASELINES_NOT_RERUN"}else if layout{"LOCAL_LAYOUT_ON_SAME_BASELINE_OUTPUT_NEW_CORPUS"}else{"THREE_ARM_FIXED_COMPARISON"},"actualNativeDelivery":"NOT_RUN","actualAudioRecognition":"NOT_RUN",
         "appContextCapture":"SYNTHETIC_FIXTURE_ONLY","evaluation":"AGENT_REVIEW_NOT_INDEPENDENT","plan":plan,"results":[]});
     let mut output = OpenOptions::new().write(true).create_new(true).open(&args[2])?;
     let mut journal = OpenOptions::new().write(true).create_new(true).open(format!("{}.jsonl",args[2]))?;
@@ -89,13 +95,32 @@ async fn main() -> anyhow::Result<()> {
         println!("planned: {} cases, {} arms, <= {maximum} requests; no credentials/network", fixture.cases.len(), plan.len()); return Ok(());
     }
     let secret = cloud::credentials::read(&config)?;
-    let mut calls = 0; let mut rows = Vec::new(); let mut fatal = false;
+    let mut calls = 0; let mut rows: Vec<Value> = Vec::new(); let mut fatal = false;
     for task in &plan {
         if fatal { rows.push(json!({"caseId":task["caseId"],"arm":task["arm"],"status":"not_run_fatal_provider"})); continue; }
         let source: SourceRevision = serde_json::from_value(task["source"].clone())?;
         let mode: ModeSnapshot = serde_json::from_value(task["mode"].clone())?;
         let mut scene: scene::SceneSnapshot = serde_json::from_value(task["sceneSnapshot"].clone())?;
         let arm = task["arm"].as_str().unwrap();
+        if arm == "layout" {
+            let previous = rows.last().ok_or_else(||anyhow::anyhow!("baseline missing"))?;
+            anyhow::ensure!(previous["caseId"] == task["caseId"] && previous["arm"] == "baseline", "layout baseline identity mismatch");
+            let mut row = previous.clone(); row["arm"] = json!("layout"); row["clientStartedCalls"] = json!(0);
+            row["derivedFromSameBaseline"] = json!(true);
+            if previous["pipelineAccepted"] == true {
+                let draft = rewrite::RewriteResult { resolved_mode: serde_json::from_value(previous["acceptedDraft"]["resolvedMode"].clone())?,
+                    blocks: serde_json::from_value(previous["acceptedDraft"]["blocks"].clone())? };
+                let tick = std::time::Instant::now();
+                let candidate = rewrite::scene_layout::candidate(&mode,&source,&scene,&draft)?;
+                let render_time = tick.elapsed();
+                row["elapsedMs"] = json!(previous["elapsedMs"].as_u64().unwrap() + render_time.as_millis() as u64);
+                row["renderMicros"] = json!(render_time.as_micros()); row["deliveredText"] = json!(text(&candidate.draft));
+                row["acceptedDraft"] = Value::Null; // Local formatting is not a new model review.
+                row["trace"] = serde_json::to_value(candidate)?;
+            } else { row["trace"] = json!({"applied":false,"reason":"unverified_input"}); }
+            println!("{} layout: applied={}",task["caseId"].as_str().unwrap(),row["trace"]["applied"]);
+            write_row(&mut journal,&json!({"kind":"arm_completed","row":row,"callsTotal":calls}))?; rows.push(row); continue;
+        }
         let reserve = task["maximumCalls"].as_u64().unwrap() as usize;
         anyhow::ensure!(calls + reserve <= maximum, "request budget exhausted");
         write_row(&mut journal,&json!({"kind":"arm_started","caseId":task["caseId"],"arm":arm,"callsBefore":calls,"reservedMaximum":reserve}))?;
@@ -113,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         calls += count;
         fatal = result.as_ref().err().is_some_and(|e|["authentication_failed","rate_limited"].contains(&e.code.as_str()));
         let row = json!({"caseId":task["caseId"],"arm":arm,"status":"completed","pipelineAccepted":result.is_ok(),
+            "acceptedDraft":result.as_ref().ok(),
             "deliveredText":result.as_ref().map(text).unwrap_or_else(|_|source.text()),"fallback":result.is_err(),"elapsedMs":elapsed,
             "clientStartedCalls":count,"error":result.err(),"trace":trace});
         println!("{} {arm}: accepted={} calls={count} elapsedMs={elapsed}",task["caseId"].as_str().unwrap(),row["pipelineAccepted"]);

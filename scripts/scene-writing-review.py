@@ -27,16 +27,19 @@ def write_new(path, value):
 
 
 def validate(receipt, fixture, fixture_bytes):
-    if receipt.get("tool") != "scene-writing-lab-v1" or receipt.get("status") != "completed":
+    if receipt.get("tool") not in ("scene-writing-lab-v1", "scene-layout-lab-v1") or receipt.get("status") != "completed":
         raise ValueError("Complete scene receipt required; halted runs remain evidence, not a complete comparison")
     if receipt["fixtureSha256"] != hashlib.sha256(fixture_bytes).hexdigest():
         raise ValueError("Fixture identity mismatch")
-    if len(fixture["cases"]) != 8 or receipt["split"] != fixture["split"] or receipt["maximumCalls"] != 64:
+    layout = receipt["tool"] == "scene-layout-lab-v1"
+    arms = ("baseline", "layout") if layout else ARMS
+    count, maximum = (6, 24) if layout else (8, 64)
+    if len(fixture["cases"]) != count or receipt["split"] != fixture["split"] or receipt["maximumCalls"] != maximum:
         raise ValueError("Unexpected frozen split")
-    expected = {(case["id"], arm) for case in fixture["cases"] for arm in ARMS}
+    expected = {(case["id"], arm) for case in fixture["cases"] for arm in arms}
     plan = receipt["plan"]
     rows = receipt["results"]
-    if len(plan) != 24 or len(rows) != 24 or {(r["caseId"], r["arm"]) for r in rows} != expected:
+    if len(plan) != len(expected) or len(rows) != len(expected) or {(r["caseId"], r["arm"]) for r in rows} != expected:
         raise ValueError("Missing or duplicate arms")
     if {(r["caseId"], r["arm"]) for r in plan} != expected:
         raise ValueError("Plan arms differ from fixture")
@@ -45,6 +48,8 @@ def validate(receipt, fixture, fixture_bytes):
     for row in rows:
         task = planned[(row["caseId"], row["arm"])]
         case = cases[row["caseId"]]
+        if task["maximumCalls"] != {"baseline": 4, "natural": 2, "scene": 2, "layout": 0}[row["arm"]]:
+            raise ValueError("Arm request cap changed")
         if [i["text"] for i in task["source"]["items"]] != case["sourceItems"]:
             raise ValueError("Source changed")
         if task["mode"]["baseMode"] != case["baseMode"] or task["mode"]["rules"] != case["rules"]:
@@ -54,11 +59,15 @@ def validate(receipt, fixture, fixture_bytes):
                 raise ValueError("Context changed")
         if row["status"] != "completed" or not 0 <= row["clientStartedCalls"] <= task["maximumCalls"]:
             raise ValueError("Incomplete arm or request cap exceeded")
-        if row["fallback"] == row["pipelineAccepted"]:
+        if type(row["fallback"]) is not bool or type(row["pipelineAccepted"]) is not bool or row["fallback"] == row["pipelineAccepted"]:
             raise ValueError("Contradictory fallback")
         if row["fallback"] and row["deliveredText"] != "\n".join(case["sourceItems"]):
             raise ValueError("Fallback lost source")
-    if sum(r["clientStartedCalls"] for r in rows) != receipt["clientStartedCalls"] or receipt["clientStartedCalls"] > 64:
+        if row["arm"] == "layout":
+            baseline = next(r for r in rows if r["caseId"] == row["caseId"] and r["arm"] == "baseline")
+            if row.get("derivedFromSameBaseline") is not True or row["pipelineAccepted"] != baseline["pipelineAccepted"]:
+                raise ValueError("Local layout lost baseline provenance")
+    if sum(r["clientStartedCalls"] for r in rows) != receipt["clientStartedCalls"] or receipt["clientStartedCalls"] > maximum:
         raise ValueError("Request accounting mismatch")
     return rows
 
@@ -97,7 +106,7 @@ def summarize(receipt, review):
         raise ValueError("Review identity mismatch")
     mapping = {blind_id(receipt, row): row for row in receipt["results"]}
     scores = review["scores"]
-    if len(scores) != 24 or {s["id"] for s in scores} != set(mapping):
+    if len(scores) != len(mapping) or {s["id"] for s in scores} != set(mapping):
         raise ValueError("Every planned arm requires exactly one review")
     detailed = []
     for score in scores:
@@ -112,7 +121,7 @@ def summarize(receipt, review):
         detailed.append({**row, "reviewId": score["id"], "review": score,
                          "textUsable": all(score[key] for key in DIMENSIONS), "suggestedEditCharacters": edits})
     arms = {}
-    for arm in ARMS:
+    for arm in (("baseline", "layout") if receipt["tool"] == "scene-layout-lab-v1" else ARMS):
         rows = [r for r in detailed if r["arm"] == arm]
         arms[arm] = {"cases": len(rows), "textUsable": sum(r["textUsable"] for r in rows),
                      "faithful": sum(r["review"]["faithful"] for r in rows),
