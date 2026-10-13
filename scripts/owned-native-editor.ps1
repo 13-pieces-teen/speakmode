@@ -44,6 +44,7 @@ public sealed class SpeakNativeFixture : Form {
     private readonly string kind, fixture, directory;
     private readonly uint probeProcessId;
     private IntPtr editor, second;
+    private Form alternate;
     private Timer shutdownTimer;
     private bool closeRequested;
     private readonly bool nativeMenu, physicalAlt;
@@ -87,6 +88,10 @@ public sealed class SpeakNativeFixture : Form {
             if (editor == IntPtr.Zero) throw new InvalidOperationException("fixture edit creation failed");
             second = CreateWindowExW(0, "EDIT", "other owned input", 0x50210044, 20, 200, 620, 70, Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
             if (second == IntPtr.Zero) throw new InvalidOperationException("fixture alternate edit creation failed");
+            alternate = new Form { Text = "SpeakMode owned alternate " + fixture,
+                StartPosition = FormStartPosition.Manual, Location = new Point(220, 180), Size = new Size(480, 180) };
+            alternate.Controls.Add(new TextBox { Text = "other owned window", Dock = DockStyle.Fill, Multiline = true });
+            IntPtr alternateHandle = alternate.Handle;
             if (nativeMenu) {
                 instructions = new Label { Location = new Point(20, 274), Size = new Size(620, 35),
                     Text = physicalAlt ? "Wait until the probe is ready. Do not press keys yet." : "Owned synthetic fixture. No microphone or cloud requests." };
@@ -98,7 +103,7 @@ public sealed class SpeakNativeFixture : Form {
             // to its specific parent probe. Never ASFW_ANY, simulated Alt or
             // AttachThreadInput; denied foreground activation remains a failure.
             bool delegated = GetForegroundWindow() == Handle && probeProcessId != 0 && AllowSetForegroundWindow(probeProcessId);
-            string metadata = "{\"processId\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ",\"hwnd\":" + Handle.ToInt64() + ",\"editor\":" + editor.ToInt64() + ",\"second\":" + second.ToInt64() + ",\"fixtureId\":\"" + fixture + "\",\"kind\":\"" + kind + "\",\"nativeMenu\":" + nativeMenu.ToString().ToLowerInvariant() + ",\"parentForegroundPermissionGranted\":" + delegated.ToString().ToLowerInvariant() + "}";
+            string metadata = "{\"processId\":" + System.Diagnostics.Process.GetCurrentProcess().Id + ",\"hwnd\":" + Handle.ToInt64() + ",\"editor\":" + editor.ToInt64() + ",\"second\":" + second.ToInt64() + ",\"alternate\":" + alternateHandle.ToInt64() + ",\"fixtureId\":\"" + fixture + "\",\"kind\":\"" + kind + "\",\"nativeMenu\":" + nativeMenu.ToString().ToLowerInvariant() + ",\"parentForegroundPermissionGranted\":" + delegated.ToString().ToLowerInvariant() + "}";
             string staging = Path.Combine(directory, fixture + "-ready.tmp");
             using (var stream = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var writer = new StreamWriter(stream)) { writer.Write(metadata); }
@@ -123,6 +128,7 @@ public sealed class SpeakNativeFixture : Form {
             DestroyMenu(fixtureMenu);
             fixtureMenu = IntPtr.Zero;
         }
+        if (disposing && alternate != null) { alternate.Dispose(); alternate = null; }
         base.Dispose(disposing);
     }
     protected override void WndProc(ref Message msg) {
@@ -141,6 +147,10 @@ public sealed class SpeakNativeFixture : Form {
             msg.Result = new IntPtr(1); return;
         }
         if (msg.Msg == 0x8035) { msg.Result = new IntPtr(keyMenuRequests); return; }
+        if (msg.Msg == 0x8036 && alternate != null) {
+            alternate.Show(); alternate.Activate(); SetForegroundWindow(alternate.Handle);
+            msg.Result = new IntPtr(1); return;
+        }
         if (nativeMenu && msg.Msg == 0x0211) menuEntries++;
         if (nativeMenu && msg.Msg == 0x0112 && (msg.WParam.ToInt64() & 0xfff0) == 0xf100) keyMenuRequests++;
         base.WndProc(ref msg);

@@ -4,16 +4,18 @@
 //! It never launches a browser, records audio, calls a provider or reads passwords.
 
 #[cfg(windows)]
+#[path="support/owned_delivery_cases.rs"] mod cases;
+#[cfg(windows)]
 mod probe {
     use anyhow::{Context, Result, bail, ensure};
     use serde::Deserialize;
     use serde_json::{Value, json};
     use speakmode_lib::platform::{PlatformError, delivery::{capture_foreground_anchor,
         capture_target_for_anchor, dispatch_once, DeliveryPermit}};
-    use std::{fs::{self, OpenOptions}, io::Write, path::PathBuf};
+    use std::{fs::{self, OpenOptions}, io::Write, path::PathBuf, thread, time::{Duration, Instant}};
     use windows::Win32::{Foundation::{CloseHandle, FILETIME, HWND},
         System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
-        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindow}};
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindow, SetForegroundWindow}};
 
     struct Args { scratch: PathBuf, request: PathBuf, out: PathBuf }
     impl Args {
@@ -41,7 +43,7 @@ mod probe {
     #[serde(rename_all="camelCase", deny_unknown_fields)]
     struct Request { fixture_id: String, process_id: u32, process_created_at: u64,
         root_hwnd: u64, scenario: String, fixture_file: PathBuf,
-        fixture_url: String, profile_directory: PathBuf }
+        fixture_url: String, profile_directory: PathBuf, alternate_hwnd: Option<u64> }
 
     fn owned(root: HWND, pid: u32, created: u64, marker: &str) -> bool {
         if !unsafe { IsWindow(root) }.as_bool() { return false; }
@@ -67,7 +69,9 @@ mod probe {
         let request: Request = serde_json::from_slice(&fs::read(&request_path)?)?;
         ensure!(request.fixture_id.len() == 32 && request.fixture_id.bytes().all(|c| c.is_ascii_hexdigit()), "invalid UUID fixture ID");
         ensure!(directory.file_name().and_then(|name| name.to_str()) == Some(request.fixture_id.as_str()), "UUID fixture directory mismatch");
-        ensure!(matches!(request.scenario.as_str(), "input" | "textarea" | "contenteditable" | "readonly" | "password" | "noneditable" | "contenteditable-false" | "nested-readonly" | "document"), "unsupported fixture scenario");
+        let (host, variant) = request.scenario.split_once("--").unwrap_or((&request.scenario, ""));
+        ensure!(matches!(host, "input" | "textarea" | "contenteditable" | "readonly" | "password" | "noneditable" | "contenteditable-false" | "nested-readonly" | "document"), "unsupported fixture host");
+        ensure!(variant.is_empty() || (matches!(host,"textarea"|"contenteditable") && matches!(variant,"emoji"|"long"|"selection"|"cancel"|"window")), "unsupported fixture variant");
         ensure!(request_path.file_name().and_then(|name| name.to_str()) == Some(format!("{}.json", request.scenario).as_str()), "request scenario filename mismatch");
         let fixture_file = fs::canonicalize(&request.fixture_file)?;
         ensure!(fixture_file == fs::canonicalize(directory.join("fixture.html"))?, "HTML outside owned fixture directory");
@@ -82,7 +86,7 @@ mod probe {
         ensure!(owned(root, request.process_id, request.process_created_at, &marker), "owned browser PID/lifetime/title mismatch");
         *phase = "foregroundReadiness";
         ensure!(unsafe { GetForegroundWindow() } == root, "owned browser is not foreground; no input attempted");
-        let positive = matches!(request.scenario.as_str(), "input" | "textarea" | "contenteditable");
+        let positive = matches!(host, "input" | "textarea" | "contenteditable");
         *phase = "targetCapture";
         let anchor = match capture_foreground_anchor() {
             Ok(anchor) => anchor,
@@ -115,17 +119,35 @@ mod probe {
                 "failurePhase":"targetCapture","failureScope":"productPath",
                 "failure":"protected fixture was accepted; dispatch deliberately withheld"}));
         }
-        ensure!(target.selection == Some((6, 6)), "known synthetic caret mismatch");
+        ensure!(target.selection == Some((6, if variant == "selection" {7} else {6})), "known synthetic selection mismatch");
         let permit = DeliveryPermit::from_committed_attempt(format!("owned-browser-{}-{}", request.fixture_id, request.scenario), 1);
+        let text = crate::cases::payload(variant);
+        let mut alternate = None;
+        if variant == "cancel" { ensure!(permit.cancel_before_injection(), "prepared attempt cancellation failed"); }
+        if variant == "window" {
+            *phase = "foregroundReadiness";
+            let other = HWND(request.alternate_hwnd.context("owned alternate window required")? as _);
+            ensure!(other != root && owned(other, request.process_id, request.process_created_at, &format!("{marker} alternate")), "alternate window ownership mismatch");
+            let _ = unsafe { SetForegroundWindow(other) };
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while unsafe { GetForegroundWindow() } != other && Instant::now() < deadline { thread::sleep(Duration::from_millis(20)); }
+            ensure!(unsafe { GetForegroundWindow() } == other, "owned alternate window did not become foreground");
+            alternate = Some(other);
+        }
         *phase = "nativeDispatch";
-        let receipt = dispatch_once(&permit, &target, "SpeakMode 合成测试。", ||
-            unsafe { GetForegroundWindow() } == root && owned(root, request.process_id, request.process_created_at, &marker));
-        let duplicate = dispatch_once(&permit, &target, "SpeakMode 合成测试。", || true);
-        let passed = receipt.input_events == 4
-            && receipt.reason_code.as_deref() == Some("inputDispatchedUnconfirmed")
+        let receipt = dispatch_once(&permit, &target, &text, || {
+            let active = unsafe { GetForegroundWindow() };
+            (active == root || alternate == Some(active)) && owned(root, request.process_id, request.process_created_at, &marker)
+                && alternate.is_none_or(|other| owned(other, request.process_id, request.process_created_at, &format!("{marker} alternate")))
+        });
+        let duplicate = dispatch_once(&permit, &target, &text, || true);
+        let blocked = matches!(variant,"cancel"|"window");
+        let expected_reason = match variant { "cancel" => "attemptConsumed", "window" => "targetChangedBeforeDelivery", _ => "inputDispatchedUnconfirmed" };
+        let passed = receipt.input_events == if blocked {0} else {4}
+            && receipt.reason_code.as_deref() == Some(expected_reason) && (!blocked || !receipt.clipboard_changed)
             && duplicate.input_events == 0 && duplicate.reason_code.as_deref() == Some("attemptConsumed");
         Ok(json!({"scenario":request.scenario,"passed":passed,"captureAccepted":true,
-            "receipt":receipt,"duplicateInputEvents":duplicate.input_events,
+            "receipt":receipt,"payloadUtf16Units":text.encode_utf16().count(),"duplicateInputEvents":duplicate.input_events,
             "duplicateReasonCode":duplicate.reason_code,
             "failurePhase":if passed {None::<&str>} else {Some("nativeDispatch")},
             "failureScope":if passed {None::<&str>} else {Some("productPath")},

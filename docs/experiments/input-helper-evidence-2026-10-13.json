@@ -1,0 +1,274 @@
+{
+  "scope": "owned_synthetic_input_acceptance_only",
+  "productionBaseCommit": "4e3db04a8197a54ec5ae72aa9f9a40f377215c94",
+  "productionDeliveryChanged": false,
+  "cloudAsrRequests": 0,
+  "runs": [
+    {
+      "receipt": "owned-native.json",
+      "sha256": "0568bce0c55d7ebbade310a163728854da6c541e608b54b577bb3bc0e24fe923",
+      "scenarios": 16,
+      "passedScenarios": 16,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": true,
+      "cleanup": null,
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-browser.json",
+      "sha256": "6e987cc50d34c4a22a2b9224e80406e8b970efa6eacd34b9175024082633f515",
+      "scenarios": 19,
+      "passedScenarios": 19,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": true,
+      "cleanup": {
+        "completed": true,
+        "remainingOwnedPids": [],
+        "errors": [],
+        "fixtureArtifactsRetained": true
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word.json",
+      "sha256": "3747394142af966c9e8b9c72059c827a41ebb23f9541cc778892182ef2039fdf",
+      "scenarios": 0,
+      "passedScenarios": 0,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": false,
+      "cleanup": {
+        "completed": false
+      },
+      "bootstrapFailure": "Word.Application.Hwnd"
+    },
+    {
+      "receipt": "owned-word-r2.json",
+      "sha256": "95a0e7ccc37273c94304fac79d5012b3baac8c0e40c35253d6b90d203ffa53d7",
+      "scenarios": 5,
+      "passedScenarios": 4,
+      "productFailures": 1,
+      "preconditionFailures": 0,
+      "runPassed": false,
+      "cleanup": {
+        "completed": true
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word-r3.json",
+      "sha256": "825552b45e204589b3610f4aa69a9a6751cde35507ca152672e6fb9d74b74a68",
+      "scenarios": 5,
+      "passedScenarios": 5,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": false,
+      "cleanup": {
+        "completed": false,
+        "error": "timeout after 5 seconds (pid=22472, name='WINWORD.EXE')"
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word-r4.json",
+      "sha256": "15487cfd727c512e756b540cdba84e6056613249763860ab7fe7939c03f37654",
+      "scenarios": 5,
+      "passedScenarios": 5,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": false,
+      "cleanup": {
+        "completed": false,
+        "error": "timeout after 5 seconds (pid=44588, name='WINWORD.EXE')"
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word-r5.json",
+      "sha256": "420212306287689578f24b72b8f1bc8d24025aa8efd84c31a115319e9f6bd4d1",
+      "scenarios": 5,
+      "passedScenarios": 5,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": false,
+      "cleanup": {
+        "completed": false,
+        "error": "timeout after 5 seconds (pid=5176, name='WINWORD.EXE')"
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word-r6.json",
+      "sha256": "a3fdfb2020616831164f5e76d811c4ca0004d584719c070de5fc012d093ae328",
+      "scenarios": 5,
+      "passedScenarios": 5,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": true,
+      "cleanup": {
+        "completed": true,
+        "quitReturned": true,
+        "ownedBackgroundProcessTerminated": true
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word-final.json",
+      "sha256": "111dc418b5b4bcfb4e8ca3a27ec3e2997199c4aab7bed01c47a642a03d05dee8",
+      "scenarios": 5,
+      "passedScenarios": 0,
+      "productFailures": 0,
+      "preconditionFailures": 5,
+      "runPassed": false,
+      "cleanup": {
+        "completed": true,
+        "quitReturned": true,
+        "ownedBackgroundProcessTerminated": true
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "owned-word-final-r2.json",
+      "sha256": "12d2e01c8306d647d2b2d4b5614272fb8f219ad1ea5a85c3e109a0e26e1ff91e",
+      "scenarios": 5,
+      "passedScenarios": 0,
+      "productFailures": 0,
+      "preconditionFailures": 5,
+      "runPassed": false,
+      "cleanup": {
+        "completed": true,
+        "quitReturned": true,
+        "ownedBackgroundProcessTerminated": true
+      },
+      "bootstrapFailure": null
+    },
+    {
+      "receipt": "word-invalid-binary.json",
+      "sha256": "5d2e12931742ad159b0ad941d714eac7541176925a531e86daa6111a87af2cd6",
+      "scenarios": 0,
+      "passedScenarios": 0,
+      "productFailures": 0,
+      "preconditionFailures": 0,
+      "runPassed": false,
+      "cleanup": {
+        "completed": false
+      },
+      "bootstrapFailure": "explicit native probe binary must exist before Word starts"
+    }
+  ],
+  "nativeAnalysis": [
+    {
+      "receipt": "rea-function-0x180002580.json",
+      "sha256": "b09179d4a2c30b209cb4e94b42769720b8ef66ab638bfd034677c5d2eecc38a8",
+      "evidenceId": "ev_329029f665ce9af2f62f6b05a0c104d0d10f31bd35e61aac3d4186feb4520a70",
+      "address": "0x180002580",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x180002b00.json",
+      "sha256": "699b969d322bd11f4b7c124f8e682055ce22506a7d17d7e13ae350e83c60d955",
+      "evidenceId": "ev_9f7f5c29c7d6bcb7387abc757437aaa2335f0a08489e631ca4e61304e52fed30",
+      "address": "0x180002b00",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x180004ce0.json",
+      "sha256": "dd0aabd8137b5875e1defd1986ada19ce2069774eec3b05e1ed4bf68738bc57d",
+      "evidenceId": "ev_b74754555329e52eb0704ae8f67e8af4119bacb99a2fc8102f057c8312dbf3af",
+      "address": "0x180004ce0",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x18000bbe0.json",
+      "sha256": "c2c894f641694696d02be50c0701c9204c1a41b0bf8a3bcac8dcee90cec7fe8c",
+      "evidenceId": "ev_27ab9cb0cb9ef5d1b05be5709b97677d675a1eea0a8b51817ca1373264d52eb5",
+      "address": "0x18000bbe0",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x18000c2d0.json",
+      "sha256": "e3249eddba63b68b89a664574513ce9cf01668ea6a400f8c22cc10d0314cd8e8",
+      "evidenceId": "ev_ba62c0d559ec8b4dc833cc31f4e6baecec01df2d7a525a48cb8d88db46cafbbb",
+      "address": "0x18000c2d0",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x18000c3b0.json",
+      "sha256": "e8e3478d8e09c8649fe6b694e91be2455b4f633ee1f12bd89b48a1dae11b08b7",
+      "evidenceId": "ev_7204a2e581803d70271d9825f2091e9a089fd836baeb6298ce6b45102e9c5af5",
+      "address": "0x18000c3b0",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x18000cac0.json",
+      "sha256": "1491f06054082f8c0a519eb77f370e4a3e771e3ded539225cc158eb8b35b3cf4",
+      "evidenceId": "ev_da14fe7351068f8e9ac1c9c758d23df1f8a36178969911de6d614f1e04c734c6",
+      "address": "0x18000cac0",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x180010760.json",
+      "sha256": "d9ffcecd131f102621e063e9dff1ff1f71c068e5dfee7b2f3110cfd0ae155643",
+      "evidenceId": "ev_9be1b638f9a1a0d3cd57724a73bd0fa47e869d82780621b3a2ad6ac0498b15f1",
+      "address": "0x180010760",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x180011970.json",
+      "sha256": "2b5117490434452712b4436e4da82a3890b9702654288ab15d2fcd7fddad8896",
+      "evidenceId": "ev_52d75835b2705cfc6589e00b5716521a9bdac49dd8dd665671c25a089ad8ca77",
+      "address": "0x180011970",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x180014e10.json",
+      "sha256": "5bf08b3fc69bf0c6595591986481bee72af7d5208f45e8a5fc6530dd967e6323",
+      "evidenceId": "ev_10b205b354760afa425f2117141235bea06d9477b44e487b6ea69ce2ffa2fde3",
+      "address": "0x180014e10",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-0x1800165b0.json",
+      "sha256": "1981531a2b123267b3e1765259ff70e1aabd633f73561d901283c70da55160bb",
+      "evidenceId": "ev_5c0fdb1775e2a04f8b909c45a0ca11e106469dbc8e35ac5608e05940185990dc",
+      "address": "0x1800165b0",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-getCurrentInputState.json",
+      "sha256": "a8ed384626781e1b857f2b20a79694d92760c98c0d7005f170e1207cabc2ca9b",
+      "evidenceId": "ev_91ccd95a3066a2a4e0da6fda3207bccfa1d4cb9acd18c828a41c40c75d2f8afe",
+      "address": "0x18000f440",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-getSelectedTextBySimulateCopyAsync.json",
+      "sha256": "9b1438c7901764d43f8d08b923519fa2c1963cff3a4ff3f5ae85b1741317dccc",
+      "evidenceId": "ev_434e671c718bf10fda7a0304947e96df1dbe4e10aaa712bb94a8131c13d01241",
+      "address": "0x18000f460",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-insertRichText.json",
+      "sha256": "8302d3eb847b0026b39f1c333fd25df30c56af35d7f3f872f94b3aaf770c2ed7",
+      "evidenceId": "ev_a08c897aedec43e470732ddf42798a5375f63ab053e3272805cd9781d5fb8855",
+      "address": "0x18000f470",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    },
+    {
+      "receipt": "rea-function-insertText.json",
+      "sha256": "121140ea784017d6d5b4005a406563801ccde324e6f32b725ad18b2aea484dd3",
+      "evidenceId": "ev_fb8594ef64bc013ee45bb7c4a8d7e98151c8994c14eda1ae78d1de3dfa2ad4a3",
+      "address": "0x18000f480",
+      "targetSha256": "897585ae414e5a83a4a0aa649447291bb4711909b4460800674e91a418ed54d5"
+    }
+  ],
+  "matrix": {
+    "pass": 15,
+    "conditionalWord": 5,
+    "notRun": 10,
+    "total": 30
+  }
+}

@@ -18,8 +18,18 @@ import uuid
 
 SCENARIOS = ["input", "textarea", "contenteditable", "readonly", "password",
              "noneditable", "contenteditable-false", "nested-readonly", "document"]
+SCENARIOS += [host + "--" + variant for host in ("textarea", "contenteditable")
+              for variant in ("emoji", "long", "selection", "cancel", "window")]
 POSITIVE = {"input", "textarea", "contenteditable"}
 INSERT = "SpeakMode 合成测试。"
+
+
+def payload(variant):
+    if variant == "emoji":
+        return "SpeakMode 中文 English 👩🏽‍💻 🚀 e\u0301，保留否定。"
+    if variant == "long":
+        return "\n".join(f"{line:02}. SpeakMode 中文 English 👩🏽‍💻；预算 3500，不删除原始录音。" for line in range(1, 41))
+    return INSERT
 
 
 class ToolFailure(RuntimeError):
@@ -120,6 +130,7 @@ def main():
             source_paths = [repo / "app/src-tauri/src/platform/delivery.rs",
                             repo / "app/src-tauri/src/platform/mod.rs",
                             repo / "app/src-tauri/examples/owned_browser_delivery_probe.rs",
+                            repo / "app/src-tauri/examples/support/owned_delivery_cases.rs",
                             Path(__file__).resolve()]
             source_hashes = {str(path.relative_to(repo)): sha(path) for path in source_paths}
             report.update({"sourceInputs": source_hashes, "binary": str(args.binary),
@@ -273,6 +284,44 @@ def main():
                            "rootHwnd": hwnd, "foregroundHandoff": {"probeGrantedChild": granted_child,
                            "probeGrantedVerifiedOwner": granted_owner}})
 
+            alternate_html = fixture / "alternate.html"
+            alternate_marker = marker + " alternate"
+            with alternate_html.open("x", encoding="utf-8") as stream:
+                stream.write(f'<!DOCTYPE html><meta charset="utf-8"><title>{alternate_marker}</title>'
+                             '<textarea id="alternate">other owned window</textarea>')
+            alternate_url = alternate_html.as_uri()
+            cdp = browser.new_browser_cdp_session()
+            cdp.send("Target.createTarget", {"url": alternate_url, "newWindow": True})
+            deadline = time.monotonic() + 5
+            alternate_pages = []
+            while time.monotonic() < deadline:
+                alternate_pages = [p for c in browser.contexts for p in c.pages if p.url == alternate_url]
+                if len(alternate_pages) == 1:
+                    break
+                page.wait_for_timeout(50)
+            if len(alternate_pages) != 1:
+                raise RuntimeError("exactly one owned alternate fixture required")
+            alternate_page = alternate_pages[0]
+            alternate_page.wait_for_load_state("domcontentloaded")
+            alternate_windows = []
+
+            @enum_callback
+            def visit_alternate(window, _):
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+                if pid.value == owner.pid and user32.IsWindowVisible(window):
+                    title = ctypes.create_unicode_buffer(256)
+                    user32.GetWindowTextW(window, title, 256)
+                    if alternate_marker in title.value:
+                        alternate_windows.append(int(window))
+                return True
+
+            user32.EnumWindows(visit_alternate, None)
+            if len(alternate_windows) != 1 or alternate_windows[0] == hwnd:
+                raise RuntimeError("distinct owned alternate HWND required")
+            alternate_hwnd = alternate_windows[0]
+            report["alternateHwnd"] = alternate_hwnd
+
             def verify_fixture():
                 verify_owner()
                 if page.url != fixture_url or page.title() != marker or sha(html) != report["fixtureSha256"]:
@@ -283,7 +332,8 @@ def main():
                     raise RuntimeError("fixture HWND ownership changed")
 
             for scenario in SCENARIOS:
-                case = {"scenario": scenario, "passed": False}
+                host, _, variant = scenario.partition("--")
+                case = {"scenario": scenario, "host": host, "variant": variant, "passed": False}
                 report["scenarios"].append(case)
                 phase = "foregroundReadiness"
                 try:
@@ -296,17 +346,21 @@ def main():
                     if user32.GetForegroundWindow() != hwnd:
                         raise RuntimeError("owned browser did not become foreground; no input attempted")
                     phase = "fixtureFocus"
-                    page.evaluate("""id => {
+                    page.evaluate("""({id, variant}) => {
                       if(id==='document'){document.body.tabIndex=0;document.body.focus();return;}
-                      const el=document.getElementById(id);el.focus();
-                      if(el.setSelectionRange)el.setSelectionRange(6,6);
+                      const el=document.getElementById(id);
+                      if(['input','textarea','contenteditable'].includes(id)) {
+                        if(el.value===undefined)el.textContent='alpha | omega'; else el.value='alpha | omega';
+                      }
+                      el.focus(); const end=variant==='selection'?7:6;
+                      if(el.setSelectionRange)el.setSelectionRange(6,end);
                       else if(id==='contenteditable'){
-                        const range=document.createRange();range.setStart(el.firstChild,6);range.setEnd(el.firstChild,6);
+                        const range=document.createRange();range.setStart(el.firstChild,6);range.setEnd(el.firstChild,end);
                         const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
                       }
-                    }""", scenario)
+                    }""", {"id": host, "variant": variant})
                     active_id = page.evaluate("document.activeElement.id || (document.activeElement===document.body?'document':'')")
-                    if active_id != scenario:
+                    if active_id != host:
                         raise RuntimeError("owned DOM focus did not match the registered fixture")
                     verify_fixture()
                     if user32.GetForegroundWindow() != hwnd:
@@ -316,7 +370,8 @@ def main():
                     write_new(request_path, {"fixtureId": fixture_id, "processId": owner.pid,
                               "processCreatedAt": created_filetime, "rootHwnd": hwnd,
                               "scenario": scenario, "fixtureFile": str(html),
-                              "fixtureUrl": fixture_url, "profileDirectory": str(profile)})
+                              "fixtureUrl": fixture_url, "profileDirectory": str(profile),
+                              "alternateHwnd": alternate_hwnd if variant == "window" else None})
                     phase = "nativeDispatch"
                     native = subprocess.run([str(args.binary), "--scratch-dir", str(fixture),
                                              "--request", str(request_path), "--out", str(native_path)],
@@ -340,17 +395,26 @@ def main():
                         continue
                     phase = "ownedReadback"
                     verify_fixture()
-                    if scenario in POSITIVE:
-                        expected = "alpha " + INSERT + "| omega"
-                        read = lambda: page.locator("#" + scenario).evaluate("el => el.value===undefined?el.textContent:el.value")
+                    if host in POSITIVE:
+                        blocked = variant in {"cancel", "window"}
+                        expected = "alpha | omega" if blocked else "alpha " + payload(variant) + (" omega" if variant == "selection" else "| omega")
+                        read = lambda: page.locator("#" + host).evaluate("el => el.value===undefined?el.innerText:el.value").replace("\r\n", "\n")
                         deadline = time.monotonic() + 2
                         while read() != expected and time.monotonic() < deadline:
                             time.sleep(.03)
                         case["ownedReadbackConfirmed"] = read() == expected
                         if not case["ownedReadbackConfirmed"]:
                             raise RuntimeError("known synthetic Unicode text not confirmed in owned field")
-                    elif scenario != "password" and scenario != "document":
-                        value = page.locator("#" + scenario).evaluate("el => el.value===undefined?el.textContent:el.value")
+                        if blocked:
+                            case["unchangedReadbackConfirmed"] = True
+                        if variant == "window":
+                            if alternate_page.url != alternate_url or alternate_page.title() != alternate_marker:
+                                raise RuntimeError("owned alternate fixture changed")
+                            if alternate_page.locator("#alternate").input_value() != "other owned window":
+                                raise RuntimeError("alternate window unexpectedly received input")
+                            case["alternateUnchangedReadbackConfirmed"] = True
+                    elif host != "password" and host != "document":
+                        value = page.locator("#" + host).evaluate("el => el.value===undefined?el.textContent:el.value")
                         if value != "alpha | omega":
                             raise RuntimeError("protected synthetic field unexpectedly changed")
                     case["passed"] = True
