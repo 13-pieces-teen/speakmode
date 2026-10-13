@@ -55,6 +55,30 @@
 .settings-control-fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
 .settings-control-fieldset:disabled { opacity: .55; }
 .settings-feedback { display: grid; gap: 6px; min-width: 0; }
+.app-writing-settings { min-width: 0; padding-bottom: 12px; }
+.app-writing-settings > .settings-control-hint { margin-top: -3px; }
+.app-writing-preferences { margin-top: 14px; padding: 16px; border: 1px solid var(--sm-control-line); border-radius: 10px; }
+.app-writing-preferences > .settings-control-hint:first-child { margin-top: 0; }
+.app-writing-list { padding: 0; margin: 14px 0; list-style: none; }
+.app-writing-list li { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,230px) 30px; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #e7ebf0; }
+.app-writing-app { min-width: 0; overflow-wrap: anywhere; }
+.app-writing-app strong, .app-writing-app small { display: block; font-size: 13px; line-height: 1.7; }
+.app-writing-app small { font-size: 11px; color: var(--sm-muted); }
+.app-writing-settings select { width: 100%; min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid var(--sm-control-line); border-radius: 8px; background: #fff; color: var(--sm-secondary); font: inherit; font-size: 13px; }
+.app-writing-settings select:focus-visible { outline: 3px solid #85aff5; outline-offset: 2px; }
+.app-writing-editor { margin: 16px 0 0; padding: 0; border: 0; min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 12px; align-items: end; }
+.app-writing-editor legend { font-size: 13px; color: var(--sm-secondary); margin-bottom: 12px; }
+.app-writing-editor label, .app-writing-example-picker { min-width: 0; display: grid; gap: 6px; font-size: 12px; color: var(--sm-muted); }
+.app-writing-editor > button { min-height: 40px; }
+.app-writing-custom { grid-column: 1/-1; }
+.app-writing-example { margin: 10px 0 0; }
+.app-writing-example-picker { max-width: 250px; margin-top: 12px; }
+@container settings (max-width: 560px) {
+  .app-writing-editor { grid-template-columns: minmax(0,1fr); }
+  .app-writing-list li { grid-template-columns: minmax(0,1fr) 30px; }
+  .app-writing-list li select { grid-row: 2; grid-column: 1/-1; }
+  .app-writing-list li button { grid-row: 1; grid-column: 2; }
+}
 .settings-row-feedback { grid-column: 2; display: flex; align-items: flex-start; gap: 6px; min-width: 0; margin: -5px 0 0; color: #536f8e; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .settings-row-feedback svg { flex-shrink: 0; margin-top: 3px; }
 .settings-footer .settings-error, .settings-error { color: #a33737; font-size: 12px; line-height: 1.8; margin: 0; overflow-wrap: anywhere; }

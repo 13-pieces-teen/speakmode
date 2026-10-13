@@ -1,6 +1,7 @@
+import type { AppWritingPreferences, AppWritingScene } from '../appWriting';
 export type BaseMode = 'auto' | 'light' | 'structure';
 export type RewriteFallbackReason = 'timeout' | 'serviceUnavailable' | 'invalidOutput' | 'meaningRisk';
-export interface NativePreferences { version:number; shortcut:string; microphoneId:string|null; language:'auto'|'zh'|'en'; defaultModeId:string; deliveryMode:'direct'|'preview'; softVoiceEnabled:boolean; keepHistory:boolean; launchAtLogin:boolean }
+export interface NativePreferences { version:number; shortcut:string; microphoneId:string|null; language:'auto'|'zh'|'en'; defaultModeId:string; deliveryMode:'direct'|'preview'; softVoiceEnabled:boolean; appWriting:AppWritingPreferences; keepHistory:boolean; launchAtLogin:boolean }
 export interface ModeRecord { id:string; name:string; baseMode:BaseMode; rules:string; revision:number; builtin:boolean }
 export interface ModeSnapshot { modeId:string; name:string; baseMode:BaseMode; rules:string; revision:number }
 export interface SourceItem { id:string; providerItemId:string; captureOrder:number; text:string; final:boolean; startMs:number|null; endMs:number|null }
@@ -25,7 +26,7 @@ export interface DictionaryEntry { id:string; term:string; createdAt:string; upd
 export interface DictionarySnapshot { version:number; entries:DictionaryEntry[] }
 /** Provider caption revisions are display data; only final source items authorize rewriting. */
 export interface CaptionItem { id:string; text:string; revision:number; final:boolean; captureOrder:number }
-export interface LiveSession { rewriteFallback?:RewriteFallbackReason; id?:string; sessionId?:string; generation:number; state:string; modeSnapshot?:ModeSnapshot; modeId?:string; level?:number; levelReceivedAt?:number; partial?:string; transcript?:string; items?:SourceItem[]; captions?:CaptionItem[]; captureReady?:boolean; providerReady?:boolean; captionRenderToken?:string|null; error?:string; message?:string; result?:HistoryDetail; deliveryState?:string;deliveryFailureReason?:string|null;recoverableContentId?:string|null;pendingCommitId?:string|null;commitStage?:string|null;workerReleased?:boolean;asrAttemptId?:string|null;sourceRevisionId?:string|null;canRetryAsr?:boolean;canRetryRewrite?:boolean;canRetrySave?:boolean;retryKind?:'asr'|'rewrite'|'save'|null;errorCode?:string|null;canUseSource?:boolean;canCopyRecovery?:boolean;recordingLimitRemainingMs?:number|null }
+export interface LiveSession { writingScene?:AppWritingScene; rewriteFallback?:RewriteFallbackReason; id?:string; sessionId?:string; generation:number; state:string; modeSnapshot?:ModeSnapshot; modeId?:string; level?:number; levelReceivedAt?:number; partial?:string; transcript?:string; items?:SourceItem[]; captions?:CaptionItem[]; captureReady?:boolean; providerReady?:boolean; captionRenderToken?:string|null; error?:string; message?:string; result?:HistoryDetail; deliveryState?:string;deliveryFailureReason?:string|null;recoverableContentId?:string|null;pendingCommitId?:string|null;commitStage?:string|null;workerReleased?:boolean;asrAttemptId?:string|null;sourceRevisionId?:string|null;canRetryAsr?:boolean;canRetryRewrite?:boolean;canRetrySave?:boolean;retryKind?:'asr'|'rewrite'|'save'|null;errorCode?:string|null;canUseSource?:boolean;canCopyRecovery?:boolean;recordingLimitRemainingMs?:number|null }
 export interface RetainedRecovery { session:LiveSession; expiresAt:string }
 export interface NativeSnapshot { sequence:number; preferences?:NativePreferences; modes?:ModeRecord[]; dictionary?:DictionarySnapshot; usage?:DailyUsage; provider?:ProviderStatus; devices?:AudioDevice[]; session?:LiveSession|null; recovery?:RetainedRecovery|null; temporaryResult?:HistoryDetail|null; capabilities?:Record<string,boolean> }
 export type DesktopErrorScope = 'application' | 'session' | 'transport';
@@ -35,7 +36,7 @@ export interface AppEvent { sequence:number; kind:string; payload:unknown; sessi
 export interface RestorePatch { blockId:string; start:number; end:number; sourceSelections:{itemId:string;start:number;end:number}[] }
 export interface CorrectionPatch { blockId:string; start:number; end:number; expectedText:string; replacement:string }
 export interface CorrectionReceipt { detail:HistoryDetail; dictionary:DictionarySnapshot|null; dictionaryStatus:'added'|'existing'|'notRequested' }
-export const initialPreferences:NativePreferences={version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',softVoiceEnabled:false,keepHistory:true,launchAtLogin:false};
+export const initialPreferences:NativePreferences={version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',softVoiceEnabled:false,appWriting:{enabled:true,overrides:[]},keepHistory:true,launchAtLogin:false};
 export const initialProvider:ProviderStatus={configured:false,config:{version:1,provider:'aliyun',region:null,workspace:null,asrModel:'qwen3-asr-flash-realtime',rewriteModel:'qwen3.8-flash',adapterVersion:'qwen-realtime-v1'}};
 
 

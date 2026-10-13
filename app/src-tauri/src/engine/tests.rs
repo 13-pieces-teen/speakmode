@@ -11,6 +11,8 @@ mod preview_tests;
 #[path="rewrite_fallback_tests.rs"]
 mod rewrite_fallback_tests;
 
+#[path="app_writing_tests.rs"]
+mod app_writing_tests;
 #[path="rewrite_deadline_tests.rs"]
 mod rewrite_deadline_tests;
 #[path="recorder_copy_tests.rs"]
@@ -89,7 +91,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,
         processing_worker_released: true,db_pending:0,cancel_pending:false,
         source: None, output: None, pending: None, cache: None, cache_complete: false,
-        cache_created: None, target: None, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
+        cache_created: None, target: None, target_application:None, writing_scene:None, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
         original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,
         reason: CreationReason::NormalInitial, asr_attempt_id: Some(format!("attempt-{id}")),

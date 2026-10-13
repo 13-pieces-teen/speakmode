@@ -1,0 +1,1470 @@
+{
+  "schema": 1,
+  "date": "2026-10-13",
+  "scope": "APPLICATION_AWARE_LOCAL_PRESENTATION_INTEGRATION",
+  "status": "ENGINE_UI_PACKAGE_PASS_NATIVE_FOREGROUND_PRECONDITION_BLOCKED",
+  "desktopVersion": "0.2.21",
+  "frontendVersion": "0.4.20",
+  "baseCommit": "26dce0cacf084d0f895fd1b2f48d357332f3b48a",
+  "cloudCallsThisRound": {
+    "text": 0,
+    "asr": 0
+  },
+  "qualityBoundary": "Existing model and prompts retained; this round verifies integration, not a new human or live-provider quality gain.",
+  "rust": {
+    "scope": "LIBRARY_TESTS_REAL_COORDINATOR_SQLITE_SYNTHETIC_PROVIDER_AND_DELIVERY_SEAMS",
+    "passed": 775,
+    "failed": 0,
+    "ignored": 3,
+    "seconds": 40.8,
+    "coordinatorAppWritingTests": 12,
+    "newPreferenceTests": 2,
+    "realCurrentWindowsProcessIdentityTests": 1,
+    "ignoredTests": [
+      "test engine::session::retry_asr_experiment_tests::actual_retry_asr_fixed_pcm_experiment ... ignored, explicit frozen B/C cloud calls; requires an absolute SPEAKMODE_RETRY_EXPERIMENT_MANIFEST; no default execution",
+      "test maintenance::tests::native_server_child ... ignored",
+      "test platform::audio::tests::callback_allocation_and_latency_benchmark ... ignored, manual synthetic release benchmark; no microphone or provider is used"
+    ],
+    "logSha256": "2361db6a53e01e4640fbb5e2c3a8d696c908886c534d74abe0ef1bb5d14b170d"
+  },
+  "frontend": {
+    "typescript": "PASS",
+    "viteBuild": "PASS",
+    "browser": {
+      "scope": "PRODUCTION_UI_SYNTHETIC_IPC_NO_NATIVE_AUDIO_OR_CLOUD",
+      "status": "PASS",
+      "checks": [
+        {
+          "name": "1280x800 legacy default",
+          "passed": true
+        },
+        {
+          "name": "1280x800 add browser override",
+          "passed": true
+        },
+        {
+          "name": "1280x800 save failure preserves saved scene",
+          "passed": true
+        },
+        {
+          "name": "1280x800 saved scene reloads in fixture",
+          "passed": true
+        },
+        {
+          "name": "1280x800 duplicate rejected",
+          "passed": true
+        },
+        {
+          "name": "1280x800 custom name validation and save",
+          "passed": true
+        },
+        {
+          "name": "1280x800 keyboard toggle retains overrides",
+          "passed": true
+        },
+        {
+          "name": "1280x800 scene examples",
+          "passed": true
+        },
+        {
+          "name": "1280x800 layout has no overflow",
+          "passed": true
+        },
+        {
+          "name": "1280x800 remove restores focus",
+          "passed": true
+        },
+        {
+          "name": "1280x800 reset defaults",
+          "passed": true
+        },
+        {
+          "name": "800x640 legacy default",
+          "passed": true
+        },
+        {
+          "name": "800x640 add browser override",
+          "passed": true
+        },
+        {
+          "name": "800x640 save failure preserves saved scene",
+          "passed": true
+        },
+        {
+          "name": "800x640 saved scene reloads in fixture",
+          "passed": true
+        },
+        {
+          "name": "800x640 duplicate rejected",
+          "passed": true
+        },
+        {
+          "name": "800x640 custom name validation and save",
+          "passed": true
+        },
+        {
+          "name": "800x640 keyboard toggle retains overrides",
+          "passed": true
+        },
+        {
+          "name": "800x640 scene examples",
+          "passed": true
+        },
+        {
+          "name": "800x640 layout has no overflow",
+          "passed": true
+        },
+        {
+          "name": "800x640 remove restores focus",
+          "passed": true
+        },
+        {
+          "name": "800x640 reset defaults",
+          "passed": true
+        },
+        {
+          "name": "430x800 legacy default",
+          "passed": true
+        },
+        {
+          "name": "430x800 add browser override",
+          "passed": true
+        },
+        {
+          "name": "430x800 save failure preserves saved scene",
+          "passed": true
+        },
+        {
+          "name": "430x800 saved scene reloads in fixture",
+          "passed": true
+        },
+        {
+          "name": "430x800 duplicate rejected",
+          "passed": true
+        },
+        {
+          "name": "430x800 custom name validation and save",
+          "passed": true
+        },
+        {
+          "name": "430x800 keyboard toggle retains overrides",
+          "passed": true
+        },
+        {
+          "name": "430x800 scene examples",
+          "passed": true
+        },
+        {
+          "name": "430x800 layout has no overflow",
+          "passed": true
+        },
+        {
+          "name": "430x800 remove restores focus",
+          "passed": true
+        },
+        {
+          "name": "430x800 reset defaults",
+          "passed": true
+        },
+        {
+          "name": "recorder chat scene and frozen Mode",
+          "passed": true
+        },
+        {
+          "name": "recorder document scene and frozen Mode",
+          "passed": true
+        },
+        {
+          "name": "recorder technical scene and frozen Mode",
+          "passed": true
+        },
+        {
+          "name": "recorder general scene and frozen Mode",
+          "passed": true
+        }
+      ],
+      "pageErrors": [],
+      "externalRequests": [],
+      "browserVersion": "155.0.4283.45"
+    },
+    "browserReceiptSha256": "4a4768357b07aab0e91a5ebfcbf10838a4b449e8d55e559fb208eb7d5a44cc43",
+    "ownedDevServerListeningAfterExit": false,
+    "screenshots": [
+      {
+        "file": "1280x800-configured-editor.png",
+        "sha256": "0f6d10c2187408e7dfcc9c1ba942ed2e1564171690099a97e119319300a961c2"
+      },
+      {
+        "file": "1280x800-configured-overview.png",
+        "sha256": "0f6d10c2187408e7dfcc9c1ba942ed2e1564171690099a97e119319300a961c2"
+      },
+      {
+        "file": "430x800-configured-editor.png",
+        "sha256": "c45ec1f2eb3b1e8e94c3bdaec2965fbcda0dd9255030f2a25b4d13cffb23e338"
+      },
+      {
+        "file": "430x800-configured-overview.png",
+        "sha256": "56aa91af46b50e6152606e30ff21e209567423f76d3d5db76da27d61f8f239bd"
+      },
+      {
+        "file": "800x640-configured-editor.png",
+        "sha256": "326d021c99adbd7d4d0f43b4b10fa745869acc49bd32aee36935b261076e99b1"
+      },
+      {
+        "file": "800x640-configured-overview.png",
+        "sha256": "f485ed86b69cc855c571790bff662311ba3b44a78b8d548de690abfc04244407"
+      },
+      {
+        "file": "recorder-chat.png",
+        "sha256": "672cb55d7a19abadbb3060d0c489b7769652bd658a0ba7b901844b3521d4cf46"
+      },
+      {
+        "file": "recorder-document.png",
+        "sha256": "4c5ff7b3cb3f49d5f8149d58dc2a19bed3edc0962e83e5792b44fb16bd2126a6"
+      },
+      {
+        "file": "recorder-general.png",
+        "sha256": "a107730bc2ae0ac8406369228de4bb57a49fa8be74e7708f3af4b90b45a98aca"
+      },
+      {
+        "file": "recorder-technical.png",
+        "sha256": "2b5702f38e9d190ee79625f3666d076910f355f586c94e044e9460635756f56c"
+      }
+    ]
+  },
+  "nativeDelivery": {
+    "acceptance": "NOT_RUN",
+    "probeRunStatus": "FAIL",
+    "testPreconditionFailures": 20,
+    "productPathFailuresObserved": 0,
+    "scope": "Probe stopped before input because owned fixture did not acquire foreground; zero observed product failures does not imply a pass.",
+    "scenarios": [
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "readonly"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "password"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "caret-change"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "field-change"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "anchor-caret-change"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "anchor-field-change"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit-emoji"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich-emoji"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit-long"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich-long"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit-cancel"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich-cancel"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit-window"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich-window"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit-chat"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich-chat"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "edit-explicit"
+      },
+      {
+        "failure": "only our fixture may be the active target",
+        "failurePhase": "foregroundReadiness",
+        "failureScope": "testPrecondition",
+        "passed": false,
+        "scenario": "rich-explicit"
+      }
+    ],
+    "receiptSha256": "533c235e02a38ea5eed4de00b438cd48eddb1ae1369ad9e7ba426045f1ab45f6",
+    "remainingOwnedFixtureProcessesAfterCleanup": 0
+  },
+  "package": {
+    "status": "PASS",
+    "logSha256": "e9fefd43b3e9e48e114e8dd9715435746d0569b12f67b3e32c61387aa3094895",
+    "artifacts": [
+      {
+        "file": "SpeakMode.exe",
+        "bytes": 18885632,
+        "sha256": "f93c3c5071600ee6b9118b159847380a6c4034185682eb3e370ced1e1419c18d",
+        "productVersion": "0.2.21",
+        "fileVersion": "0.2.21"
+      },
+      {
+        "file": "SpeakMode_0.2.21_x64-setup.exe",
+        "bytes": 5806230,
+        "sha256": "88e9b00df8d3cabb18f49b3b4ac59ee390dfb8edd0af3f50271885b61241523d",
+        "productVersion": "0.2.21",
+        "fileVersion": "0.2.21"
+      }
+    ],
+    "launcherSyntax": "PASS",
+    "copiedResources": 15,
+    "allResourceCopiesMatch": true,
+    "sourceManifestSha256": "934bf274378760db8d71ba878f519dd54c82bc76175d8db0b8aee4d3eeec5f6f",
+    "sourceInputCount": 260,
+    "allBuildInputsUnchanged": true,
+    "buildInputFiles": [
+      {
+        "path": "app/.gitignore",
+        "sha256": "7a16ab2abc05a029ab4fa3ccfe4ab26c364b1938210815920e2dea4966a530d4"
+      },
+      {
+        "path": "app/evaluation-fixtures/caption-replay/index.html",
+        "sha256": "f37c3fd301ca7d429f723e226b98e186dd88b7be2e8bf18d393f225908aa7415"
+      },
+      {
+        "path": "app/evaluation-fixtures/caption-replay/replay.tsx",
+        "sha256": "46f1cbd80a0921b328f19ef28489bb519eacf7a758d397c01d98642d1086d808"
+      },
+      {
+        "path": "app/index.html",
+        "sha256": "1bda5419a4866c6e3ed6e3842591e2eec5b49cb0a49cf722848c48d018ec6f4b"
+      },
+      {
+        "path": "app/package-lock.json",
+        "sha256": "58f838d5196bb53909e4f5bb840fe2649c1991aa60483b0ba9238445b746f56f"
+      },
+      {
+        "path": "app/package.json",
+        "sha256": "329794cdfa7561331703e6cdb309dd0b8192ff7c6932d1a8d7601677e7a8c00b"
+      },
+      {
+        "path": "app/public/fonts/OFL.txt",
+        "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+      },
+      {
+        "path": "app/public/fonts/speakmode-sans.woff2",
+        "sha256": "4f518936514c76652c7dd848b78b31ec37b1c1be07788a1a46a902429f796ddc"
+      },
+      {
+        "path": "app/src-tauri/build.rs",
+        "sha256": "4379ba89924184a9a57d189938af36565f876df56bc4edcca39fc5a2bd282e8a"
+      },
+      {
+        "path": "app/src-tauri/capabilities/main.json",
+        "sha256": "63e5b9adcde8fee4c91f9e0078015e91e3469ca2a53a4dffb5059fd14eeb0699"
+      },
+      {
+        "path": "app/src-tauri/capabilities/recording.json",
+        "sha256": "023c52cd679a14bc5aae6f18bcd34d7643f259b1e58a831c9c7dcb7dc1025cf7"
+      },
+      {
+        "path": "app/src-tauri/Cargo.lock",
+        "sha256": "78cb04051c793e7287fd7e90d0f3a285bfd7a1a9ac292beb8990b9a7e003f3cb"
+      },
+      {
+        "path": "app/src-tauri/Cargo.toml",
+        "sha256": "f6b80893e425dbe603bae158adc2b3da21533627f0bc6a1b3f862ac3e80e4967"
+      },
+      {
+        "path": "app/src-tauri/examples/admission_probe.rs",
+        "sha256": "7922b4a48641490551bacb5c92fc1bf0e37534e654ffb4ff99ebdf01497b6cc9"
+      },
+      {
+        "path": "app/src-tauri/examples/automatic_quality_lab.rs",
+        "sha256": "24f23470f59e30565252fe8dd08c70c80f8f5581a99721fc095a62969a076e8b"
+      },
+      {
+        "path": "app/src-tauri/examples/capture_lab.rs",
+        "sha256": "bbe742f04db5d82a3635268a32be39ee4ddd66c5c8bb3e629be7de333a80548a"
+      },
+      {
+        "path": "app/src-tauri/examples/cleanup_guard_probe.rs",
+        "sha256": "6ac3611991fe564339270eb5cdc46f6a4776d83a10dc3e1ecf7014f841904d5d"
+      },
+      {
+        "path": "app/src-tauri/examples/cleanup_quality_lab.rs",
+        "sha256": "d4a67948c99de33136c35256f62a9ba878b0ba78a65e96cbe6772831c19dfb8a"
+      },
+      {
+        "path": "app/src-tauri/examples/file_asr_lab.rs",
+        "sha256": "1a4935b2706e216d11653c9dc8663555fa15ee7153c4943f3e2b1386ae04dcbd"
+      },
+      {
+        "path": "app/src-tauri/examples/minimum_edit_lab.rs",
+        "sha256": "823ea5c8d7a408dff108e09a62c3df28d47acbf22fdefc2c687d960104699802"
+      },
+      {
+        "path": "app/src-tauri/examples/mode_comparison_lab.rs",
+        "sha256": "0d8271ad25f4ca83968e8527f3f2ef9868c3f18fcbca34a5f5b65fb6bca38ff2"
+      },
+      {
+        "path": "app/src-tauri/examples/mode_guard_replay.rs",
+        "sha256": "0b5a1cf559e7a1ec4855035933fee08909e9c4a140ad7d36151f81c635b86dad"
+      },
+      {
+        "path": "app/src-tauri/examples/mode_lab/candidates.rs",
+        "sha256": "8b4e2b5ea7bee795def074f6988de956e1b16e11bbbf1e42b729b854812cb18b"
+      },
+      {
+        "path": "app/src-tauri/examples/mode_quality_lab.rs",
+        "sha256": "b779eacac025bb0a519fd7134da7a5d24e2b0805d717f8f7f20826bbdb2fc1d4"
+      },
+      {
+        "path": "app/src-tauri/examples/natural_guard_probe.rs",
+        "sha256": "b7f42475afd7f995365589dab4f021b3be3be46e8c8236b42850ec09e8d935b7"
+      },
+      {
+        "path": "app/src-tauri/examples/natural_quality_lab.rs",
+        "sha256": "3c44e52ac44f55f720e61a4c9d1a057deed1612be9a810b71975ccdf3711e8d9"
+      },
+      {
+        "path": "app/src-tauri/examples/natural_quality_replay.rs",
+        "sha256": "9edbbd34c68f1613dcacdb6b730ead1c2328d6590485dbf004a33ddb03c09010"
+      },
+      {
+        "path": "app/src-tauri/examples/owned_alt_menu_probe.rs",
+        "sha256": "fd9406bd1a580c664adf6fc13b830ae6fcc6c64d5f5dc71b69269bb677d7fa45"
+      },
+      {
+        "path": "app/src-tauri/examples/owned_browser_delivery_probe.rs",
+        "sha256": "90c37c77485f9088b142d40e9a8f46aeab72812e2c6cbe898ccca826297979ab"
+      },
+      {
+        "path": "app/src-tauri/examples/owned_delivery_probe.rs",
+        "sha256": "42f13d2ff58194b8ae2479350919d0a5b74ea0181d84a6724b5a4721a125252c"
+      },
+      {
+        "path": "app/src-tauri/examples/owned_word_delivery_probe.rs",
+        "sha256": "f54b3e7a117ac33782e5fb045c5b02a280d61e44557e57faae3166be15ec6fa1"
+      },
+      {
+        "path": "app/src-tauri/examples/quantity_fragment_probe.rs",
+        "sha256": "07fb557693e3b20a774d5124fc011efe21687388e99db73d8fdb4f5f8b317bbc"
+      },
+      {
+        "path": "app/src-tauri/examples/quantity_role_probe.rs",
+        "sha256": "75fd866a80c621227f6bdfb50ac00531d9839b1c29667666aee8d10dd6aff0f2"
+      },
+      {
+        "path": "app/src-tauri/examples/rewrite_diagnostic.rs",
+        "sha256": "4314c615ba1f26cdf975452b06796584406a9262cc838a6f3939aa46f8a216fe"
+      },
+      {
+        "path": "app/src-tauri/examples/rewrite_quality_probe.rs",
+        "sha256": "74d86c62a4861d850c8404bb669149045277d286ab2795d65fef6ca440220135"
+      },
+      {
+        "path": "app/src-tauri/examples/scene_writing_lab.rs",
+        "sha256": "b8978a32c6f0c11c20ec2a4418da32dda382ae98ef379b508c3aac21e007f6ed"
+      },
+      {
+        "path": "app/src-tauri/examples/semantic_quality_lab.rs",
+        "sha256": "75dab7e5ef75cd9eb4c7cd0aafa1198b0b85dad8d15a491340a62813dcc45fa5"
+      },
+      {
+        "path": "app/src-tauri/examples/soft_voice_probe.rs",
+        "sha256": "3d915e0c77fe12e3cfd40a2f871f63ce901a973bf6831e4721d99696e17392e7"
+      },
+      {
+        "path": "app/src-tauri/examples/support/owned_delivery_cases.rs",
+        "sha256": "34c3e125c34a864969d9ffe779a7420eff4b29299bb0476e818a7070072663e7"
+      },
+      {
+        "path": "app/src-tauri/examples/typeless_dictionary_probe.rs",
+        "sha256": "6bb94590b0f7123a4a8a56318c1fa894330a91913af26eb9e69c5ce811ae80a8"
+      },
+      {
+        "path": "app/src-tauri/examples/voice_lab.rs",
+        "sha256": "75c8712e593302e225bef1a0424837d901fe2f7bd49c5111b800fe082d92972b"
+      },
+      {
+        "path": "app/src-tauri/icons/128x128.png",
+        "sha256": "fe635db11a375628cb36983ed550a950b581c23d7056e3c37d28181f57ed8fae"
+      },
+      {
+        "path": "app/src-tauri/icons/32x32.png",
+        "sha256": "32f38a29f8ff26e0e30f941b35d3197f169e800b780bfe5d1aa54023a7369afc"
+      },
+      {
+        "path": "app/src-tauri/icons/icon.ico",
+        "sha256": "8fc2947331c4d1c130a47992ab3a09161c941c2850faefa6d5016f291a4091d0"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/asr_protocol_tests.rs",
+        "sha256": "2c79445f3bf9f0118bfa02ff48558309631a0217bbe9b26edfa8bfb0d0c50de4"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/asr_task_tests.rs",
+        "sha256": "e2b81cab610ce0f6a621bdf2dcc570487de694cd002c4672babb3875534ad740"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/asr_task.rs",
+        "sha256": "66f0fcc1e0267ea95678919b4066c2fc485e38462ab953afa691255a3ea59534"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/asr.rs",
+        "sha256": "437e10a40ba175afe67e1612a8d606d0e7f4b71308b5740c587b4a5d85af116f"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/credentials.rs",
+        "sha256": "35add8b30bc2bb657d631a425803957e3e8dc203b9519b3c000eafd63e8c301c"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/mod.rs",
+        "sha256": "0cde7257c3d213b641bb6c68ae7fd98389ff85f4241bfff0383df6399dbabb94"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/models.rs",
+        "sha256": "1fe3117ba100c2baa14de93ed1ff72e42545036d45dab4f918b8acc11bc7ebe2"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_auto_tests.rs",
+        "sha256": "0c318d46879a708c54a75a059e8c3ea7266cfb90ed540fe1603d1c9340987271"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_auto.rs",
+        "sha256": "b56c69960c849174c0aef04a2813014a419bc2ee4e2f0c2d38c2bb860380e547"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_baseline.rs",
+        "sha256": "1ed184f8ac26bbea425ddbb1379086149dd193da452844e8f5ce83378b36617f"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_cleanup.rs",
+        "sha256": "472b4a92a669adeecdaa62c300d916c91d28a2045a71892e2e55836cba7c99d4"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_correction_pause_tests.rs",
+        "sha256": "b6183511adb197832a62300a04c1bd78b2ec481724e506ae53aa408bc324039a"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_disfluency_tests.rs",
+        "sha256": "7dcb7d2fc5ab6c8bf6484b6ec602e50c74e83cc3f36e49482bd6cc5722e7b960"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_disfluency.rs",
+        "sha256": "815dbeea6d255b4495ce6c68b0e01e71b26e3028324e0d6115d5e07406aeb098"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_evaluation_disfluency.rs",
+        "sha256": "808c6951bab6b9d2dc275100970270e5b88654029bd54d78b8d264cd572b8111"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_execution.rs",
+        "sha256": "431e58102afc5be6753734f3b86c754ffabd47b1c239039ff371f36e0adc784f"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_facts.rs",
+        "sha256": "c5d4bf3d3bbe337d29cba94c6b871dbf4c35544d8ee4cda71e5ca325d2b5b941"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_fluent_pipeline_tests.rs",
+        "sha256": "452a34ae39517e714e9a34b7f9f60f85f08d055ebdc6cc4e834b6a4732165a53"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_fluent_pipeline.rs",
+        "sha256": "489d5d8426610b01ea7b5307120be288aca8982f48582dd5b4f0461ec44dde80"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_fluent.rs",
+        "sha256": "1825ff179eb18fb3a0ded89fa0e1d59ec0ba06886262c82cf7d57ee19325d9e5"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_grammar_tests.rs",
+        "sha256": "e5e94256c8aecb78242fdff00e74dbcfa5f44caa23ec090949ac55dc35834ece"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_integrity.rs",
+        "sha256": "ef24944ca012042287ae9ffb6c6dbffcc5b1d6f51897783f6ddc5ed2497fc770"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_lexical_tests.rs",
+        "sha256": "c32337413f0618b6215717aa7d8976550d15d6cdfdef9bbd1f1e87c21183a54b"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_literals.rs",
+        "sha256": "8ce5e5dd5bc15c432d5e6686d66e1be6b84b754e9d458ea3fbf28932000f6250"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_local_repair.rs",
+        "sha256": "b09cf2b1b754aa30b2eb22d35cc344a83ba5adb410d2e6b1ecfc7dfaef8777ae"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_long.rs",
+        "sha256": "f18d20bbb969a74d7fdef85329b4ec50f719b06f69f783c4b15114037d4fb1fa"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_manual_candidate_tests.rs",
+        "sha256": "2a76c1c9f20a5c542fe58364188602339f3d3c69c15c977de45db06b18747a70"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_manual_candidate.rs",
+        "sha256": "d01d09683e5839e9cee4e310cd06bf202b2b99cfc6627a68446a89e974032c91"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_minimum_pipeline.rs",
+        "sha256": "78c2bc6a6b75566e9cceba7e10864b2bd32ee0d933d38238dd51e087caaf522b"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_minimum_tests.rs",
+        "sha256": "32bae5e8679c0b5786ea7f45422b75c90f858dcb08ae6b983c713fe69bbd77a3"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_minimum.rs",
+        "sha256": "967c075719d5ea0510373625d743319960480b0e47cb4859598436b7fb792cdd"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_natural_tests.rs",
+        "sha256": "a7180349edfa2e7b79fdc56981794c731f9f27a0445dd591ea507f0262e5facb"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_natural.rs",
+        "sha256": "ede134a5ff5d951637f3faf73fc4e931461d13b69442b0f5188d0ba5a00cd07c"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_protected_terms.rs",
+        "sha256": "1ad84477dc9cd85b15df4c8a2a8ad8887cd827745ea09699a66e44d8c9c1d877"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_protocol_tests.rs",
+        "sha256": "6051b1f49f9e995363226216779dc11dfd07a0fe4d1e896f134cf5398829ab48"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_quality_tests.rs",
+        "sha256": "5eccec4043283bddc8aa3745578a700927ae9d454319e8174883848f25cc5ca4"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_quantity_roles_tests.rs",
+        "sha256": "094a9470fd9e8ffcee7625813463e9a057bab8942b6ed8f317bfdd43febc4f72"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_quantity_roles.rs",
+        "sha256": "5c9b289c93b3e0983564decd7248efab4688cf072a2696f49c5cc96b4da24587"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_review_admission_tests.rs",
+        "sha256": "280a97a1b9095871f1aef5663c4b55a8bc7b84cf00938e3ab627fea01cc065d2"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_review_admission.rs",
+        "sha256": "169db2f3658efa1a80279835cc4a3f6af75b61825fbdae851946cf86e3292b2e"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_scene_layout.rs",
+        "sha256": "7ef11f2c2f091daa49a558e51d8a2e1a530e9c8a70ed0d2cf3833f7b2fe82409"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_scene_tests.rs",
+        "sha256": "e9505b54e06473bba3df077df91a11b7f0efad7eaac4dda0bf71b18a8eba354f"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_scene.rs",
+        "sha256": "49ca5345f4f2d9ad42d0daaa0f3acf8a01fe61738e8fcc58f201c08e62f9081f"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_semantic_review_v1.rs",
+        "sha256": "0c20116fdeff34726e4e7c93ab4b656dc8084ac96c93bc9e12bc43c818cf449c"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_semantic_review.rs",
+        "sha256": "b0efbe7c4bdc16ae934946af0ff86f6b090cc4c78e68c48d922c2d9d540ce430"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_semantics_tests.rs",
+        "sha256": "06ef35ad33c49ff10b0d03fee2a6f4702b5f7ac4de2245b02d15e8e237ab0049"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_semantics.rs",
+        "sha256": "068b64f03f4c4c3f526cf6bcba94d185fdd024573abb8609e1e89f8e4bd1da3e"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_span_tests.rs",
+        "sha256": "0873d43997a8bd9a6da2b4939dcef17581bd38e3b3acd0d59888128ab64f8ffa"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite_terms.rs",
+        "sha256": "c77499ff0b7b083c696f0bacd639138645f104d3ada31bcf8788cba016773aba"
+      },
+      {
+        "path": "app/src-tauri/src/cloud/rewrite.rs",
+        "sha256": "643617df6496a23cac0bdd2dee50725850d8fee51abbd233b1d2d0733f45ec3a"
+      },
+      {
+        "path": "app/src-tauri/src/core/app_writing.rs",
+        "sha256": "b4c3af02d754427c50fa6fd7f002ababdb0738f2b0d08c17238a6bd989af5ebe"
+      },
+      {
+        "path": "app/src-tauri/src/core/commit_guard.rs",
+        "sha256": "7aa83a22041859fec7ae28747c8ce46f399cf79442dbd1fc2cf61ea1edd6c0a2"
+      },
+      {
+        "path": "app/src-tauri/src/core/db_worker_tests.rs",
+        "sha256": "6ce45ebf880aafba2e61f42e7c4772eac4eab030ae89f77fa22f36910762a13a"
+      },
+      {
+        "path": "app/src-tauri/src/core/db_worker.rs",
+        "sha256": "0a23936c5e028bc3767c616c0682a1f95865352f8e1128bcc1c150c9146f6a7c"
+      },
+      {
+        "path": "app/src-tauri/src/core/mod.rs",
+        "sha256": "a7e9863614391cbfe5e1c302c27c28c76c659b63aae080db6f2080c369b7f0f5"
+      },
+      {
+        "path": "app/src-tauri/src/core/model_upgrade_tests.rs",
+        "sha256": "006acbd16fbe604dd6929bda24ff3b56e30f29cf77d3e4404e4390284631a24b"
+      },
+      {
+        "path": "app/src-tauri/src/core/README.md",
+        "sha256": "7df1ef384b7a831c903729e96c208b083d3f1576400c629c6937e342977d9068"
+      },
+      {
+        "path": "app/src-tauri/src/core/store.rs",
+        "sha256": "34ba53d1633294f5dcf480d68082b3e6f74b093bffd733ecc86d7762330493d5"
+      },
+      {
+        "path": "app/src-tauri/src/core/tests.rs",
+        "sha256": "65aaf074cad7e6176cce601699a091241bae8b48d5d33ff8af25cb48ff325f40"
+      },
+      {
+        "path": "app/src-tauri/src/core/types.rs",
+        "sha256": "145c6b27ab98ae162e0d1525935a5d5a41bf4ccfb970dc86948d3fa5308dead3"
+      },
+      {
+        "path": "app/src-tauri/src/desktop.rs",
+        "sha256": "a6af436fb33457269286f5db6b2f5f397aabc9478845add51757c13f0e92b5de"
+      },
+      {
+        "path": "app/src-tauri/src/engine/app_writing_tests.rs",
+        "sha256": "4485722d4f8741a4987282cc6300eacd4597d3df2a113fa5558dd03bfced5b65"
+      },
+      {
+        "path": "app/src-tauri/src/engine/app_writing.rs",
+        "sha256": "3a8c0f9236e4a6d041c2353bf597d6e65ffae41f5191a4a83c82b6cd051db231"
+      },
+      {
+        "path": "app/src-tauri/src/engine/audio_diagnostics_tests.rs",
+        "sha256": "2d6b77a725d09934b73ffa254b3d87bafffe6239be8bdd25d2518cbabfb418de"
+      },
+      {
+        "path": "app/src-tauri/src/engine/candidate_review_tests.rs",
+        "sha256": "06c87728e02ae485efdb57815d812fcec8fcd10dc46f94061d39a7efad8efe0d"
+      },
+      {
+        "path": "app/src-tauri/src/engine/diagnostics.rs",
+        "sha256": "6ef2af844d8c9b790ae45e41794d56ec899ebbb5456a7a503f06a0b255f639f1"
+      },
+      {
+        "path": "app/src-tauri/src/engine/dictionary_rewrite_tests.rs",
+        "sha256": "edcc772730c176ec66cfd0567fc50a5e63e329be0b3627fe159e830f27eeb914"
+      },
+      {
+        "path": "app/src-tauri/src/engine/mod.rs",
+        "sha256": "9d7ebd533b5c9c0b7d1682b9892a6f80ee8f29a784a5055152f3c5f1341d523c"
+      },
+      {
+        "path": "app/src-tauri/src/engine/preview_tests.rs",
+        "sha256": "a6ad4ca4e4a4c81074f396356c56669092a469c7a2323893e4119a3e728e7702"
+      },
+      {
+        "path": "app/src-tauri/src/engine/preview.rs",
+        "sha256": "3376f4c38f1cd43d21099cb446d6d3b11fa8962c74432acbefe8c1eb2d12b14b"
+      },
+      {
+        "path": "app/src-tauri/src/engine/quality_foundation_tests.rs",
+        "sha256": "14c6c46b94fbf770cc3b0c526007ead9c378bc0d36e25634e246e914f63a4116"
+      },
+      {
+        "path": "app/src-tauri/src/engine/recorder_copy_tests.rs",
+        "sha256": "4a89b63d412f90d03e758a5d2e356f4c82ae4cbf2953a465b44dd6482eee1e0e"
+      },
+      {
+        "path": "app/src-tauri/src/engine/recorder_copy.rs",
+        "sha256": "c48a4530230f472ea133cbfe074dce5f407ddf1cca551d57cc6f51a48f9ced4d"
+      },
+      {
+        "path": "app/src-tauri/src/engine/recovery_retention_tests.rs",
+        "sha256": "8130b42ffe6930c4550782e95e98138271c8df08f2ce5cb14ecfcbe15d8dbe69"
+      },
+      {
+        "path": "app/src-tauri/src/engine/recovery.rs",
+        "sha256": "5158755f3a88f5d7689b180bb48cb95e3b3849edfa029cf5e9d40299a5dc74ad"
+      },
+      {
+        "path": "app/src-tauri/src/engine/retry_asr_experiment_tests.rs",
+        "sha256": "acca424a7cb6e2039240fd3c49d786deacd94da32179c945317dbfd7e0b9a6d0"
+      },
+      {
+        "path": "app/src-tauri/src/engine/retry_audio.rs",
+        "sha256": "30596aef4e0ccc8952c95ba44a16b0c6a3f05ac14d2c9512041f18b4484b50ef"
+      },
+      {
+        "path": "app/src-tauri/src/engine/rewrite_deadline_tests.rs",
+        "sha256": "b921afd584fd70b50321e61cd199cb1e1f1aa255e9c829179c332f401f3334fa"
+      },
+      {
+        "path": "app/src-tauri/src/engine/rewrite_fallback_tests.rs",
+        "sha256": "9e20d31234d5f919aae8d5e730e6986777c96a169234c67226602279f54ef502"
+      },
+      {
+        "path": "app/src-tauri/src/engine/rewrite_fallback.rs",
+        "sha256": "a74c1765255651fc133d79ebfa30bfd3992481ccd207e44e0efc45b60021049e"
+      },
+      {
+        "path": "app/src-tauri/src/engine/session.rs",
+        "sha256": "39ad1cb37f507a96fa2b6aa7f9755e416425433a79f8e018fb57296b01042884"
+      },
+      {
+        "path": "app/src-tauri/src/engine/tests.rs",
+        "sha256": "b953461f8f2915fb336907065c83322482d1e2f0de2376c1c6adbdad523a882f"
+      },
+      {
+        "path": "app/src-tauri/src/engine/typeless_import_tests.rs",
+        "sha256": "6f2506fcf39de60fef83158d44263d818fb491739d34411a2bd91e83a3dcb84b"
+      },
+      {
+        "path": "app/src-tauri/src/engine/typeless_import.rs",
+        "sha256": "9ee7477c8781f0925f091981e85a49a7d50b79d44c525f97925bf1caf3a68ecf"
+      },
+      {
+        "path": "app/src-tauri/src/lib.rs",
+        "sha256": "f23f75cf9621fa2fe3b56fc0d66be47932712c898d9884e45adf0ac475a7e250"
+      },
+      {
+        "path": "app/src-tauri/src/main.rs",
+        "sha256": "05179a32ba2f2660ad062d15d1ea713e454d656aaa5ff4d1894c4e1f8d09a2eb"
+      },
+      {
+        "path": "app/src-tauri/src/maintenance.rs",
+        "sha256": "19c5c81944fc8a983699f2021f8a9fd05cde91c5677e0a5d43f3372edf230781"
+      },
+      {
+        "path": "app/src-tauri/src/platform/application.rs",
+        "sha256": "2af4351757e2feb2162857aba63defdec452cd84f3e41818881f7d77e6307bd3"
+      },
+      {
+        "path": "app/src-tauri/src/platform/audio_conditioner.rs",
+        "sha256": "2e2af5a4dc49b1e38e47ca32b4400e5be57f9029e374de27ad62b1d7c5787935"
+      },
+      {
+        "path": "app/src-tauri/src/platform/audio.rs",
+        "sha256": "8f275483ed24a0a412eb9355b40e1ac0c1a824009957d97086c8f7159ac66a63"
+      },
+      {
+        "path": "app/src-tauri/src/platform/delivery.rs",
+        "sha256": "0e26b7bd43b6ef207765ea94b8346dcbe1e83aa9899b0273176dd88384ebf192"
+      },
+      {
+        "path": "app/src-tauri/src/platform/HANDY-LICENSE.txt",
+        "sha256": "4527e126813ef6b6be59fe02c9cb5d0262000de3c44d35e91fde53fa73a9438e"
+      },
+      {
+        "path": "app/src-tauri/src/platform/hotkeys.rs",
+        "sha256": "bc739ee33e6ca74c4e700414ff99990e38656d7aeb824619a3d7a8eb67cd2941"
+      },
+      {
+        "path": "app/src-tauri/src/platform/mod.rs",
+        "sha256": "d56128bf39b2e1ae1c5cb4f97d72f568c009ef125a3522a933b95d506fcc1d36"
+      },
+      {
+        "path": "app/src-tauri/src/platform/README.md",
+        "sha256": "4896b6e613247d7268ff9fe2664db883879d090e3cf0a6cbd23b0b46bc96a814"
+      },
+      {
+        "path": "app/src-tauri/src/platform/resampler.rs",
+        "sha256": "38fb3d2d300bcd8307619725c8e1bf5dc06e7cf9cbeedad3b04a6867b3d0cdbd"
+      },
+      {
+        "path": "app/src-tauri/src/platform/typeless_dictionary_tests.rs",
+        "sha256": "37225c7c48a85271227e301195da89b90d67db28a205f9e0eb544763ee252a7b"
+      },
+      {
+        "path": "app/src-tauri/src/platform/typeless_dictionary.rs",
+        "sha256": "031176cbd869533d761a71b1615169efc2446021f37a93a44127d6e9d4f27be8"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/Cargo.lock",
+        "sha256": "271dc6dd9cd5a311ec0164afec0e54f97d42ff5c5b7bace956ff8782126f2ff7"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/Cargo.toml",
+        "sha256": "10d191536a8d0bc531ffafaf063f300b4bcbc38b2950a53c648a4d044286b9c9"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/examples/basic.rs",
+        "sha256": "27d88b3457d4522d74876ca0a4fb43dcf4d929f0cbf8d36883ce22710633d682"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/examples/diagnostic.rs",
+        "sha256": "a0fc0880cfd204ef02b3b9b1f61b63926175a6fa884b93be61055d2c55490fd2"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/examples/mask_live_check.rs",
+        "sha256": "a148da4a53e7bd499647d5749f100c664f5d7512165ad64b1f7ed1e47f5e8214"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/examples/menu_mask_test.rs",
+        "sha256": "7ca1db5f16fefe054a5b0c6b59b7bd75b12833c7c9199b3dfaef653e3336c54b"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/examples/record_hotkey.rs",
+        "sha256": "fdfedcbc432ea6b614f7ed7e59c81a945886fe7d0a706e0d204eeb585b664a7c"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/LICENSE",
+        "sha256": "3e4c7d10e72de6febdbe326554cb0fe4713aa970aa145ffab73333482de6f864"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/README.md",
+        "sha256": "44a2b1cfbbe4edf37bd725e2b27e219e7340e265160fd50cc3a209f5ee1e25a2"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/error.rs",
+        "sha256": "326547592c66eb709c5a8921b5941394bdb14ca4ce3cf9cecc396bf99f9c010d"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/lib.rs",
+        "sha256": "a767559897e80bc240a69fbbf0d3e648df0951fe9591e7a90c2d745ca3ea6937"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/listener.rs",
+        "sha256": "81cbe2f80c79504d528f831550597460ed0660926d8b1880da7b59846574e2fb"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/manager.rs",
+        "sha256": "93494ff54d72bf098eea4d484fe17751bf98bab4c4f3298cb27c07a7175c2cd6"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/linux/keycode.rs",
+        "sha256": "e33cd294795079a11d064541e17159783c716eb427c74e67681c5247ec9e8580"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/linux/listener.rs",
+        "sha256": "05d431a73aac1c1c0db55d6a4d9b1108514043d577c846c05a461c27dff5a1eb"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/linux/mod.rs",
+        "sha256": "c23b0b816a5fb32d3e7f208ff2762db9bd0d61d2b879f67a6a4cc994c3973f0a"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/macos/keycode.rs",
+        "sha256": "68eb2f8d81eb6e078694f59badb73d23b599872fa81f8d681dba7461b4f42f19"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/macos/listener.rs",
+        "sha256": "2d4510c0718a9915ff9945003e6a8ea9272b1e9be57cba210e6c28185fece2a5"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/macos/mod.rs",
+        "sha256": "9e7ceffde2824100fdd80d4083f7c731d4148c09f95cab1a1a2dbd0373877d99"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/macos/permissions.rs",
+        "sha256": "2e04ea8c27d8ccc6b61e7e2a5f5ec2391e2b736701742cb5b94bc3f68f38ba71"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/mod.rs",
+        "sha256": "ba86cfdb323bd89fd8208ca7224931d9f6e55680659dbe5e77b11e54425ccd85"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/state.rs",
+        "sha256": "c416ac7197cdce1dc5f8e02837c2dac6fc6fcefc840d08859cedab10deb67d05"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/windows/keycode.rs",
+        "sha256": "b5fadc79bc71edfdc0ccfbc66a7fd25c85f48dde78b76992ac1da9c1294b126c"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/windows/listener.rs",
+        "sha256": "94c38a64bd6defd4246857db58bd7220e671c625a4f8d28f11deff289b19ff7e"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/platform/windows/mod.rs",
+        "sha256": "09843bcf0ff6c8200d83a509f0931ccb8befad00fcd349a4813a8e7ad0c37e46"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/types/hotkey.rs",
+        "sha256": "252c6c9d9f0887df403745e4bc0fea5737b4b81841a8779fb1aca0b2242d154e"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/types/key.rs",
+        "sha256": "44235377eac5a284252633b16da2583763b0b4e1f1ed3be7c2db69b696301c0d"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/types/mod.rs",
+        "sha256": "41e0bed80069afbd2181fa208e2c82f3d0ad6b7ebae76d97fa97b12b2213bdc2"
+      },
+      {
+        "path": "app/src-tauri/src/platform/vendor/handy-keys/src/types/modifiers.rs",
+        "sha256": "9a1f3b1f2369deb67fd6384df0640ef36dac3fbcfa602a5f6c50214b2adfcf5a"
+      },
+      {
+        "path": "app/src-tauri/tauri.conf.json",
+        "sha256": "83adb7ca395382430441db9f8c16d7ab153e78946c7b8984decbe44285038bbf"
+      },
+      {
+        "path": "app/src-tauri/tests/fixtures/mode_editing_contract.json",
+        "sha256": "689e7296789364dfc6d4c6fdf984647e806c83614b53165f7152d220c0be5df0"
+      },
+      {
+        "path": "app/src-tauri/tests/fixtures/rewrite_parser_0_1_1.rs",
+        "sha256": "375a658e17f742382cc7d04c4433c74977d48bf28f097c15ede5be9c8b80a3e1"
+      },
+      {
+        "path": "app/src-tauri/tests/fixtures/rewrite_prohibition_synonym_r3.json",
+        "sha256": "b8c1e35909bb14a18d6cd3c25ef8c372ebd3ad5bbc54395ddd6f7f30e45e0297"
+      },
+      {
+        "path": "app/src-tauri/tests/fixtures/rewrite_quality_0_2_0.json",
+        "sha256": "7ace17a86c6db85e4747cfe7b384fe5188c30648520a05a1970de8888b485abb"
+      },
+      {
+        "path": "app/src-tauri/windows/installer-hooks.nsh",
+        "sha256": "a4d7a8b58f6d03a84a4792c72e628e1d3c4d1b64733b789e03cc16f33a4d165d"
+      },
+      {
+        "path": "app/src-tauri/windows/installer-template-provenance.json",
+        "sha256": "e21c9fc1aacb693631a6dc199634a6649b844794c3be689bcae96b2c241696d2"
+      },
+      {
+        "path": "app/src-tauri/windows/installer-template.nsi",
+        "sha256": "46c267f57042e949ae3cfa54f2d198522764e44a513753ef13fd54feafa800f8"
+      },
+      {
+        "path": "app/src/App.tsx",
+        "sha256": "dc72fde146d3c890c0c54020323f5cfd7e52b8312c593b96506cd391a684499a"
+      },
+      {
+        "path": "app/src/appWriting.ts",
+        "sha256": "cd4bf20b5e9c2121b5fa1c4e5eba38b9ccc280e37dca2ccdf1bd9ef9c62d4f5e"
+      },
+      {
+        "path": "app/src/components/AppShell.tsx",
+        "sha256": "1312db68d91f1ea2219b028c92e8e9207dfebaa29ed7053e0a283093f017b326"
+      },
+      {
+        "path": "app/src/components/AppWritingSettings.tsx",
+        "sha256": "d4e2608ffc78578bf9cd5922f0bb7baec53a3089ec079dbc2b6da569f4e318bf"
+      },
+      {
+        "path": "app/src/components/CandidateComparison.css",
+        "sha256": "b389a4ad46fd2b19b8081e41ed1ca769251aaf5ce8a2433a075f5a0153b6967e"
+      },
+      {
+        "path": "app/src/components/CandidateComparison.tsx",
+        "sha256": "570a87d542e32c7defe08f9100695ef4e1fd8626ae0489e2514ced3c85c35cf4"
+      },
+      {
+        "path": "app/src/components/candidateDiff.ts",
+        "sha256": "1c0a34ec26110dfb9118cc77e072792944e89ceef287659a3dc503a3aafbd2cf"
+      },
+      {
+        "path": "app/src/components/CopyAction.tsx",
+        "sha256": "f469fdf641cb83f211fef12de17ae35a1a452522ee5aea7086a9e8eddcc21a18"
+      },
+      {
+        "path": "app/src/components/correctionSelection.ts",
+        "sha256": "f9af2bde18dfe60697db2361b571925bc8460ec875a60e3c8b913d27ce3e0ddc"
+      },
+      {
+        "path": "app/src/components/EmptyStateNote.css",
+        "sha256": "c203dbe56eb9b803c62005a2e4c449b33b761be2c51e66e734d1c1c6c8c8cc9a"
+      },
+      {
+        "path": "app/src/components/EmptyStateNote.tsx",
+        "sha256": "c37c574f7f029685f7560f969125c7af2a5ae7b4c06be697aa0867b20e84a4c7"
+      },
+      {
+        "path": "app/src/components/ExpressionPreferences.tsx",
+        "sha256": "449fbe7f06a6bbe00231c70fc3f731ff4b9bbfd1ff8e8e1e812e31d09a9b044c"
+      },
+      {
+        "path": "app/src/components/focusInView.ts",
+        "sha256": "527ec5b6508a1ee739237cd68aebf2dbf627da5b3e07fad3abaac726c024efb5"
+      },
+      {
+        "path": "app/src/components/HistoryDetail.css",
+        "sha256": "920efec83b7378029e6074e03abfafb7e6baaa3f8b12b50f6fed4fae1be969bb"
+      },
+      {
+        "path": "app/src/components/HistoryDetail.tsx",
+        "sha256": "60ceb67e97b425016bca94deb089f0547086095c36a8800aaed00a0359881233"
+      },
+      {
+        "path": "app/src/components/HistoryListItem.css",
+        "sha256": "d0e2c6afe55ae21b77c171979373d22fc2302d12a3d1955774027e159ce7bc58"
+      },
+      {
+        "path": "app/src/components/HistoryListItem.tsx",
+        "sha256": "ebfdd2d1e0cdf512ea031fea3cc39dd83e0f7bafd28a238065d7395146d2158a"
+      },
+      {
+        "path": "app/src/components/HomeSectionCard.css",
+        "sha256": "8e538eddadc68ebbc5b3c53c20e58d9604818e78141fad534fa172361f9b66c3"
+      },
+      {
+        "path": "app/src/components/HomeSectionCard.tsx",
+        "sha256": "b5af8d06644fc1feeca1a7b59c2ff7703ccb17cbd7bb66a34dc71af58625ccab"
+      },
+      {
+        "path": "app/src/components/LatestDictationPreview.tsx",
+        "sha256": "11d70a7e83c0733f774d722c05c3c30d7230245a7ce0e5c47f270b24ead1e5a9"
+      },
+      {
+        "path": "app/src/components/NavigationGuard.tsx",
+        "sha256": "3b52daa9379a138123146107cf0fb57610cc3105baa851122193d921a91d575f"
+      },
+      {
+        "path": "app/src/components/ProviderSettings.tsx",
+        "sha256": "cfa59fc5cd2c413afca6f2510f22a7e75b50a01af8e88cfe154726fec780e41e"
+      },
+      {
+        "path": "app/src/components/restoreSelection.ts",
+        "sha256": "e43577c2ff8b0ca7d19d02d879c5125fa0173ad0d96582a1a0a61b06208d6d97"
+      },
+      {
+        "path": "app/src/components/RetainedRecovery.tsx",
+        "sha256": "b2b1a0f8a966f228ddc8489e086b1e7adec79f6e12e8f1f6d392ec8ef6496e41"
+      },
+      {
+        "path": "app/src/components/SessionRecovery.tsx",
+        "sha256": "cfb87b9f1c5203fd4a74fc449ea172d4d8fb88d188f5167aaa53b89bd63aa322"
+      },
+      {
+        "path": "app/src/components/SettingsControls.tsx",
+        "sha256": "8fa6e80aeefdb71e3b971140e6b3d35ab3fd99396cf329d4c5766dddb229787f"
+      },
+      {
+        "path": "app/src/components/ShortcutEditor.tsx",
+        "sha256": "b5c72bc8969c64b48f205bf7ff41c7f691df7b2758997b95706c005a95ffeb0b"
+      },
+      {
+        "path": "app/src/components/TermCorrectionPanel.tsx",
+        "sha256": "b13c9c5f3255e767931b201ec5c6e168889e34081d857912a98ec09ac6bf04ba"
+      },
+      {
+        "path": "app/src/components/ui.tsx",
+        "sha256": "b95939551ac987a0a229a161f5eafef0d94fbae661e4fb79a48bfd2cf8dd1262"
+      },
+      {
+        "path": "app/src/components/UsageOverview.css",
+        "sha256": "07aa310ade8a9f03a4f7450f2386fc3cf3fb33d12b70cd73c047e57e21ce8755"
+      },
+      {
+        "path": "app/src/components/UsageOverview.tsx",
+        "sha256": "3fd2e3448c209c77cf4de4ea9c0d8550cd8b1c3278f67c4348ef0adc632ac8d7"
+      },
+      {
+        "path": "app/src/components/WindowChrome.tsx",
+        "sha256": "71cff5410257253d70c32dcb229ab8e1883fb34baead91242572534e124b41eb"
+      },
+      {
+        "path": "app/src/dictionary.ts",
+        "sha256": "1aa3ab6b5994bffdae77005897f4a8a2cde857a2e703c6c368236760a2488748"
+      },
+      {
+        "path": "app/src/hooks/useDictations.ts",
+        "sha256": "68dd2076ca2b58d916880155cfbb55a9b73e63a00722aa2f7f499d145be474c4"
+      },
+      {
+        "path": "app/src/hooks/useModes.tsx",
+        "sha256": "672b563288205e3743dfe8ec7884c213b72f0fb78c13cddcc86e86334335ab6b"
+      },
+      {
+        "path": "app/src/hooks/useUsageOverview.ts",
+        "sha256": "b0c02d2e03b749ca1b453008ef9bf0ba02c7c121b8739964b21c5b654b4d51e1"
+      },
+      {
+        "path": "app/src/main.tsx",
+        "sha256": "06ce4a9d55e82ee7304e85e17a461ec340db2ed403aa43a5cc394a4840553414"
+      },
+      {
+        "path": "app/src/model.ts",
+        "sha256": "f112f7d44a018e8731153164b153f9477e92f310c0959d34e78847b9a1503562"
+      },
+      {
+        "path": "app/src/modes.ts",
+        "sha256": "87f20e93a2c6f7c360c56b9cb8c805aa40ad40a0ef031385275cd9bc09ec789a"
+      },
+      {
+        "path": "app/src/pages/dictionary.css",
+        "sha256": "01283d16c9420fe8c711be90a23cfa9563bd3e98ee7a12d8d487e526d7449774"
+      },
+      {
+        "path": "app/src/pages/DictionaryPage.tsx",
+        "sha256": "4d50597dd4ca5987ee0845e9785a2324195430c63cdc068a470a3558f7396ab4"
+      },
+      {
+        "path": "app/src/pages/history.css",
+        "sha256": "3243434c1755b37dbf5c6565ce55f32eeda4af96ca87b8a0974dcb1f54e1a35c"
+      },
+      {
+        "path": "app/src/pages/HistoryPage.tsx",
+        "sha256": "026df808cc285403710445c4c4f3cbc22e4e18debfcd1128548c9848900541c9"
+      },
+      {
+        "path": "app/src/pages/home.css",
+        "sha256": "4d7e52fe9e65c79ce018e3ab20ac178a4992575e57a21ec8e7ca348f9545e539"
+      },
+      {
+        "path": "app/src/pages/HomePage.tsx",
+        "sha256": "19a2320035c72c48cc6845ffdb9674f8c87c88fb05d01fad117e02941d88a3bd"
+      },
+      {
+        "path": "app/src/pages/modes.css",
+        "sha256": "643d504145f1d4c395899209c35f49e27cb7ab247c71deb1014ad1a9fefb7a9a"
+      },
+      {
+        "path": "app/src/pages/ModesPage.tsx",
+        "sha256": "4736604cab8d953fded521067385d79e16f611b4d65a9b8b8818fdac6cf28f48"
+      },
+      {
+        "path": "app/src/pages/settings.css",
+        "sha256": "a86fcdea3967f4b5b0b36cfab63d5269c2359efb32995c263bf6cea34ac0b473"
+      },
+      {
+        "path": "app/src/pages/SettingsPage.tsx",
+        "sha256": "e737335f5cdbf77a8477af00d25ff279963f3c52891ac38f75ef59e51844e366"
+      },
+      {
+        "path": "app/src/preferences.ts",
+        "sha256": "627ab36a69db558221e6267b240ec189f343f2acd5afb0384ba7dfe214942b93"
+      },
+      {
+        "path": "app/src/services/bridge.ts",
+        "sha256": "60190870b25340bcec7e3074d8480428ec65ea0dcc69516d4fe55bbaec88a7ce"
+      },
+      {
+        "path": "app/src/services/contracts.ts",
+        "sha256": "3268821b8c5d7267596722c21fad52cbaad402d218090f1e5a29bc91131347d9"
+      },
+      {
+        "path": "app/src/services/deliveryFeedback.ts",
+        "sha256": "8be4483bcc3cc8c842421a4252ebf5115bfcee83a229070926d64bc967b5d3dd"
+      },
+      {
+        "path": "app/src/services/DesktopProvider.tsx",
+        "sha256": "dc5a393a0dad30a85bc9a49b98608194ab89248ad2465193c9609a10be740915"
+      },
+      {
+        "path": "app/src/services/liveLevel.ts",
+        "sha256": "42a5b285aff9c03b99f5e65e586e32d50772c885097e56b7500fb965d7da7a18"
+      },
+      {
+        "path": "app/src/styles.css",
+        "sha256": "077897a7f527b40549151699f0d9effc398a51248c27d6b07936efbaf61411c3"
+      },
+      {
+        "path": "app/src/windows/captions.ts",
+        "sha256": "5d77fc5c076a0dbc250d25f11f323cfd50f0673168e0e71d1b2b04e4a7135fcc"
+      },
+      {
+        "path": "app/src/windows/CaptionStrip.tsx",
+        "sha256": "6482c385e18e846141bfa4ace515032a75cdc29c5773b011da52b81cffefcbf3"
+      },
+      {
+        "path": "app/src/windows/recorder.css",
+        "sha256": "2af997f63afa28898a328ca2a464f9456609976119c1d69cc802c8872f8aa96e"
+      },
+      {
+        "path": "app/src/windows/RecorderWaveform.tsx",
+        "sha256": "cddbfdabbc959df519d7c10d45d19bd68433fd485e6de32fb9159b8291e2296b"
+      },
+      {
+        "path": "app/src/windows/RecorderWindow.tsx",
+        "sha256": "e02bbc7fa61a3b594e3435919868e2083d00fcc2a5f3d5dd2393e59a68bd325e"
+      },
+      {
+        "path": "app/src/windows/useRecorderSize.ts",
+        "sha256": "bc99f5adb78234399f6fcd947697d16324ca613deae354209077beb0661f9d32"
+      },
+      {
+        "path": "app/src/windows/waveform.ts",
+        "sha256": "8437859e165f9569bd32e29fe214846eb9de2bf05d976279cac273b8ca289593"
+      },
+      {
+        "path": "app/tsconfig.json",
+        "sha256": "5a2a98049a772a2538768c6eb1348f4b5d1e046b03481d040963104015139931"
+      },
+      {
+        "path": "app/vite.config.ts",
+        "sha256": "b079159f23ed7b8039f8e2db96208b42f089faf1b9257e537e650aaeb8256dcb"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/distribution-manifest.json",
+        "sha256": "098050f75b7f0a161ad73c8f4845bff2be35ffc9a4c73480c8122ed7fa0b4e0a"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/external/Rust-COPYRIGHT-library.html",
+        "sha256": "5647be074c8edf7339fd863055923a8fc80bc5610a8d4661ec3b767b9d392c27"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/external/Rust-MSVC-COPYRIGHT-library.html",
+        "sha256": "5647be074c8edf7339fd863055923a8fc80bc5610a8d4661ec3b767b9d392c27"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/LOCAL-SOURCE-MODIFICATIONS.md",
+        "sha256": "4f70128acfd0ef857d965e8a306caeb57d7c1b04c033c01ce92656373d5202ba"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/source-archives/cssparser-0.37.0.crate",
+        "sha256": "8c9cdaae01d5ed7882b04d795e7f752f46ff52d2fa3b50a20d28c464510bba98"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/source-archives/cssparser-macros-0.7.1.crate",
+        "sha256": "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/source-archives/dtoa-short-0.3.5.crate",
+        "sha256": "cd1511a7b6a56299bd043a9c167a6d2bfb37bf84a6dfceaba651168adfb43c87"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/source-archives/inventory.json",
+        "sha256": "b0c82f8a5ce245ae82e3e117d6918897fc3755159a596d965af7b0daec623c0e"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/source-archives/option-ext-0.2.0.crate",
+        "sha256": "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/source-archives/selectors-0.38.0.crate",
+        "sha256": "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/supplements/chromium-superfasthash-LICENSE.txt",
+        "sha256": "c84acd2b557e4532ecb9da3aa0a613be252ac123ebaffb0184b4e5c7a7fc62af"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/THIRD_PARTY_DEPENDENCIES.csv",
+        "sha256": "1f122c44a4c57f95fff6e0f8b13fbdc607c1640edd7fbe9e975c67b10918b8fa"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/THIRD_PARTY_INVENTORY.json",
+        "sha256": "239adcdb0637324e15d9746dfb101c05594ac0e48e9b94409cc94aeed935f35e"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/THIRD_PARTY_NOTICES.txt",
+        "sha256": "ddb833d91d842deaecb3af6da5d3613a9e6aea43946d7d5615ac7965d5cd0672"
+      },
+      {
+        "path": "docs/third-party/nsis-resources/THIRD_PARTY_REVIEW.md",
+        "sha256": "b705094009b701a5f23daa1a7499f05f35b6b71fcba9773859b961f99a812139"
+      },
+      {
+        "path": "scripts/build-desktop.ps1",
+        "sha256": "8296ea3ba68d7698710e9804807aa1894ea998556bf4d694e850c9ce6ba8eff1"
+      }
+    ],
+    "cacheGiB": 11.688,
+    "cacheBudgetGiB": 12,
+    "installationUpgrade": "NOT_RUN",
+    "installedProfileLaunch": "NOT_RUN"
+  },
+  "notAccepted": [
+    "human dictation quality",
+    "real application end-to-end dictation",
+    "installation upgrade",
+    "installed-profile launch",
+    "optional nearby text context"
+  ],
+  "localEvidenceDirectories": {
+    "validation": "output/validation/app-aware-2026-10-13",
+    "browser": "output/playwright/app-writing-2026-10-13-final",
+    "release": "output/releases/2026-10-13-app-aware-0.2.21"
+  }
+}

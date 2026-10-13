@@ -486,6 +486,7 @@ impl AppHub {
         let old=self.db.snapshot().preferences;let expected=number(p,"expectedVersion")?;
         if old.version!=expected{return Err(ApiError::new("revisionConflict","preferences","设置已变化，请重新读取"));}
         let next:Preferences=if reset{Preferences::default()}else{let mut merged=serde_json::to_value(&old).unwrap();let patch=p.get("patch").unwrap_or(p);if let Some(obj)=patch.as_object(){for(k,v)in obj{if !matches!(k.as_str(),"expectedVersion"|"requestId"|"captureId"){merged[k]=v.clone();}}}parse(merged)?};
+        next.app_writing.validate().map_err(|message|ApiError::new("invalid_app_writing","preferences",message))?;
         self.db_read(DbCommand::ModeSnapshot{id:next.default_mode_id.clone(),revision:None}).await?;
         let reservation=Uuid::new_v4().to_string();let guard;
         {let mut i=self.inner.lock().unwrap();

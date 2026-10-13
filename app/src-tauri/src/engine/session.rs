@@ -14,6 +14,8 @@ mod rewrite_fallback;
 use rewrite_fallback::RewriteWaitPolicy;
 #[path="recorder_copy.rs"]
 mod recorder_copy;
+#[path="app_writing.rs"]
+mod app_writing;
 
 fn stop_capture_failure_reason(error: &platform::PlatformError) -> &'static str {
     match error {
@@ -89,6 +91,8 @@ pub struct LiveSession {
     pub caption_render_token:Option<String>,
     #[serde(skip_serializing_if="Option::is_none")]
     pub rewrite_fallback:Option<RewriteFallbackReason>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub writing_scene:Option<AppWritingScene>,
 }
 #[derive(Clone)]
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
@@ -102,6 +106,7 @@ pub(crate) struct ActiveSession {
     source:Option<SourceRevision>,output:Option<OutputRevision>,
     pending:Option<(String,PendingCommit)>,cache:Option<Vec<i16>>,cache_complete:bool,cache_created:Option<Instant>,
     target:Option<platform::delivery::TargetSnapshot>,target_capture_pending:bool,
+    target_application:Option<String>,writing_scene:Option<AppWritingScene>,
     target_capture_failure_reason:Option<String>,
     delivery_failure_reason:Option<String>,delivery:Option<DeliveryAttempt>,reason:CreationReason,
     asr_attempt_id:Option<String>,
@@ -143,7 +148,7 @@ impl ActiveSession {
         let can_retry_save=released&&problem&&self.pending.is_some();
         let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())&&self.cache_created.is_some_and(|t|t.elapsed()<AUDIO_CACHE_RETENTION);
         let can_retry_rewrite=released&&problem&&self.source.is_some()&&self.pending.is_none();
-        LiveSession{rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
+        LiveSession{writing_scene:self.writing_scene,rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
     }
     pub(crate) fn adopt_first_history_result(&mut self,detail:&HistoryDetail) {
         if self.id!=detail.session.seed.id||self.generation!=detail.session.seed.generation||self.source.as_ref().is_none_or(|s|s.id!=detail.source.id){return;}
@@ -276,7 +281,7 @@ impl AppHub {
             let id=Uuid::new_v4().to_string();
             i.park_retryable_failure()?;
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
@@ -301,20 +306,29 @@ impl AppHub {
                 // Cut recording before any native/UIA wait. Never keep sampling
                 // merely because an editor's accessibility provider is slow.
                 s.stop.store(true,Ordering::SeqCst);s.ended_at=Some(chrono::Local::now().to_rfc3339());s.phase=SessionPhase::FinalizingAsr;s.level=0.0;
-                s.target=None;s.target_capture_failure_reason=None;s.delivery_failure_reason=None;
-                s.target_capture_pending=s.prefs.delivery_mode==DeliveryMode::Direct;
+                s.target=None;s.target_application=None;s.writing_scene=None;s.target_capture_failure_reason=None;s.delivery_failure_reason=None;
+                s.target_capture_pending=s.prefs.delivery_mode==DeliveryMode::Direct
+                    || (s.prefs.app_writing.enabled && s.mode.base_mode==BaseMode::Auto && s.mode.rules.trim().is_empty());
                 s.target_capture_pending.then(||(s.id.clone(),s.generation))
             }
         };Ok(target)
     }
     fn resolve_stop_target_result(&self,id:&str,generation:u64,capture:impl FnOnce()->platform::Result<Option<platform::delivery::TargetSnapshot>>) {
+        self.resolve_stop_target_with_application(id,generation,capture,platform::application::name_for_target);
+    }
+    fn resolve_stop_target_with_application(&self,id:&str,generation:u64,
+        capture:impl FnOnce()->platform::Result<Option<platform::delivery::TargetSnapshot>>,
+        application:impl FnOnce(&platform::delivery::TargetSnapshot)->Option<String>) {
         let _lease=StopTargetLease{hub:self,id,generation,armed:true};
         let target=capture();
+        let needs_application={let i=self.inner.lock().unwrap();i.active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation
+            &&s.prefs.app_writing.enabled&&s.mode.base_mode==BaseMode::Auto&&s.mode.rules.trim().is_empty()&&!s.cancel.is_cancelled())};
+        let application=if needs_application {target.as_ref().ok().and_then(Option::as_ref).and_then(application)}else{None};
         let mut i=self.inner.lock().unwrap();
         if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending){
             match target {
-                Ok(target)=>{s.target=target;s.target_capture_failure_reason=None;}
-                Err(error)=>{s.target=None;s.target_capture_failure_reason=Some(stop_capture_failure_reason(&error).into());}
+                Ok(target)=>{s.target=target;s.target_application=application;s.target_capture_failure_reason=None;}
+                Err(error)=>{s.target=None;s.target_application=None;s.target_capture_failure_reason=Some(stop_capture_failure_reason(&error).into());}
             }
         }
     }
@@ -635,7 +649,12 @@ impl AppHub {
         policy:impl Into<Option<RewriteWaitPolicy>>,deliver:impl FnOnce(&Arc<Self>,&str,u64))
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
-        let (config,mode,source,cancel,reason)={let i=self.inner.lock().unwrap();let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};(s.config.clone(),s.mode.clone(),s.source.clone().unwrap(),s.cancel.clone(),s.reason)};
+        // Freeze the scene before generation. A late target inspection may still
+        // authorize delivery, but cannot change this draft's presentation policy.
+        let (config,mode,source,cancel,reason,frozen_scene)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
+            let source=s.source.clone().unwrap();let frozen=app_writing::freeze(s,&source);
+            s.writing_scene=frozen.as_ref().map(|scene|scene.kind);
+            (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen)};
         let policy=policy.into().unwrap_or_else(||RewriteWaitPolicy::for_source(reason,&source));
         self.publish_session();
         self.diagnostics.rewrite_started(trace.as_ref(),rewrite::production_protocol_version(&config,&mode),policy.deadline.as_millis().min(u64::MAX as u128) as u64);
@@ -652,6 +671,16 @@ impl AppHub {
                 Ok(result)=>result,
                 Err(_)=>{rewrite_cancel.cancel();Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))},
             },
+        };
+        let generated=match (generated,frozen_scene.as_ref()) {
+            (Ok(value),Some(frozen))=>{
+                let i=self.inner.lock().unwrap();
+                match i.active.as_ref().filter(|s|s.id==id&&s.generation==generation) {
+                    Some(s)=>Ok(app_writing::present(s,frozen,&source,&mode,value)),
+                    None=>Err(CloudError::new("cancelled","rewrite","口述已变化")),
+                }
+            },
+            (result,_)=>result,
         };
         // A completed parser/transport response cannot revive a cancelled or
         // replaced session, even if its future returned success after cutoff.
