@@ -7,7 +7,9 @@ import { LatestDictationPreview } from '../components/LatestDictationPreview';
 import { CopyAction } from '../components/CopyAction';
 import { HomeSectionCard } from '../components/HomeSectionCard';
 import { UsageOverview } from '../components/UsageOverview';
+import { EmptyStateNote } from '../components/EmptyStateNote';
 import { languageLabels, type Preferences } from '../preferences';
+import './home.css';
 
 interface HomePageProps {
   preferences: Preferences;
@@ -29,14 +31,25 @@ function QuickSettings({ onSettings, preferences }: Pick<HomePageProps, 'onSetti
   </HomeSectionCard>;
 }
 
+function HomeShortcut({ shortcut, onSettings }: { shortcut: string; onSettings: () => void }) {
+  const keys = shortcut.split(/\s*\+\s*/);
+  return <button type="button" className="home-shortcut" onClick={onSettings}
+    aria-label={`查看录音快捷键设置，当前为 ${shortcut}`} title="前往设置修改录音快捷键">
+    <span className="home-shortcut-label">录音快捷键<GearIcon aria-hidden="true" /></span>
+    <span className="home-shortcut-keys">{keys.map((key, index) => <span className="home-shortcut-key-part" key={`${index}:${key}`}>
+      {index > 0 && <span className="home-shortcut-plus" aria-hidden="true">+</span>}<Kbd>{key}</Kbd>
+    </span>)}</span>
+  </button>;
+}
+
 export function HomePage({ preferences, records, defaultMode, onDefaultModeChange, onOpen, onHistory, onSettings, onManageModes }: HomePageProps) {
   const latest = records[0];
   const desktop = useDesktop();
   return <div className="home-page">
     <header className="home-hero">
-      <div><h1>开口说，按你的方式整理。</h1>
+      <div className="home-hero-copy"><h1>开口说，按你的方式整理。</h1>
         <p>按下 <Kbd>{preferences.shortcut}</Kbd> 开始，再按一次结束。<span className="hero-continuation">停顿或查资料时，录音继续。</span></p></div>
-      {preferences.shortcut === '右 Alt' && <div className="shortcut-object" aria-hidden="true"><div className="keycap"><span>Alt</span><small>R</small></div></div>}
+      <HomeShortcut shortcut={preferences.shortcut} onSettings={onSettings} />
     </header>
     <UsageOverview />
     <div className="home-grid">
@@ -47,7 +60,13 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
           <div className="latest-title-row"><h3>{latest.title}</h3><ModeBadge mode={latest.mode} resolved={latest.resolved} name={latest.modeName} sourceState={latest.sourceState} /></div>
           <LatestDictationPreview key={`${latest.id}:${latest.revision}`} record={latest} />
           <div className="latest-actions"><CopyAction record={latest} label="复制结果"><Button variant="soft" color="gray" onClick={() => onOpen(latest.id)}>查看与调整<ArrowRightIcon /></Button>{latest.modified && <span className="modified-label">已在本页修改</span>}</CopyAction></div>
-          </> : <div className="home-empty"><strong>还没有口述结果</strong><p>{desktop.available ? '完成一次口述后，在这里查看或复制。' : '在桌面应用中完成口述，真实结果会显示在这里。'}</p><Button variant="soft" onClick={onSettings}>查看设置</Button></div>}
+          </> : <div className="home-empty">
+            <EmptyStateNote />
+            <div className="home-empty-copy"><strong>从一句话开始</strong>
+              <p>{desktop.available ? desktop.provider.configured ? <>按下 <Kbd>{preferences.shortcut}</Kbd>，说一句想留下的话。结束后，在这里查看、复制或调整。</> : '先在设置里配置云端服务，再开始第一段口述。' : '在桌面应用中完成第一段口述，结果会显示在这里。'}</p>
+              <Button className="sm-tactile" variant="soft" onClick={onSettings}><GearIcon />查看设置</Button>
+            </div>
+          </div>}
         </HomeSectionCard>
         <HomeSectionCard className="recent-section" titleId="recent-title" title="更早的口述"
           action={<Button variant="ghost" size="1" onClick={onHistory}>全部记录<ArrowRightIcon /></Button>}>
