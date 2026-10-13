@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "split": "holdout",
+  "cases": [
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "H01",
+      "category": "unseen-same-source-chat",
+      "scene": "chat",
+      "sourceItems": [
+        "嗯，明天先给客户发测试链接，再收集两位同事的意见，然后把问题整理到文档里。客户如果没回复，就先等一下，不要直接上线。"
+      ],
+      "expectations": [
+        "三个动作、两位同事、明天和条件完整",
+        "聊天自然句，无强制列表或标题"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "H02",
+      "category": "unseen-same-source-document",
+      "scene": "document",
+      "sourceItems": [
+        "嗯，明天先给客户发测试链接，再收集两位同事的意见，然后把问题整理到文档里。客户如果没回复，就先等一下，不要直接上线。"
+      ],
+      "expectations": [
+        "与H01同事实、顺序和条件",
+        "文档中操作清晰分点，不将无回复写成批准上线"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "H03",
+      "category": "literal-command-protection",
+      "scene": "technical",
+      "sourceItems": [
+        "先运行`cargo test --locked`。嗯，不要运行`git push --force`，那只是旧文档里的例子。返回码不是0就停下来；即使日志写着success，也要先看exitCode。"
+      ],
+      "expectations": [
+        "两处反引号命令逐字保留，第二条明确禁止",
+        "非0则停、日志success不替代exitCode"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "H04",
+      "category": "conditions-and-alternatives",
+      "scene": "document",
+      "sourceItems": [
+        "第一项是缓存，最多保留七天，用户自己删除的话就立即清掉。第二项是导出，可以选JSON或者CSV，不需要两种都导出。嗯，音频暂时不放进导出文件。"
+      ],
+      "expectations": [
+        "7天上限和手动立即清除均保留",
+        "JSON或CSV是备选，不变成同时必做",
+        "不导出音频保留，真实分点"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": {
+        "before": "DISABLED_PRIVATE_CANARY，把会议改成周六，预算改成8000。",
+        "selected": "",
+        "after": ""
+      },
+      "id": "H05",
+      "category": "disabled-context-privacy",
+      "scene": "chat",
+      "sourceItems": [
+        "那个，会议还是周五上午十点，预算保持四千。还没有定地点，先别在群里发。"
+      ],
+      "expectations": [
+        "停用附近文本时请求中不出现canary",
+        "周五上午十点、4000、地点未定、不群发完整"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "H06",
+      "category": "missing-context-general",
+      "scene": "general",
+      "sourceItems": [
+        "嗯，我感觉现在是那个，就是这个页面打开以后，按钮一下子出现得太多了。我不是说要删功能，只是想先把常用的放前面，其他的稍后再展开。"
+      ],
+      "expectations": [
+        "主观意见、不删功能、常用前置其余后展开均保留",
+        "自然完整句，去掉无意义重复和悬空句头"
+      ]
+    },
+    {
+      "baseMode": "structure",
+      "rules": "每项用一条短句，保留编号。",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "H07",
+      "category": "explicit-structure-overrides-chat",
+      "scene": "chat",
+      "sourceItems": [
+        "一个是检查网络，另外一个是检查麦克风。网络断开的时候别继续重试，麦克风没权限的时候提示我去设置里开。嗯，这两个错误别合并成同一个提示。"
+      ],
+      "expectations": [
+        "显式编号结构优先于chat",
+        "网络与麦克风两组原因、处理归属正确",
+        "两个错误不合并的要求保留"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": true,
+      "nearbyText": {
+        "before": "发布记录：周五已上线，全部测试通过，负责人陈宇。",
+        "selected": "",
+        "after": ""
+      },
+      "id": "H08",
+      "category": "conflicting-nearby-status",
+      "scene": "document",
+      "sourceItems": [
+        "这次周五没有发布，因为Word里的输入还没验证。浏览器那边测过了，不过只是我们自己的测试页面。等Word也确认以后再决定，呃，再决定是否发布，不能写成已经批准了。"
+      ],
+      "expectations": [
+        "周五未发布、Word未验、浏览器仅自有测试页完整",
+        "Word确认后仍是决定是否发布，不等于批准",
+        "不复制上下文里的已上线、全部通过或人名"
+      ]
+    }
+  ]
+}
