@@ -2,6 +2,7 @@
 //! Importing/enumerating does not acquire microphone input.
 use super::{PlatformError, Result};
 use super::resampler::FrameResampler;
+use super::audio_conditioner::{AudioConditioner, ConditioningMode, ConditioningSummary};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use serde::{Serialize, Deserialize};
@@ -123,6 +124,7 @@ pub struct CaptureSummary {
     pub emitted_frames: u64,
     pub first_samples_received: bool,
     pub error: Option<String>,
+    pub conditioning: Option<ConditioningSummary>,
 }
 impl CaptureSummary {
     pub fn duration_ms(&self) -> u64 { self.captured_samples.saturating_mul(1_000) / u64::from(self.input_sample_rate.max(1)) }
@@ -227,6 +229,11 @@ impl CaptureHandle {
     /// its provider. Native 44 + bridge 5 + provider in-flight 1 = 50 frames,
     /// a combined 5-second budget. Overflow fails instead of discarding audio.
     pub fn start(device_id: Option<&str>) -> Result<Self> {
+        Self::start_with_conditioning(device_id, ConditioningMode::Bypass)
+    }
+    /// Immutable per-recording input profile; changing settings never mutates
+    /// an active worker. Cached PCM is already conditioned and must be replayed as-is.
+    pub fn start_with_conditioning(device_id: Option<&str>, conditioning_mode: ConditioningMode) -> Result<Self> {
         if ACTIVE_CAPTURE.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             return Err(PlatformError::Unavailable("previous native capture owner has not released resources".into()));
         }
@@ -245,7 +252,7 @@ impl CaptureHandle {
         let cancel = Arc::clone(&cancelled);
         let worker = thread::Builder::new().name("speakmode-capture".into()).spawn(move || {
             let _lease = lease;
-            match capture_worker(device_id, control_rx, frame_tx, &event_tx, Arc::clone(&accept), cancel, &ready_tx, duration_progress) {
+            match capture_worker(device_id, conditioning_mode, control_rx, frame_tx, &event_tx, Arc::clone(&accept), cancel, &ready_tx, duration_progress) {
                 Ok(summary) => { let _ = summary_tx.send(summary); },
                 Err(error) => { accept.store(false, Ordering::SeqCst); let _ = ready_tx.try_send(Err(error.to_string()));
                     let _ = event_tx.try_send(AudioEvent::Error(error.to_string())); },
@@ -289,7 +296,7 @@ fn select_device(id: Option<&str>) -> Result<cpal::Device> {
     } else { host.default_input_device().ok_or_else(|| PlatformError::Unavailable("no input microphone".into())) }
 }
 
-fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames: Sender<AudioFrame>,
+fn capture_worker(device_id: Option<String>, conditioning_mode: ConditioningMode, control: Receiver<Control>, frames: Sender<AudioFrame>,
     events: &Sender<AudioEvent>, accepting: Arc<AtomicBool>, cancellation: Arc<AtomicBool>, ready: &Sender<std::result::Result<(), String>>, duration_progress: Arc<AtomicU64>) -> Result<CaptureSummary> {
     let device = select_device(device_id.as_deref())?;
     let supported = device.default_input_config().map_err(unavailable)?;
@@ -305,6 +312,7 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
     let heartbeat = Arc::clone(&ingress.heartbeat);
     let stream = build_stream(&device, &config, supported.sample_format(), ingress)?;
     let mut resampler = FrameResampler::new(config.sample_rate.0 as usize, OUTPUT_HZ, Duration::from_millis(100));
+    let mut conditioner = AudioConditioner::new(conditioning_mode);
     stream.play().map_err(unavailable)?;
     let started = Instant::now();
     let _ = ready.send(Ok(()));
@@ -333,7 +341,7 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
                 if level_at.elapsed() >= Duration::from_millis(50) {
                     let _ = events.try_send(AudioEvent::Level(rms(&chunk.samples))); level_at = Instant::now();
                 }
-                resampler.push(&chunk.samples, |frame| emit_frame(frame, 0, &frames, &mut sequence, &mut error));
+                resampler.push(&chunk.samples, |frame| emit_frame(frame, 0, &frames, &mut sequence, &mut error, &mut conditioner));
                 recycle_chunk(chunk, &recycle);
                 if let Some(value) = resampler.error() { error = Some(value.into()); }
                 if error.is_some() { break; }
@@ -351,14 +359,14 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
         while let Ok(chunk) = raw_rx.try_recv() {
             account_received_chunk(&chunk, &queued_samples, &mut captured, events);
             duration_progress.store(captured.saturating_mul(1000) / u64::from(config.sample_rate.0), Ordering::SeqCst);
-            resampler.push(&chunk.samples, |frame| emit_frame(frame, 0, &frames, &mut sequence, &mut error));
+            resampler.push(&chunk.samples, |frame| emit_frame(frame, 0, &frames, &mut sequence, &mut error, &mut conditioner));
             recycle_chunk(chunk, &recycle);
         }
         let actual_output = captured as usize * OUTPUT_HZ / config.sample_rate.0 as usize + resampler.output_delay_samples();
         // Preserve ALL finish emissions; expose only actual synthetic tail.
         resampler.finish(|frame| {
             let meaningful = actual_output.saturating_sub(sequence as usize * FRAME_SAMPLES).min(FRAME_SAMPLES);
-            emit_frame(frame, FRAME_SAMPLES - meaningful, &frames, &mut sequence, &mut error);
+            emit_frame(frame, FRAME_SAMPLES - meaningful, &frames, &mut sequence, &mut error, &mut conditioner);
         });
         if let Some(value) = resampler.error() { error = Some(value.into()); }
     }
@@ -367,7 +375,8 @@ fn capture_worker(device_id: Option<String>, control: Receiver<Control>, frames:
     cancelled |= cancellation.load(Ordering::SeqCst);
     if let Some(value) = &error { let _ = events.try_send(AudioEvent::Error(value.clone())); }
     Ok(CaptureSummary { complete: !cancelled && error.is_none(), cancelled, captured_samples: captured,
-        input_sample_rate: config.sample_rate.0, emitted_frames: sequence, first_samples_received: captured > 0, error })
+        input_sample_rate: config.sample_rate.0, emitted_frames: sequence, first_samples_received: captured > 0, error,
+        conditioning: Some(conditioner.summary()) })
 }
 
 fn account_received_chunk(chunk: &RawChunk, queued: &AtomicUsize, captured: &mut u64, events: &Sender<AudioEvent>) {
@@ -376,9 +385,17 @@ fn account_received_chunk(chunk: &RawChunk, queued: &AtomicUsize, captured: &mut
     *captured += chunk.samples.len() as u64;
 }
 
-fn emit_frame(frame: &[f32], padding_samples: usize, output: &Sender<AudioFrame>, sequence: &mut u64, error: &mut Option<String>) {
+fn emit_frame(frame: &[f32], padding_samples: usize, output: &Sender<AudioFrame>, sequence: &mut u64, error: &mut Option<String>, conditioner: &mut AudioConditioner) {
     if error.is_some() { return; }
-    let pcm16 = frame.iter().map(|value| quantize(*value)).collect();
+    if frame.len() > FRAME_SAMPLES || padding_samples > frame.len() {
+        *error = Some("malformed microphone frame".into()); return;
+    }
+    // Worker-only scratch: no new heap allocation or work in the WASAPI callback.
+    // Preserve network frame size, sequence and synthetic tail accounting.
+    let mut conditioned = [0.0_f32; FRAME_SAMPLES];
+    conditioned[..frame.len()].copy_from_slice(frame);
+    conditioner.process(&mut conditioned[..frame.len() - padding_samples]);
+    let pcm16 = conditioned[..frame.len()].iter().map(|value| quantize(*value)).collect();
     match output.try_send(AudioFrame { sequence: *sequence, pcm16, padding_samples }) {
         Ok(()) => *sequence += 1,
         Err(crossbeam_channel::TrySendError::Full(_)) => *error = Some(OUTPUT_QUEUE_FULL_ERROR.into()),
@@ -886,22 +903,59 @@ mod tests {
     }
     #[test] fn full_provider_queue_is_an_error_not_a_drop() {
         let (tx, _rx) = bounded(1); let mut seq = 0; let mut error = None;
-        emit_frame(&[0.1], 0, &tx, &mut seq, &mut error);
-        emit_frame(&[0.2], 0, &tx, &mut seq, &mut error);
+        emit_frame(&[0.1], 0, &tx, &mut seq, &mut error, &mut AudioConditioner::new(ConditioningMode::Bypass));
+        emit_frame(&[0.2], 0, &tx, &mut seq, &mut error, &mut AudioConditioner::new(ConditioningMode::Bypass));
         assert_eq!(seq, 1); assert_eq!(error.as_deref(), Some(OUTPUT_QUEUE_FULL_ERROR));
         assert_eq!(classify_capture_error(error.as_deref()), Some(CaptureFailureReason::QueueOverflow));
     }
     #[test] fn disconnected_output_consumer_is_not_misclassified_as_queue_overflow() {
         let (tx, rx) = bounded(1); let mut seq = 0; let mut error = None;
         drop(rx);
-        emit_frame(&[0.1], 0, &tx, &mut seq, &mut error);
+        emit_frame(&[0.1], 0, &tx, &mut seq, &mut error, &mut AudioConditioner::new(ConditioningMode::Bypass));
         assert_eq!(seq, 0); assert_eq!(error.as_deref(), Some(OUTPUT_CONSUMER_DISCONNECTED_ERROR));
         assert_eq!(classify_capture_error(error.as_deref()), None);
     }
     #[test] fn source_duration_excludes_resampler_padding() {
         let s = CaptureSummary { complete: true, cancelled: false, captured_samples: 48_001,
-            input_sample_rate: 48_000, emitted_frames: 11, first_samples_received: true, error: None };
+            input_sample_rate: 48_000, emitted_frames: 11, first_samples_received: true, error: None, conditioning: None };
         assert_eq!(s.duration_ms(), 1_000);
+    }
+    #[test] fn conditioning_bypass_preserves_wire_pcm_and_excludes_padding_from_measurement() {
+        let (tx, rx) = bounded(2); let mut seq = 0; let mut error = None;
+        let mut conditioner = AudioConditioner::new(ConditioningMode::Bypass);
+        let mut frame = [0.0; FRAME_SAMPLES];
+        frame[..7].copy_from_slice(&[-1.0, -0.013, 0.0, 0.007, 0.3, 1.0, -0.1]);
+        emit_frame(&frame, FRAME_SAMPLES - 7, &tx, &mut seq, &mut error, &mut conditioner);
+        let sent = rx.try_recv().unwrap();
+        assert!(error.is_none()); assert_eq!(seq, 1); assert_eq!(sent.sequence, 0);
+        assert_eq!(sent.padding_samples, FRAME_SAMPLES - 7);
+        assert_eq!(sent.pcm16, frame.iter().map(|v| quantize(*v)).collect::<Vec<_>>());
+        assert_eq!(conditioner.summary().real_samples, 7);
+    }
+    #[test] fn conditioned_stop_tail_retains_every_real_sample_and_network_frame() {
+        let (tx, rx) = bounded(4); let mut seq = 0; let mut error = None;
+        let mut conditioner = AudioConditioner::new(ConditioningMode::SoftVoice);
+        let source: Vec<_> = (0..(FRAME_SAMPLES * 2 + 13)).map(|i| {
+            (i as f32 * 2.0 * std::f32::consts::PI * 180.0 / OUTPUT_HZ as f32).sin() * 0.01
+        }).collect();
+        let mut reference = source.clone();
+        let mut reference_conditioner = AudioConditioner::new(ConditioningMode::SoftVoice);
+        reference_conditioner.process(&mut reference);
+        for chunk in source.chunks(FRAME_SAMPLES) {
+            let mut frame = [0.0; FRAME_SAMPLES]; frame[..chunk.len()].copy_from_slice(chunk);
+            emit_frame(&frame, FRAME_SAMPLES - chunk.len(), &tx, &mut seq, &mut error, &mut conditioner);
+        }
+        assert!(error.is_none()); assert_eq!(seq, 3);
+        let mut actual = Vec::new();
+        for (index, frame) in rx.try_iter().enumerate() {
+            assert_eq!(frame.sequence, index as u64);
+            assert_eq!(frame.pcm16.len(), FRAME_SAMPLES);
+            let real = FRAME_SAMPLES - frame.padding_samples;
+            actual.extend_from_slice(&frame.pcm16[..real]);
+            assert!(frame.pcm16[real..].iter().all(|s| *s == 0));
+        }
+        assert_eq!(actual, reference.iter().map(|v| quantize(*v)).collect::<Vec<_>>());
+        assert_eq!(conditioner.summary().real_samples, source.len() as u64);
     }
     #[test] fn finish_preserves_multiple_frames_including_last_padding() {
         let mut r = FrameResampler::new(48_000, 16_000, Duration::from_millis(100));
@@ -951,7 +1005,7 @@ mod tests {
         let chunk_pcm: Vec<_> = chunk.samples.iter().map(|value| quantize(*value)).collect();
         assert_eq!(chunk_pcm, original_pcm);assert_eq!(captured, 2);
         let summary = CaptureSummary { complete: true, cancelled: false, captured_samples: captured,
-            input_sample_rate: 16_000, emitted_frames: 0, first_samples_received: true, error: None };
+            input_sample_rate: 16_000, emitted_frames: 0, first_samples_received: true, error: None, conditioning: None };
         assert_eq!(summary.duration_ms(), 0); // callback/queue elapsed time is not audio duration.
     }
 }

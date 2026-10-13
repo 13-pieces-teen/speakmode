@@ -9,7 +9,7 @@ fn source(session:&str) -> SourceRevision {
     SourceRevision{id:format!("source-{session}"),session_id:session.into(),asr_attempt_id:format!("attempt-{session}"),generation:7,provider:"aliyun".into(),model:"candidate-model".into(),adapter_version:"test-protocol-v1".into(),complete:true,items:vec![SourceItem{id:format!("item-{session}-1"),provider_item_id:"provider-1".into(),capture_order:1,text:"如果会议未确认，不要订机票。Hello 12 🙂".into(),is_final:true,start_ms:Some(0),end_ms:Some(7000)},SourceItem{id:format!("item-{session}-2"),provider_item_id:"provider-2".into(),capture_order:2,text:"先保留行程。".into(),is_final:true,start_ms:Some(7000),end_ms:Some(12000)}],created_at:"2026-10-04T10:00:12+08:00".into()}
 }
 fn output(session:&str) -> OutputRevision {
-    OutputRevision{id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
+    OutputRevision{id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
 }
 fn ready(store:&mut Store,session:&str,policy:StoragePolicy) -> HistoryDetail {
     store.checkpoint_source(seed(session,policy),source(session)).unwrap();
@@ -21,6 +21,34 @@ fn path() -> PathBuf {
     let base=source_file.parent().unwrap().join("harness/test-data");fs::create_dir_all(&base).unwrap();base.join(format!("{}.sqlite",Uuid::new_v4()))
 }
 fn draft(name:&str) -> ModeDraft {ModeDraft{id:None,name:name.into(),base_mode:BaseMode::Light,rules:"保留条件，用简洁段落。".into(),expected_revision:None}}
+
+#[test]
+fn rewrite_fallback_metadata_is_optional_and_rejects_unknown_reasons() {
+    let original=output("compat");let serialized=serde_json::to_value(&original).unwrap();
+    assert!(serialized.get("rewriteFallback").is_none());
+    assert_eq!(serde_json::from_value::<OutputRevision>(serialized.clone()).unwrap(),original);
+    let mut marked=serialized;marked["rewriteFallback"]=serde_json::json!("meaningRisk");
+    assert_eq!(serde_json::from_value::<OutputRevision>(marked.clone()).unwrap().rewrite_fallback,Some(RewriteFallbackReason::MeaningRisk));
+    marked["rewriteFallback"]=serde_json::json!("arbitrary-provider-message");assert!(serde_json::from_value::<OutputRevision>(marked).is_err());
+}
+
+#[test]
+fn unchanged_fallback_can_be_edited_and_undone_without_losing_its_source_identity() {
+    let mut store=Store::in_memory().unwrap();let mut frozen=seed("fallback",StoragePolicy::History);
+    frozen.mode_snapshot=store.mode_snapshot("structure",None).unwrap();let src=source("fallback");
+    store.checkpoint_source(frozen.clone(),src.clone()).unwrap();let mut result=output("fallback");
+    result.mode_snapshot=frozen.mode_snapshot;result.rewrite_fallback=Some(RewriteFallbackReason::Timeout);
+    result.blocks=vec![OutputBlock{id:"fallback-block".into(),text:src.text(),source_refs:src.items.iter().map(|item|item.id.clone()).collect()}];
+    let mut forged=result.clone();forged.blocks[0].text="模型编造的结论".into();assert!(store.commit_ready(forged).is_err());
+    let initial=store.commit_ready(result).unwrap().output.unwrap();
+    assert_eq!(initial.resolved_mode,BaseMode::Light);assert_eq!(initial.mode_snapshot.base_mode,BaseMode::Structure);
+    let mut blocks=initial.blocks.clone();blocks[0].text="用户主动修改后的内容".into();
+    let edited=store.edit_output("fallback",&initial.id,blocks,"later").unwrap().output.unwrap();
+    assert!(edited.rewrite_fallback.is_none());
+    let restored=store.undo_output("fallback",&edited.id,"later-again").unwrap().output.unwrap();
+    assert_eq!(restored.rewrite_fallback,Some(RewriteFallbackReason::Timeout));assert_eq!(restored.text(),src.text());
+    assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
+}
 
 fn term_patch()->CorrectionPatch {CorrectionPatch{block_id:"block-1".into(),start:0,end:2,expected_text:"会议".into(),replacement:"SpeakMode".into()}}
 
@@ -164,6 +192,51 @@ fn migrations_and_preferences_survive_reopen_without_mode_or_key_fields() {
     let path=path();
     {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),3);}
     let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),2);
+    drop(store);fs::remove_file(path).unwrap();
+}
+#[test]
+fn legacy_preferences_leave_soft_voice_disabled_and_preserve_existing_values() {
+    let store=Store::in_memory().unwrap();
+    let legacy=r#"{"version":7,"shortcut":"alt_right","microphoneId":"wasapi:Existing mic","language":"zh","defaultModeId":"structure","deliveryMode":"preview","keepHistory":false,"launchAtLogin":true}"#;
+    store.test_connection().execute("UPDATE preferences SET version=7,data=?1 WHERE singleton=1",[legacy]).unwrap();
+    let loaded=store.preferences().unwrap();
+    assert!(!loaded.soft_voice_enabled);
+    assert_eq!(loaded.version,7);
+    assert_eq!(loaded.microphone_id.as_deref(),Some("wasapi:Existing mic"));
+    assert_eq!(loaded.language,"zh");
+    assert_eq!(loaded.default_mode_id,"structure");
+    assert_eq!(loaded.delivery_mode,DeliveryMode::Preview);
+    assert!(!loaded.keep_history);
+    assert!(loaded.launch_at_login);
+    let mut malformed=serde_json::from_str::<serde_json::Value>(legacy).unwrap();
+    malformed["softVoiceEnabled"]=serde_json::json!("true");
+    assert!(serde_json::from_value::<Preferences>(malformed).is_err());
+}
+#[test]
+fn soft_voice_preference_survives_reopen_and_reset_without_changing_mode() {
+    let path=path();
+    {
+        let mut store=Store::open(&path).unwrap();
+        let mut prefs=store.preferences().unwrap();
+        assert!(!prefs.soft_voice_enabled);
+        prefs.soft_voice_enabled=true;
+        prefs.default_mode_id="structure".into();
+        let saved=store.save_preferences(prefs,1).unwrap();
+        assert_eq!(saved.version,2);
+        assert!(saved.soft_voice_enabled);
+    }
+    {
+        let mut store=Store::open(&path).unwrap();
+        let loaded=store.preferences().unwrap();
+        assert!(loaded.soft_voice_enabled);
+        assert_eq!(loaded.default_mode_id,"structure");
+        assert_eq!(serde_json::to_value(&loaded).unwrap()["softVoiceEnabled"],true);
+        let reset=store.reset_preferences(loaded.version).unwrap();
+        assert!(!reset.soft_voice_enabled);
+        assert_eq!(reset.version,3);
+    }
+    let store=Store::open(&path).unwrap();
+    assert!(!store.preferences().unwrap().soft_voice_enabled);
     drop(store);fs::remove_file(path).unwrap();
 }
 #[test]

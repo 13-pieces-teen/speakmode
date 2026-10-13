@@ -1,0 +1,254 @@
+{
+  "version": "0.2.5",
+  "baselineCommit": "df811f802f09402e639582ca0d77bf604eb27a81",
+  "evaluation": "Offline replay of unchanged synthetic-text provider responses; Agent review, not blinded or human; no new cloud calls, audio or host delivery tests",
+  "calls": 240,
+  "newAcceptedCalls": 11,
+  "newAcceptedUniqueTexts": 8,
+  "newAcceptedFidelityPass": 11,
+  "newAcceptedCriticalErrors": 0,
+  "additionalFullTaskPass": 7,
+  "combinedFullTaskBefore": 115,
+  "combinedFullTaskAfter": 122,
+  "newlyBlockedPriorCritical": 3,
+  "previousFidelityPassNewlyRejected": 0,
+  "regressions": {
+    "total": 21,
+    "passed": 19,
+    "failed": 2
+  },
+  "postReviewChallenges": {
+    "total": 13,
+    "passed": 13,
+    "failed": 0
+  },
+  "remainingRegressionFailures": [
+    {
+      "actualAccepted": false,
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理",
+        "stage": "rewrite"
+      },
+      "expectedAccepted": true,
+      "id": "targeted-count-correction/correct-target",
+      "passed": false,
+      "reason": "只修改明确指向林老师的数量，保留赵老师数量。",
+      "sourceItems": [
+        "给林老师留十八份，给赵老师留七份。",
+        "等一下，林老师的改成二十一份，赵老师仍然七份。"
+      ],
+      "text": "给林老师留二十一份，给赵老师留七份。"
+    },
+    {
+      "actualAccepted": true,
+      "error": null,
+      "expectedAccepted": false,
+      "id": "unrelated-number/lost-number",
+      "passed": false,
+      "reason": "独立房号不能因其他数量仍在而被遗漏。",
+      "sourceItems": [
+        "楼层是八楼，房间是八零二。"
+      ],
+      "text": "房间在八楼。"
+    }
+  ],
+  "parserSummary": {
+    "after": {
+      "accepted": 190,
+      "acceptedMissingSemanticReview": 11,
+      "acceptedPriorCritical": 0,
+      "acceptedPriorFidelityPass": 177,
+      "acceptedPriorReviewed": 179,
+      "acceptedPriorTaskPass": 115,
+      "notReplayed": 0,
+      "rejected": 50,
+      "total": 240
+    },
+    "before": {
+      "accepted": 182,
+      "acceptedMissingSemanticReview": 0,
+      "acceptedPriorCritical": 3,
+      "acceptedPriorFidelityPass": 177,
+      "acceptedPriorReviewed": 182,
+      "acceptedPriorTaskPass": 115,
+      "notReplayed": 0,
+      "rejected": 58,
+      "total": 240
+    },
+    "bySplitArm": {
+      "confirmation/baseline-flash": {
+        "after": {
+          "accepted": 42,
+          "acceptedMissingSemanticReview": 5,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 35,
+          "acceptedPriorReviewed": 37,
+          "acceptedPriorTaskPass": 22,
+          "notReplayed": 0,
+          "rejected": 30,
+          "total": 72
+        },
+        "before": {
+          "accepted": 37,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 35,
+          "acceptedPriorReviewed": 37,
+          "acceptedPriorTaskPass": 22,
+          "notReplayed": 0,
+          "rejected": 35,
+          "total": 72
+        }
+      },
+      "confirmation/typed-flash": {
+        "after": {
+          "accepted": 60,
+          "acceptedMissingSemanticReview": 6,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 54,
+          "acceptedPriorReviewed": 54,
+          "acceptedPriorTaskPass": 34,
+          "notReplayed": 0,
+          "rejected": 12,
+          "total": 72
+        },
+        "before": {
+          "accepted": 57,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 3,
+          "acceptedPriorFidelityPass": 54,
+          "acceptedPriorReviewed": 57,
+          "acceptedPriorTaskPass": 34,
+          "notReplayed": 0,
+          "rejected": 15,
+          "total": 72
+        }
+      },
+      "screen/baseline-flash": {
+        "after": {
+          "accepted": 20,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 20,
+          "acceptedPriorReviewed": 20,
+          "acceptedPriorTaskPass": 12,
+          "notReplayed": 0,
+          "rejected": 4,
+          "total": 24
+        },
+        "before": {
+          "accepted": 20,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 20,
+          "acceptedPriorReviewed": 20,
+          "acceptedPriorTaskPass": 12,
+          "notReplayed": 0,
+          "rejected": 4,
+          "total": 24
+        }
+      },
+      "screen/fewshot-flash": {
+        "after": {
+          "accepted": 21,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 21,
+          "acceptedPriorReviewed": 21,
+          "acceptedPriorTaskPass": 13,
+          "notReplayed": 0,
+          "rejected": 3,
+          "total": 24
+        },
+        "before": {
+          "accepted": 21,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 21,
+          "acceptedPriorReviewed": 21,
+          "acceptedPriorTaskPass": 13,
+          "notReplayed": 0,
+          "rejected": 3,
+          "total": 24
+        }
+      },
+      "screen/typed-flash": {
+        "after": {
+          "accepted": 24,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 24,
+          "acceptedPriorReviewed": 24,
+          "acceptedPriorTaskPass": 17,
+          "notReplayed": 0,
+          "rejected": 0,
+          "total": 24
+        },
+        "before": {
+          "accepted": 24,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 24,
+          "acceptedPriorReviewed": 24,
+          "acceptedPriorTaskPass": 17,
+          "notReplayed": 0,
+          "rejected": 0,
+          "total": 24
+        }
+      },
+      "screen/typed-plus": {
+        "after": {
+          "accepted": 23,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 23,
+          "acceptedPriorReviewed": 23,
+          "acceptedPriorTaskPass": 17,
+          "notReplayed": 0,
+          "rejected": 1,
+          "total": 24
+        },
+        "before": {
+          "accepted": 23,
+          "acceptedMissingSemanticReview": 0,
+          "acceptedPriorCritical": 0,
+          "acceptedPriorFidelityPass": 23,
+          "acceptedPriorReviewed": 23,
+          "acceptedPriorTaskPass": 17,
+          "notReplayed": 0,
+          "rejected": 1,
+          "total": 24
+        }
+      }
+    },
+    "transitions": {
+      "accepted->accepted": 179,
+      "accepted->rejected": 3,
+      "rejected->accepted": 11,
+      "rejected->rejected": 47
+    }
+  },
+  "nativeTests": {
+    "passed": 509,
+    "failed": 0,
+    "ignored": 3
+  },
+  "exampleTests": 15,
+  "pythonTests": 29,
+  "sourceHashes": {
+    "candidates": "8b4e2b5ea7bee795def074f6988de956e1b16e11bbbf1e42b729b854812cb18b",
+    "corpus": "ce8dd6198703b696325181e2b188118ebff5ac3ec83545b74f45aaff1c0bb972",
+    "rewrite": "8478cb8cd4b3063ab9939c2d38eca5274a1d1c35f1d4298835a8c56ad66a0b68",
+    "rewriteFacts": "97e47dd7b7eddf352136cf4af34e7e2755a0cbf08c551b95a3e76bde8c12d9f4",
+    "rewriteIntegrity": "fcfbbf2b329f8f138f8111800137270f3ef1a88b98669a499e55d0d3f4ff4f0a",
+    "rewriteSemantics": "cc39bf555d7cb0654c809dec5749866e9a50b5641fab9deca1d49df283b4fbd4"
+  },
+  "receiptHashes": {
+    "replay-r1.json": "e39bcd3b33ea5e0157df20cbc8420417a98ff54b0952334ae03eff6fd4995a3b",
+    "replay-final.json": "82bbd202a066a29425631c3c811216d23a757445d1137dcec1c791444a1d5762",
+    "new-acceptance-review-r1.json": "91b70bba68b27bc63099db234f87a3b0f987e552050702167edcf760cbee22dc"
+  },
+  "reviewStillAppliesToFinalReplay": true,
+  "productionDefault": "baseline-flash / mode-contract-v1; typed remains experimental"
+}

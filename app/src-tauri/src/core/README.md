@@ -31,6 +31,8 @@ History: `history_list(query, cursor_offset, limit)`, `history_get`, `delete_his
 
 Versions: `adopt_candidate(session, expected_revision, candidate)`, `edit_output(session, expected_revision, blocks, created_at)`, `restore_output(session, expected_revision, RestorePatch, created_at)`, `undo_output(session, expected_revision, created_at)`. All return `HistoryDetail`. Source references must belong to the bound immutable source revision. Restore uses explicit user-selected Unicode scalar ranges; it does not infer reliable semantic alignment.
 
+From 0.2.18, the engine's explicit history editor returns a transient candidate plus review findings. `revision.adopt` may carry the user's `reviewedText`; edits are bound to the cached candidate's complete source set, without inferring ASR ranges from display diffs. Candidate ID, unchanged base, source identity and cancellation guards remain authoritative. Human adoption never grants automatic delivery permission. See the [review plan](../../../../docs/plans/candidate-review-0.2.18.md).
+
 Usage: `usage_event(session_id)` / `usage_today(local_date)`. Unicode source count excludes punctuation/whitespace/symbols/controls and counts letters/numbers/marks; actual source text is authoritative. Version changes, copies, deleted history and delivery status do not change statistics.
 
 Delivery: `prepare_delivery(attempt)` write-ahead commits one opaque permission per session. It checks Ready/normalInitial/current output/generation/Usage; caller separately checks direct preference, target and cancel/quit immediately before dispatch. `transition_delivery(attempt_id, expected_state, next_state, reason_code)` refuses terminal reset/reuse.

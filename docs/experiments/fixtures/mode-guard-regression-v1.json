@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "mode-guard-regression-v1",
+  "provenance": "AI-authored synthetic guard regression cases, independently prepared before running the new guard. No user recordings or history. These expectations are engineering specifications, not human ratings or a held-out quality benchmark.",
+  "scope": "Offline production parser checks only. An expected acceptance means the supplied paraphrase preserves the specified relationship; acceptance never proves general semantic fidelity. Negative cases must remain blocked. No model calls, microphone, credentials or application database access.",
+  "cases": [
+    {
+      "id": "fragment-negation",
+      "sourceItems": ["讲座十一点开始，不是", "说十一点签到，签到是十点半。"],
+      "outputs": [
+        {"id": "joined", "expectedAccepted": true, "text": "讲座十一点开始，不是说十一点签到，签到是十点半。", "reason": "跨片段的不是说修饰签到，不否定十一点开场。"},
+        {"id": "period-break", "expectedAccepted": false, "text": "讲座十一点开始不是。说十一点签到，签到是十点半。", "reason": "标点把否定断开，产生十一点签到的错误断言。"},
+        {"id": "comma-break", "expectedAccepted": false, "text": "讲座十一点开始不是，说十一点签到，签到是十点半。", "reason": "逗号也不能让不是脱离原本否定的签到命题。"}
+      ]
+    },
+    {
+      "id": "fragment-condition",
+      "sourceItems": ["如果审批没有通过，", "先不要发合同，周五仍然要交预算。"],
+      "outputs": [
+        {"id": "preserved", "expectedAccepted": true, "text": "如果审批没有通过，先不要发合同。周五仍然要交预算。", "reason": "保留审批条件、不发合同以及独立的预算截止日。"},
+        {"id": "negation-removed", "expectedAccepted": false, "text": "如果审批没有通过，先发合同。周五仍然要交预算。", "reason": "移除合同动作的否定，必须拦截。"}
+      ]
+    },
+    {
+      "id": "date-correction-after-location",
+      "sourceItems": ["预约周二下午见面。", "地点在南门咖啡厅。", "我说错了，是周三下午。"],
+      "outputs": [
+        {"id": "correct-target", "expectedAccepted": true, "text": "预约周三下午在南门咖啡厅见面。", "reason": "改口针对日期；中间插入的地点不能被当成撤回对象。"},
+        {"id": "keeps-old-date", "expectedAccepted": false, "text": "预约周二下午在南门咖啡厅见面。", "reason": "仅保留旧日期而丢弃最终修正，必须拦截。"}
+      ]
+    },
+    {
+      "id": "targeted-count-correction",
+      "sourceItems": ["给林老师留十八份，给赵老师留七份。", "等一下，林老师的改成二十一份，赵老师仍然七份。"],
+      "outputs": [
+        {"id": "correct-target", "expectedAccepted": true, "text": "给林老师留二十一份，给赵老师留七份。", "reason": "只修改明确指向林老师的数量，保留赵老师数量。"},
+        {"id": "drops-correction", "expectedAccepted": false, "text": "给林老师留十八份，给赵老师留七份。", "reason": "旧数量不能覆盖最后一次明确更正。"}
+      ]
+    },
+    {
+      "id": "question-not-negative",
+      "sourceItems": ["确认一下现在能不能上传附件。"],
+      "outputs": [
+        {"id": "question-paraphrase", "expectedAccepted": true, "text": "确认一下现在能否上传附件。", "reason": "能不能与能否都是未决疑问，不是不能上传。"},
+        {"id": "assertion", "expectedAccepted": false, "text": "现在不能上传附件。", "reason": "把未知疑问变成确定否定，必须拦截。"}
+      ]
+    },
+    {
+      "id": "real-negative",
+      "sourceItems": ["现在不能上传附件，权限还没开。"],
+      "outputs": [
+        {"id": "preserved", "expectedAccepted": true, "text": "权限还没开，现在不能上传附件。", "reason": "真实否定仍需要保护，不能通过疑问豁免全局放宽。"},
+        {"id": "reversed", "expectedAccepted": false, "text": "权限还没开，现在能上传附件。", "reason": "真实否定被反转。"}
+      ]
+    },
+    {
+      "id": "only-quantity",
+      "sourceItems": ["备用电池只有三块，先放在抽屉。"],
+      "outputs": [
+        {"id": "quantity-paraphrase", "expectedAccepted": true, "text": "备用电池仅三块，先放在抽屉。", "reason": "只有三块是数量范围，不是只有条件才动作。"},
+        {"id": "changed-count", "expectedAccepted": false, "text": "备用电池仅五块，先放在抽屉。", "reason": "数量改写必须被拦截。"}
+      ]
+    },
+    {
+      "id": "only-necessary-condition",
+      "sourceItems": ["只有确认电池充满，我们才出发。"],
+      "outputs": [
+        {"id": "preserved", "expectedAccepted": true, "text": "只有确认电池充满，我们才出发。", "reason": "真正的只有才必要条件仍受保护。"},
+        {"id": "condition-removed", "expectedAccepted": false, "text": "我们出发，再确认电池充满。", "reason": "把出发前提变成事后动作，必须拦截。"}
+      ]
+    },
+    {
+      "id": "no-change-paraphrase",
+      "sourceItems": ["标题先不改，正文今天更新。"],
+      "outputs": [
+        {"id": "equivalent-negative", "expectedAccepted": true, "text": "标题暂不更改，正文今天更新。", "reason": "先不改和暂不更改语义等价。"},
+        {"id": "negative-removed", "expectedAccepted": false, "text": "标题先改，正文今天更新。", "reason": "不能因为允许词形变化就放过动作反转。"}
+      ]
+    },
+    {
+      "id": "unrelated-number",
+      "sourceItems": ["楼层是八楼，房间是八零二。"],
+      "outputs": [
+        {"id": "preserved", "expectedAccepted": true, "text": "房间在八楼，房号是八零二。", "reason": "来源数量和房号均保留。"},
+        {"id": "lost-number", "expectedAccepted": false, "text": "房间在八楼。", "reason": "独立房号不能因其他数量仍在而被遗漏。"}
+      ]
+    }
+  ]
+}

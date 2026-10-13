@@ -1,0 +1,307 @@
+{
+  "date": "2026-10-12",
+  "status": "RESEARCH_NOT_PROMOTED",
+  "appVersionUnchanged": "0.2.16",
+  "cloudCalls": 23,
+  "plannedCap": 24,
+  "nativeAudioTest": "NOT_RUN",
+  "nativeInputTest": "NOT_RUN",
+  "generationHoldoutFlows": "NOT_RUN_AFTER_CRITICAL_REVIEW_FAILURE",
+  "note": "Two reviewers missed changed verbatim quotation; six-case set now exposed. No general quality guarantee.",
+  "arms": [
+    {
+      "arm": "baseline-flow",
+      "receiptSha256": "cd8f55e5be30db8c47a8846534a380e6e86d663103403b1060f7ff312d94dfac",
+      "cloudCalls": 1,
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "reject",
+          "elapsedMs": 10324,
+          "generationElapsedMs": 10253,
+          "reviewElapsedMs": null,
+          "expectedDecision": null,
+          "expectationMet": null,
+          "generationPromptVersion": null,
+          "reviewParser": null
+        }
+      ]
+    },
+    {
+      "arm": "long-flash",
+      "receiptSha256": "dde8b08fd12219b12af1c5ad535229d05277f13ac65b2c84daf47b32517d0cb9",
+      "cloudCalls": 2,
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "accept",
+          "elapsedMs": 9417,
+          "generationElapsedMs": 8145,
+          "reviewElapsedMs": 1142,
+          "expectedDecision": null,
+          "expectationMet": null,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        }
+      ]
+    },
+    {
+      "arm": "long-plus",
+      "receiptSha256": "7689a030d4e61326853c71e8b7aa00de9317365fb787d252974f7044327267c7",
+      "cloudCalls": 1,
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "reject",
+          "elapsedMs": 10852,
+          "generationElapsedMs": 10746,
+          "reviewElapsedMs": null,
+          "expectedDecision": null,
+          "expectationMet": null,
+          "generationPromptVersion": null,
+          "reviewParser": null
+        }
+      ]
+    },
+    {
+      "arm": "protected-flash",
+      "receiptSha256": "2623f5391acf6431808f6bb1eb8498c2805fbff5329a2beb7666e583aaf3778f",
+      "cloudCalls": 1,
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "reject",
+          "elapsedMs": 20024,
+          "generationElapsedMs": 20003,
+          "reviewElapsedMs": null,
+          "expectedDecision": null,
+          "expectationMet": null,
+          "generationPromptVersion": "long-dictation-v1+protected-long-v1",
+          "reviewParser": null
+        }
+      ]
+    },
+    {
+      "arm": "protected-plus",
+      "receiptSha256": "30cb31483149ed7c0dae6d3e2310e58add3b862755b224a8d2979ac73db2b81f",
+      "cloudCalls": 1,
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "reject",
+          "elapsedMs": 20028,
+          "generationElapsedMs": 20005,
+          "reviewElapsedMs": null,
+          "expectedDecision": null,
+          "expectationMet": null,
+          "generationPromptVersion": "long-dictation-v1+protected-long-v1",
+          "reviewParser": null
+        }
+      ]
+    },
+    {
+      "arm": "frozen-plus-review",
+      "receiptSha256": "76335c10b72821d752e4f4483e237564739826b4bbe14af58a35b9784c2f22c0",
+      "cloudCalls": 3,
+      "results": [
+        {
+          "caseId": "FROZEN1",
+          "decision": "reject",
+          "elapsedMs": 4160,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 4050,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "FROZEN2",
+          "decision": "reject",
+          "elapsedMs": 4133,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 3967,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "failed"
+        },
+        {
+          "caseId": "FROZEN3",
+          "decision": "reject",
+          "elapsedMs": 3800,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 3655,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        }
+      ]
+    },
+    {
+      "arm": "protected-v2-flash",
+      "receiptSha256": "69a31c8cabfaf9dd7ebbb012f1c6ab9ee389c1cc3b3ff572b906b19d32367804",
+      "cloudCalls": 2,
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "accept",
+          "elapsedMs": 14605,
+          "generationElapsedMs": 13255,
+          "reviewElapsedMs": 1209,
+          "expectedDecision": null,
+          "expectationMet": null,
+          "generationPromptVersion": "long-dictation-v1+protected-long-v2",
+          "reviewParser": "passed"
+        }
+      ]
+    },
+    {
+      "arm": "holdout-review-flash",
+      "receiptSha256": "8739ceef05ffb284b6bfece6bb06ee2409130be29bf34e865a7f648f1bcbc37d",
+      "cloudCalls": 6,
+      "results": [
+        {
+          "caseId": "LC-H01",
+          "decision": "accept",
+          "elapsedMs": 1011,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 969,
+          "expectedDecision": "accept",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H02",
+          "decision": "reject",
+          "elapsedMs": 3544,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 3486,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "failed"
+        },
+        {
+          "caseId": "LC-H03",
+          "decision": "accept",
+          "elapsedMs": 1418,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 1347,
+          "expectedDecision": "accept",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H04",
+          "decision": "accept",
+          "elapsedMs": 810,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 746,
+          "expectedDecision": "reject",
+          "expectationMet": false,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H05",
+          "decision": "reject",
+          "elapsedMs": 3109,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 3043,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H06",
+          "decision": "accept",
+          "elapsedMs": 1126,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 1041,
+          "expectedDecision": "accept",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        }
+      ]
+    },
+    {
+      "arm": "holdout-review-plus",
+      "receiptSha256": "21a8962100ef067f3ca1691ebc816843a12f33be55bb0329aa19551c5cb5f216",
+      "cloudCalls": 6,
+      "results": [
+        {
+          "caseId": "LC-H01",
+          "decision": "accept",
+          "elapsedMs": 1711,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 1666,
+          "expectedDecision": "accept",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H02",
+          "decision": "reject",
+          "elapsedMs": 3392,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 3329,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "failed"
+        },
+        {
+          "caseId": "LC-H03",
+          "decision": "accept",
+          "elapsedMs": 1244,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 1170,
+          "expectedDecision": "accept",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H04",
+          "decision": "accept",
+          "elapsedMs": 1467,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 1394,
+          "expectedDecision": "reject",
+          "expectationMet": false,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H05",
+          "decision": "reject",
+          "elapsedMs": 3332,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 3239,
+          "expectedDecision": "reject",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        },
+        {
+          "caseId": "LC-H06",
+          "decision": "accept",
+          "elapsedMs": 1462,
+          "generationElapsedMs": null,
+          "reviewElapsedMs": 1388,
+          "expectedDecision": "accept",
+          "expectationMet": true,
+          "generationPromptVersion": null,
+          "reviewParser": "passed"
+        }
+      ]
+    }
+  ]
+}

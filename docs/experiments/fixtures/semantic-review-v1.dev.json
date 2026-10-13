@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "status": "DEV_FROZEN_BEFORE_FIRST_REQUEST",
+  "scope": "synthetic review protocol development only",
+  "cases": [
+    {
+      "id": "D01",
+      "sourceItems": [
+        "嗯，现在我来测试这个工具的一个运行形式吧。"
+      ],
+      "draft": "现在我来测试这个工具的运行形式。",
+      "expectedDecision": "accept",
+      "reason": "移除泛指占位，不改变正在测试运行形式。"
+    },
+    {
+      "id": "D02",
+      "sourceItems": [
+        "我要检查三个方面，第一点是声音有没有断，第二点是字幕是否及时，第三点是能不能恢复原稿。"
+      ],
+      "draft": "我要检查三个方面：\n1. 声音有没有断\n2. 字幕是否及时\n3. 能不能恢复原稿",
+      "expectedDecision": "accept",
+      "reason": "三项完整问题与总数仍在，明确列表排版。"
+    },
+    {
+      "id": "D03",
+      "sourceItems": [
+        "预算是三千元，不是五千元。"
+      ],
+      "draft": "预算是五千元。",
+      "expectedDecision": "reject",
+      "reason": "修改了肯定预算并删去原否定对比。"
+    },
+    {
+      "id": "D04",
+      "sourceItems": [
+        "如果测试通过，才发给同学。正式报告今天照常提交。"
+      ],
+      "draft": "如果测试通过，就发给同学并在今天提交正式报告。",
+      "expectedDecision": "reject",
+      "reason": "将无条件报告提交合并进测试条件。"
+    },
+    {
+      "id": "D05",
+      "sourceItems": [
+        "周三下午三点开会，时间说错了，是周四，其他不变。"
+      ],
+      "draft": "周四下午三点开会。",
+      "expectedDecision": "accept",
+      "reason": "明确更正日期保留同一时间。"
+    },
+    {
+      "id": "D06",
+      "sourceItems": [
+        "我在想能不能先精简导航；或者等访谈结束，再把设置单独放一页。"
+      ],
+      "draft": "我在想能不能先精简导航，或者等访谈结束再把设置单独放一页。",
+      "expectedDecision": "accept",
+      "reason": "保留试探语气、两个备选与后一方案时间条件。"
+    },
+    {
+      "id": "D07",
+      "sourceItems": [
+        "先保留一个账户，再为同学另建一个账户。"
+      ],
+      "draft": "先保留一个账户。",
+      "expectedDecision": "reject",
+      "reason": "删掉另建账户的独立事项。"
+    },
+    {
+      "id": "D08",
+      "sourceItems": [
+        "嗯，就是呃，我现在这个，呃，想问一下能不能打开那个设置？"
+      ],
+      "draft": "嗯，就是呃，我现在这个，呃，想问一下能不能打开那个设置？",
+      "expectedDecision": "reject",
+      "reason": "明显卡顿未清理，应拒绝质量不合格原样候选。"
+    }
+  ]
+}

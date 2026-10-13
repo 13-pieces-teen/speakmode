@@ -12,7 +12,11 @@ export function SessionRecovery({onOpen}:{onOpen:(id:string)=>void}) {
  if(!s)return null;
  const phase=s.state.toLowerCase(),ongoing=['starting','recording','finalizingasr','rewriting'].includes(phase),problem=['failed','incomplete'].includes(phase);
  const delivery=deliveryFeedback(s);
- if(!ongoing&&!problem&&!delivery)return null;
+ // A normal dispatch receipt is internal bookkeeping, not a recovery task.
+ // Keep genuine delivery/storage problems actionable without claiming receipt
+ // by the target app or issuing another paste/navigation side effect.
+ const needsAttention=delivery?.warning||(phase==='ready'&&Boolean(s.error));
+ if(!ongoing&&!problem&&!needsAttention)return null;
  async function act(name:string){
   if(operation.current||!s)return;operation.current=true;setBusy(name);setError('');setNotice('');
   const expectedIdentity=identity;

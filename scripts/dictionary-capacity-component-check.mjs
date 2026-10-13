@@ -26,7 +26,8 @@ export const useCallback=(fn,deps)=>useMemo(()=>fn,deps);
 export const useDesktop=()=>desktop,useNavigationGuard=()=>navigation;
 export const focusInView=()=>{},errorMessage=value=>value.message??String(value);
 export const Button='button',IconButton='button',TextArea='textarea',TextField={Root:'input',Slot:'slot'};
-export const CheckIcon='svg',Cross2Icon='svg',MagnifyingGlassIcon='svg',Pencil2Icon='svg',PlusIcon='svg',ReaderIcon='svg',ReloadIcon='svg',TrashIcon='svg';
+export const Dialog={Root:'dialog-root',Content:'dialog',Title:'h2',Description:'p',Close:'close'},AlertDialog={Root:'alert-root',Content:'alertdialog',Title:'h2',Description:'p',Cancel:'cancel',Action:'action'},DropdownMenu={Root:'menu-root',Trigger:'trigger',Content:'menu',Item:'menuitem',Separator:'hr'};
+export const CheckIcon='svg',Cross2Icon='svg',MagnifyingGlassIcon='svg',Pencil2Icon='svg',PlusIcon='svg',ReaderIcon='svg',ReloadIcon='svg',TrashIcon='svg',DotsHorizontalIcon='svg',ChevronDownIcon='svg';
 export const Fragment='fragment',element=(type,props,...children)=>({type,props:{...props,children:children.length===1?children[0]:children}});
 `);
 const source=await readFile(root+'/app/src/pages/DictionaryPage.tsx','utf8');
@@ -78,13 +79,13 @@ await test('Editing previews a replacement before save, warns at 4001 bytes and 
 await test('A full dictionary still submits Unicode-equivalent bulk terms unchanged for authoritative native deduplication',async()=>{
  const terms=['Straße',...Array.from({length:199},(_,i)=>'term'+i)],env=setup(terms,async(name,payload,desktop)=>{
   assert.equal(name,'dictionary.import');assert.deepEqual(payload,{terms:['STRASSE'],expectedVersion:1});return desktop.dictionary;
- });await env.settle();button(env.render(),'批量添加').props.onClick();env.fill('STRASSE');
+ });await env.settle();button(env.render(),'新词').props.onClick();button(env.render(),'批量添加').props.onClick();env.fill('STRASSE');
  const tree=env.render();assert.match(text(tree),/重复词尚未合并/);assert.match(text(tree),/合并前 201 条/);assert.equal(button(tree,'添加词条').props.disabled,false);
  await env.save();assert.match(text(env.render()),/已添加 0 个词条，跳过 1 个重复词条/);assert.equal(env.desktop.dictionary.entries.length,200);
  assert.equal(env.calls.filter(call=>call.name==='dictionary.import').length,1);
 });
 await test('Native capacity rejection retains the whole draft and never claims a partial save',async()=>{
- const env=setup([],async()=>{throw new Error('词库超出容量限制，未保存。');});await env.settle();button(env.render(),'批量添加').props.onClick();
+ const env=setup([],async()=>{throw new Error('词库超出容量限制，未保存。');});await env.settle();button(env.render(),'新词').props.onClick();button(env.render(),'批量添加').props.onClick();
  const value=Array.from({length:20},(_,i)=>'术'.repeat(70)+'-'+i).join('\n');env.fill(value);assert.match(text(env.render()),/可能超出/);
  await assert.rejects(env.save(),/容量限制/);const tree=env.render();assert.equal(find(tree,node=>node.type==='textarea').props.value,value);
  assert.match(text(tree),/词库超出容量限制，未保存/);assert.doesNotMatch(text(tree),/已添加 \d/);assert.equal(env.desktop.dictionary.entries.length,0);

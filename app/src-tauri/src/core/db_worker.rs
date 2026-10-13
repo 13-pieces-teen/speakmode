@@ -143,7 +143,7 @@ fn finish_job(shared:&Shared,job:Job,result:StoreResult<DbValue>){
  job.outcome.complete(result);
 }
 fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Receiver<Job>,critical:Receiver<Job>,cleanup:Receiver<Job>,wake:Receiver<()>,boot:Sender<StoreResult<()>>){
- let opened=(||{let mut store=if let Some(path)=path{Store::open(path)?}else{Store::in_memory()?};store.recover_after_restart()?;refresh(&store,&shared,&today())?;Ok::<_,StoreError>(store)})();
+ let opened=(||{let mut store=if let Some(path)=path{Store::open(path)?}else{Store::in_memory()?};store.apply_app_upgrades()?;store.recover_after_restart()?;refresh(&store,&shared,&today())?;Ok::<_,StoreError>(store)})();
  let mut store=match opened{Ok(store)=>{let _=boot.send(Ok(()));store},Err(error)=>{let _=boot.send(Err(error.clone()));shared.owner_released.store(true,Ordering::SeqCst);shared.shutdown.complete(Err(error));return;}};
  let mut critical_streak=0;let mut fatal=None;
  loop{
@@ -179,6 +179,9 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
    if let Some(error)=store.health_error(){return Err(error);}
    // A successfully committed write is never relabelled failed because this read fails.
    if result.is_ok()&&writes{
+    // The next session must freeze the committed model, region, and version even
+    // if an unrelated snapshot query fails after the provider update commits.
+    if let Ok(DbValue::ProviderConfig(config))=&result {if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){snapshot.provider_config=config.clone();snapshot.revision=snapshot.revision.saturating_add(1);}}
     // Publish the committed vocabulary even if an unrelated full-cache read fails.
     // Deleted terms cannot survive in the session-start cache after a successful delete.
     if let Ok(DbValue::Dictionary(dictionary))=&result {if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){snapshot.dictionary=dictionary.clone();snapshot.revision=snapshot.revision.saturating_add(1);}}

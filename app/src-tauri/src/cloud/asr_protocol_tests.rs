@@ -278,3 +278,18 @@ fn wire_event_history_is_bounded_and_unknown_wire_strings_are_not_retained() {
     drop(diagnostics);let wire=latest.lock().unwrap().clone().unwrap();assert!(wire.terminated);
     assert_eq!(wire.observed_events,100);assert_eq!(wire.event_counts[AsrEventKind::Unknown as usize],100);
 }
+
+#[test]
+fn dictionary_diagnostics_bind_frozen_version_without_words_or_effectiveness_claims() {
+    let latest=Arc::new(Mutex::new(None)); let mut diagnostics=WireDiagnostics::new(observe_wire(latest.clone()));
+    let dictionary=crate::core::DictionarySnapshot { version:7, entries:vec![crate::core::DictionaryEntry {
+        id:"private-id".into(),term:"PRIVATE_PERSONAL_TERM".into(),created_at:String::new(),updated_at:String::new() }] };
+    diagnostics.dictionary(&ProviderConfig::default(),&dictionary,0,1).unwrap();
+    let planned=diagnostics.metadata.relative_to(Instant::now()).dictionary.unwrap();
+    assert_eq!(planned.version,7); assert_eq!(planned.entry_count,1); assert!(!planned.socket_written);
+    diagnostics.dictionary_written();
+    let written=diagnostics.metadata.relative_to(Instant::now()).dictionary.unwrap();
+    assert!(written.socket_written); assert!(!written.effectiveness_verified);
+    let wire=serde_json::to_string(&written).unwrap();
+    assert!(!wire.contains("PRIVATE_PERSONAL_TERM")); assert!(!wire.contains("private-id"));
+}

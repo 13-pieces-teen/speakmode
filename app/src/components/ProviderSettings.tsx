@@ -104,6 +104,7 @@ export function ProviderSettings() {
   const rewriteModels = provider.modelCatalog?.rewrite ?? [];
   const selectedAsr = asrModels.find(model => model.id === draft.asrModel);
   const selectedRewrite = rewriteModels.find(model => model.id === draft.rewriteModel);
+  const savedRewrite = rewriteModels.find(model => model.id === provider.config.rewriteModel);
   const modelsCompatible = Boolean(selectedAsr?.implemented && selectedAsr.adapterVersion && selectedRewrite?.implemented);
   const catalogReady = Boolean(provider.modelCatalog);
   const configSaved = (provider.config.region === 'beijing' || provider.config.region === 'singapore')
@@ -120,12 +121,27 @@ export function ProviderSettings() {
     <div className="settings-provider-status" aria-live="polite">
       <span>配置：{configSaved ? '已保存' : '未完成'}</span>
       <span>API Key：{available ? keyStatus : '仅桌面可查询'}</span>
+      <span>已保存的整理模型：{savedRewrite?.label ?? provider.config.rewriteModel}</span>
       <span>服务连接：尚未验证</span>
     </div>
     <p className="settings-control-hint">配置与 Key 的保存状态不代表网络或模型已经可用。实际请求仍可能遇到地域、权限、余额或连接错误。</p>
     {provider.message && <p className="settings-inline-note">{provider.message}</p>}
 
     <form onSubmit={event => { event.preventDefault(); void saveConfig(); }}>
+      <SettingRow title="整理模型" description="负责口语整理与文字排版。选择型号并保存后，用于下一次口述。" htmlFor="provider-rewrite-model">
+        <div className="settings-delivery-control">
+          <Select.Root value={draft.rewriteModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('rewriteModel', value)}>
+            <Select.Trigger id="provider-rewrite-model" aria-label="整理模型" aria-describedby="provider-rewrite-model-description provider-rewrite-model-id" className="settings-select" variant="surface" />
+            <Select.Content position="popper" sideOffset={6}>
+              {!selectedRewrite && <Select.Item value={draft.rewriteModel || UNSELECTED_MODEL} disabled>当前配置（尚未确认兼容）</Select.Item>}
+              {rewriteModels.map(model => <Select.Item key={model.id} value={model.id} disabled={!model.implemented}>{model.label}</Select.Item>)}
+            </Select.Content>
+          </Select.Root>
+          <p className="settings-control-hint" id="provider-rewrite-model-id">{selectedRewrite
+            ? `型号：${selectedRewrite.id}${draft.rewriteModel !== provider.config.rewriteModel ? ' · 尚未保存' : ''}`
+            : '请选择已接入的整理模型。'}</p>
+        </div>
+      </SettingRow>
       <SettingRow title="账号地域" description="选择 API Key 所属地域，必须与你的百炼账号配置一致。" htmlFor="provider-region">
         <Select.Root value={draft.region ?? UNSELECTED_REGION} disabled={disabled} onValueChange={value => edit('region', value === UNSELECTED_REGION ? null : value)}>
           <Select.Trigger id="provider-region" aria-label="账号地域" aria-describedby="provider-region-description" className="settings-select" variant="surface" />
@@ -155,15 +171,6 @@ export function ProviderSettings() {
             : '使用已有实时识别链路。词典通过旧接口传入，效果因词语与发音而异。'
           : '请选择已接入的实时识别模型。'}</p>
         </div>
-      </SettingRow>
-      <SettingRow title="整理模型" description="候选模型未做质量排名，实际可用性取决于账号权限与地域。" htmlFor="provider-rewrite-model">
-        <Select.Root value={draft.rewriteModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('rewriteModel', value)}>
-          <Select.Trigger id="provider-rewrite-model" aria-label="整理模型" aria-describedby="provider-rewrite-model-description" className="settings-select" variant="surface" />
-          <Select.Content position="popper" sideOffset={6}>
-            {!selectedRewrite && <Select.Item value={draft.rewriteModel || UNSELECTED_MODEL} disabled>当前配置（尚未确认兼容）</Select.Item>}
-            {rewriteModels.map(model => <Select.Item key={model.id} value={model.id} disabled={!model.implemented}>{model.label}</Select.Item>)}
-          </Select.Content>
-        </Select.Root>
       </SettingRow>
       {staleDraft && <p className="settings-inline-note">已保存配置发生变化。当前编辑内容仍保留；请重新载入后再修改，避免覆盖其他更改。</p>}
       <div className="settings-provider-actions">

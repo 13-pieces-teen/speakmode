@@ -1,0 +1,720 @@
+{
+  "schemaVersion": 1,
+  "version": "0.2.13",
+  "frontendVersion": "0.4.12",
+  "date": "2026-10-11",
+  "decision": {
+    "naturalProtocolPromoted": false,
+    "productionProtocol": "mode-contract-v1",
+    "defaultRewriteModel": "qwen3.8-flash",
+    "userConfigurationModified": false,
+    "reason": "Holdout complete usable 8/8 in both arms; private supplied sample still falls back; no confirmed candidate delivery gain."
+  },
+  "experiment": {
+    "actualCloudRequests": 68,
+    "automaticRetries": 0,
+    "model": "qwen3.8-flash",
+    "region": "beijing",
+    "sourceScope": "64 synthetic text calls plus 4 calls on user-supplied text; no audio",
+    "reviewScope": "Independent Agent blind text review, not human listening",
+    "rounds": [
+      {
+        "evidenceFile": "dev-score.json",
+        "sha256": "af275c8f44942d655aab6eb74ac280258d51f3e041a94f20f7a2ddd86ea5ad77",
+        "evaluationKind": "cloud_response_review",
+        "split": "dev",
+        "caseCount": 12,
+        "arms": {
+          "baseline": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 8,
+            "accepted": 9,
+            "acceptedAndUsable": 7,
+            "projectedFinalUsable": 7,
+            "projectedSourceFallback": 3,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 1,
+            "usableButRejected": 1,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [
+              {
+                "index": 12,
+                "caseId": "N07",
+                "trial": 1
+              }
+            ],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 10,
+              "tone": 11,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 8,
+              "readability": 10,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+              "count": 12,
+              "p50": 1223.0,
+              "p95": 2227.4,
+              "min": 908.0,
+              "max": 2300.0
+            }
+          },
+          "candidate": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 11,
+            "accepted": 10,
+            "acceptedAndUsable": 9,
+            "projectedFinalUsable": 9,
+            "projectedSourceFallback": 2,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 2,
+            "usableButRejected": 2,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [
+              {
+                "index": 1,
+                "caseId": "N01",
+                "trial": 1
+              },
+              {
+                "index": 13,
+                "caseId": "N07",
+                "trial": 1
+              }
+            ],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 12,
+              "tone": 12,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 9,
+              "readability": 11,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+              "count": 12,
+              "p50": 1324.5,
+              "p95": 2477.45,
+              "min": 1028.0,
+              "max": 2511.0
+            }
+          }
+        }
+      },
+      {
+        "evidenceFile": "dev-v2-score.json",
+        "sha256": "98d2d600fb22645c37d2dcf7699bb123681aa08ae028adf09e291f38cecad7d7",
+        "evaluationKind": "cloud_response_review",
+        "split": "dev",
+        "caseCount": 12,
+        "arms": {
+          "baseline": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 9,
+            "accepted": 10,
+            "acceptedAndUsable": 8,
+            "projectedFinalUsable": 8,
+            "projectedSourceFallback": 2,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 1,
+            "usableButRejected": 1,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [
+              {
+                "index": 12,
+                "caseId": "N07",
+                "trial": 1
+              }
+            ],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 12,
+              "readability": 9,
+              "tone": 12,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 10,
+              "readability": 9,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+              "count": 12,
+              "p50": 1153.0,
+              "p95": 2544.45,
+              "min": 1010.0,
+              "max": 2798.0
+            }
+          },
+          "candidate": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 11,
+            "accepted": 10,
+            "acceptedAndUsable": 9,
+            "projectedFinalUsable": 9,
+            "projectedSourceFallback": 2,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 2,
+            "usableButRejected": 2,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [
+              {
+                "index": 1,
+                "caseId": "N01",
+                "trial": 1
+              },
+              {
+                "index": 13,
+                "caseId": "N07",
+                "trial": 1
+              }
+            ],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 12,
+              "tone": 12,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 9,
+              "readability": 11,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+              "count": 12,
+              "p50": 1367.0,
+              "p95": 2648.85,
+              "min": 914.0,
+              "max": 2678.0
+            }
+          }
+        }
+      },
+      {
+        "evidenceFile": "holdout-score.json",
+        "sha256": "423323835de1ece6e4b92b9a5322f28438310aba912ec51632201e3ada83793a",
+        "evaluationKind": "cloud_response_review",
+        "split": "holdout",
+        "caseCount": 8,
+        "arms": {
+          "baseline": {
+            "denominator": 8,
+            "generatedExtractable": 8,
+            "generatedCompleteUsable": 8,
+            "accepted": 8,
+            "acceptedAndUsable": 8,
+            "projectedFinalUsable": 8,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "latencyMs": {
+              "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+              "count": 8,
+              "p50": 1532.0,
+              "p95": 2683.65,
+              "min": 1032.0,
+              "max": 2873.0
+            }
+          },
+          "candidate": {
+            "denominator": 8,
+            "generatedExtractable": 8,
+            "generatedCompleteUsable": 8,
+            "accepted": 8,
+            "acceptedAndUsable": 8,
+            "projectedFinalUsable": 8,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "latencyMs": {
+              "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+              "count": 8,
+              "p50": 1437.0,
+              "p95": 3236.75,
+              "min": 1090.0,
+              "max": 3305.0
+            }
+          }
+        }
+      },
+      {
+        "evidenceFile": "dev-raw.release-score.json",
+        "sha256": "95f00e1c3bc7ff9bf1db78e1abf4d350d8d7c8ec26b62d35ea287f2f306fd8b2",
+        "evaluationKind": "offline_reparse",
+        "split": "dev",
+        "caseCount": 12,
+        "arms": {
+          "baseline": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 8,
+            "accepted": 12,
+            "acceptedAndUsable": 8,
+            "projectedFinalUsable": 8,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 10,
+              "tone": 11,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 10,
+              "tone": 11,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "retained original cloud timings, including failed requests; offline reparse adds zero cloud calls and is not a new latency measurement",
+              "count": 12,
+              "p50": 1223.0,
+              "p95": 2227.4,
+              "min": 908.0,
+              "max": 2300.0
+            }
+          },
+          "candidate": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 11,
+            "accepted": 12,
+            "acceptedAndUsable": 11,
+            "projectedFinalUsable": 11,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 12,
+              "tone": 12,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 12,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "retained original cloud timings, including failed requests; offline reparse adds zero cloud calls and is not a new latency measurement",
+              "count": 12,
+              "p50": 1324.5,
+              "p95": 2477.45,
+              "min": 1028.0,
+              "max": 2511.0
+            }
+          }
+        },
+        "offlineReplay": {
+          "cloudRequests": 0,
+          "currentGuardHashes": {
+            "disfluency": "1423f12c77d032a200a86d26c7b63723d02364c85a02a2b9559526de99c4e1a7",
+            "facts": "307206a38fb4d132400e267f542cfbd63f529801764ff451ba39a968e3c70cc8",
+            "integrity": "537983da28d96eb44f400043261ee13476a498594ddfb369262df0afc9a63394",
+            "parser": "7cce45cf1a6ea05ad7409f13fc41ac3e93482180e18af03786368e147c8739ff",
+            "semantics": "068b64f03f4c4c3f526cf6bcba94d185fdd024573abb8609e1e89f8e4bd1da3e"
+          },
+          "meaningChecks": "Current compiled guards; original decisions retained per row",
+          "originalReceiptSha256": "b3623641487a68399e14cdffa61d85469f576cb5c832f05c67fe7476436b073c",
+          "retainedLatency": "Original request elapsedMs retained; not a new latency measurement",
+          "scope": "OFFLINE_REPARSE_OF_EXISTING_RESPONSES_NOT_NEW_CLOUD_RUN"
+        }
+      },
+      {
+        "evidenceFile": "dev-v2-raw.release-score.json",
+        "sha256": "8f3549728fb5cd66d6cc8cacfad232019d08871eeadc74b08dbb603f03250597",
+        "evaluationKind": "offline_reparse",
+        "split": "dev",
+        "caseCount": 12,
+        "arms": {
+          "baseline": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 9,
+            "accepted": 12,
+            "acceptedAndUsable": 9,
+            "projectedFinalUsable": 9,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 12,
+              "readability": 9,
+              "tone": 12,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 12,
+              "readability": 9,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "retained original cloud timings, including failed requests; offline reparse adds zero cloud calls and is not a new latency measurement",
+              "count": 12,
+              "p50": 1153.0,
+              "p95": 2544.45,
+              "min": 1010.0,
+              "max": 2798.0
+            }
+          },
+          "candidate": {
+            "denominator": 12,
+            "generatedExtractable": 12,
+            "generatedCompleteUsable": 11,
+            "accepted": 12,
+            "acceptedAndUsable": 11,
+            "projectedFinalUsable": 11,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 12,
+              "tone": 12,
+              "properNames": 12
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 12,
+              "cleanup": 11,
+              "readability": 12,
+              "tone": 12,
+              "properNames": 12
+            },
+            "latencyMs": {
+              "scope": "retained original cloud timings, including failed requests; offline reparse adds zero cloud calls and is not a new latency measurement",
+              "count": 12,
+              "p50": 1367.0,
+              "p95": 2648.85,
+              "min": 914.0,
+              "max": 2678.0
+            }
+          }
+        },
+        "offlineReplay": {
+          "cloudRequests": 0,
+          "currentGuardHashes": {
+            "disfluency": "1423f12c77d032a200a86d26c7b63723d02364c85a02a2b9559526de99c4e1a7",
+            "facts": "307206a38fb4d132400e267f542cfbd63f529801764ff451ba39a968e3c70cc8",
+            "integrity": "537983da28d96eb44f400043261ee13476a498594ddfb369262df0afc9a63394",
+            "parser": "7cce45cf1a6ea05ad7409f13fc41ac3e93482180e18af03786368e147c8739ff",
+            "semantics": "068b64f03f4c4c3f526cf6bcba94d185fdd024573abb8609e1e89f8e4bd1da3e"
+          },
+          "meaningChecks": "Current compiled guards; original decisions retained per row",
+          "originalReceiptSha256": "5247382cd702cfe35cf830460e98d3c495e76e29590586e62cf41bc1d645bd28",
+          "retainedLatency": "Original request elapsedMs retained; not a new latency measurement",
+          "scope": "OFFLINE_REPARSE_OF_EXISTING_RESPONSES_NOT_NEW_CLOUD_RUN"
+        }
+      },
+      {
+        "evidenceFile": "holdout-raw.release-score.json",
+        "sha256": "f229917db3781108ce53b837175e06123d0aafa6f9799b4b7def077f84e8a597",
+        "evaluationKind": "offline_reparse",
+        "split": "holdout",
+        "caseCount": 8,
+        "arms": {
+          "baseline": {
+            "denominator": 8,
+            "generatedExtractable": 8,
+            "generatedCompleteUsable": 8,
+            "accepted": 8,
+            "acceptedAndUsable": 8,
+            "projectedFinalUsable": 8,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "latencyMs": {
+              "scope": "retained original cloud timings, including failed requests; offline reparse adds zero cloud calls and is not a new latency measurement",
+              "count": 8,
+              "p50": 1532.0,
+              "p95": 2683.65,
+              "min": 1032.0,
+              "max": 2873.0
+            }
+          },
+          "candidate": {
+            "denominator": 8,
+            "generatedExtractable": 8,
+            "generatedCompleteUsable": 8,
+            "accepted": 8,
+            "acceptedAndUsable": 8,
+            "projectedFinalUsable": 8,
+            "projectedSourceFallback": 0,
+            "projectedSourceFallbackUsable": 0,
+            "guardFalseRejects": 0,
+            "usableButRejected": 0,
+            "acceptedCritical": 0,
+            "generatedCritical": 0,
+            "acceptedCriticalItems": [],
+            "guardFalseRejectItems": [],
+            "candidateDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "projectedFinalDimensionPass": {
+              "fidelity": 8,
+              "cleanup": 8,
+              "readability": 8,
+              "tone": 8,
+              "properNames": 8
+            },
+            "latencyMs": {
+              "scope": "retained original cloud timings, including failed requests; offline reparse adds zero cloud calls and is not a new latency measurement",
+              "count": 8,
+              "p50": 1437.0,
+              "p95": 3236.75,
+              "min": 1090.0,
+              "max": 3305.0
+            }
+          }
+        },
+        "offlineReplay": {
+          "cloudRequests": 0,
+          "currentGuardHashes": {
+            "disfluency": "1423f12c77d032a200a86d26c7b63723d02364c85a02a2b9559526de99c4e1a7",
+            "facts": "307206a38fb4d132400e267f542cfbd63f529801764ff451ba39a968e3c70cc8",
+            "integrity": "537983da28d96eb44f400043261ee13476a498594ddfb369262df0afc9a63394",
+            "parser": "7cce45cf1a6ea05ad7409f13fc41ac3e93482180e18af03786368e147c8739ff",
+            "semantics": "068b64f03f4c4c3f526cf6bcba94d185fdd024573abb8609e1e89f8e4bd1da3e"
+          },
+          "meaningChecks": "Current compiled guards; original decisions retained per row",
+          "originalReceiptSha256": "a1139d9c5d4eb933219398288b0750ec599adffce59f35fc652636606523996a",
+          "retainedLatency": "Original request elapsedMs retained; not a new latency measurement",
+          "scope": "OFFLINE_REPARSE_OF_EXISTING_RESPONSES_NOT_NEW_CLOUD_RUN"
+        }
+      }
+    ],
+    "privateUserCase": {
+      "requests": 4,
+      "parserAccepted": 0,
+      "remainingGuard": "Possibility scope",
+      "v2IndependentReviewAndDesignerReviewDisagreed": true,
+      "rawTextPublished": false
+    }
+  },
+  "implementation": {
+    "guardChanges": "Bounded indefinite count, abandoned restart, ability question, count ownership, weekday correction, post-review conservative count-context hardening",
+    "rewriteDiagnostics": "Metadata only: protocol, budget, outcome, fallbackReason, static errorCode, duration",
+    "shortInitialRewriteBudgetMs": 5000,
+    "longRewriteBudgetMs": 20000,
+    "deliveryPolicyChanged": false
+  },
+  "tests": {
+    "rustLibrary": {
+      "passed": 656,
+      "failed": 0,
+      "ignored": 3
+    },
+    "labAndReplay": {
+      "passed": 10
+    },
+    "guardProbe": {
+      "expectationsMet": 52,
+      "mismatches": 0,
+      "scope": "offline fixed synthetic text only; no cloud or user profile",
+      "total": 52
+    },
+    "legacyRegressions": {
+      "total": 21,
+      "passed": 19
+    },
+    "postReviewChallenges": {
+      "total": 13,
+      "passed": 13
+    },
+    "reviewTool": {
+      "passed": 14
+    },
+    "diagnosticExporter": {
+      "passed": 31
+    },
+    "deliveryHelper": {
+      "passed": 20
+    },
+    "typescriptVite": "PASS; pre-existing bundler/chunk warnings",
+    "nativeAudioAndPaste": "NOT_RUN",
+    "installerAcceptance": "NOT_RUN"
+  },
+  "evidenceHashes": {
+    "dev-raw.json": "b3623641487a68399e14cdffa61d85469f576cb5c832f05c67fe7476436b073c",
+    "dev-v2-raw.json": "5247382cd702cfe35cf830460e98d3c495e76e29590586e62cf41bc1d645bd28",
+    "holdout-raw.json": "a1139d9c5d4eb933219398288b0750ec599adffce59f35fc652636606523996a",
+    "user-raw.private.json": "00e5e130c054704722109512080dd472c7b8e4f2725950890f0d3f75a8eff76a",
+    "user-v2-raw.private.json": "212cbae45c77c3f34a70275b6d9be9ce0cf6a6a70e94a090570e1ba2c52b15ab",
+    "guard-before-review-fix.rs": "43f01d5a8e63cfdc8d2447b7ed425ef1ddf7d5f9940d9c35868050334c8569d7",
+    "guard-review-red.log": "cf39b5ee1fadb0f667c49979b5ac4d4a273302edfb0437b929f29a7114daf73c",
+    "rust-library-final.log": "3d47e310bcfb074ccde0b59aa28ae661b1dd76144876c729b7ce1ba05ce9de82",
+    "lab-tests-release.log": "4bf90ed822807ad0141813663c5e8a033dbaf9cb8903717392b6b64709490813",
+    "guard-release.log": "ebef0c674b96d4f6f728e6ee50fc0be64158ae60dc9cb9e7de992b8828a4a073",
+    "mode-regression-release.json": "599ccb2e9e69ba092624504cc91af462e37faafc79a67ce3bde6b6aef6fa1a66",
+    "review-tool-tests-completed.log": "8affa054708ad92cd68639e0fc77d8ab45f8fc335bee427df6c31fb27e876b2e",
+    "diagnostic-export-tests.log": "5a2043e014b30b6172aa68a4c3f79e746a952c767ffab3548c0e96c37c79a766",
+    "delivery-feedback-tests.log": "8549289eb921076965087eadbcd7195628a3b58a6e8652bfa0d3636679fda20a"
+  },
+  "fixtureHashes": {
+    "natural-cleanup-v1.dev.json": "bd095db6b79db1374d96a2698b0e5510246ebb4eeddaa4a8e56dae9f45bff0e7",
+    "natural-cleanup-v1.holdout.json": "924dc199b58aeab5ee3c6726c3f170eecddba5a3c9a348e4f54793627b8e3857"
+  },
+  "packaging": {
+    "status": "BUILT_AND_HASH_VERIFIED",
+    "receiptSha256": "42efc7fe5971c861350958dbac3eb1351f1564e30bf28268e6af6e22726e5fdc",
+    "version": "0.2.13",
+    "frontendVersion": "0.4.12",
+    "releaseDate": "2026-10-11",
+    "artifacts": [
+      {
+        "name": "SpeakMode.exe",
+        "bytes": 18441216,
+        "sha256": "27c92deccf5b62d6b6a130a80b13d2ba31899d5b610dff868bcec3a4232e6f49",
+        "productVersion": "0.2.13",
+        "fileVersion": "0.2.13"
+      },
+      {
+        "name": "SpeakMode_0.2.13_x64-setup.exe",
+        "bytes": 5668023,
+        "sha256": "1941e33f86834a7ceaadef844a0a0d1ecf3807317d238b2bcda4248bb36529ce",
+        "productVersion": "0.2.13",
+        "fileVersion": "0.2.13"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 187,
+    "thirdPartyFilesVerified": 14,
+    "resourceManifestCopied": true,
+    "launcherSyntaxValid": true,
+    "profile": "existing installed LocalApplicationData/dev.speakmode.desktop",
+    "userProfileWrittenDuringBuild": false,
+    "appLaunched": false,
+    "installerLaunched": false,
+    "actualNativeDelivery": "NOT_RUN",
+    "gitPushed": false
+  },
+  "limitations": [
+    "No ASR or Typeless same-audio comparison",
+    "Repeated dev cases are not independent speakers",
+    "Finite guard is not a semantic equivalence proof",
+    "Private-case qualitative disagreement retained; no relaxed judgment selected to force promotion",
+    "Holdout original cloud responses preserved; later guard safety fixes evaluated by labeled offline replay only"
+  ]
+}

@@ -16,7 +16,8 @@ import wave
 
 
 VERSION = 1
-SCORING = "speakmode-quality-v1"
+SCORING = "speakmode-quality-v2-no-speech"
+SUPPORTED_SCORING = ("speakmode-quality-v1", SCORING)
 LATENCIES = ("speechToCaption", "stopToAsr", "stopToReady", "stopToDispatch")
 LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}\Z")
 HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -130,11 +131,19 @@ def term_present(term, text):
 
 def validate_reference(ref, fid):
     shape(ref, ("schemaVersion", "fixtureId", "language", "transcript", "deletableFillers",
-                "facts", "positiveTerms", "negativeTerms", "modeCriteria"), "reference")
+                "facts", "positiveTerms", "negativeTerms", "modeCriteria") +
+          (("expectation",) if isinstance(ref, dict) and "expectation" in ref else ()), "reference")
     require(type(ref["schemaVersion"]) is int and ref["schemaVersion"] == VERSION,
             "reference version unsupported")
     require(ref["fixtureId"] == fid, "reference fixtureId mismatch")
     require(ref["language"] in ("zh", "en", "mixed"), "reference language unsupported")
+    require(ref.get("expectation", "speech") in ("speech", "no_speech"), "reference expectation invalid")
+    if ref.get("expectation") == "no_speech":
+        require(ref["transcript"] == "", "no_speech reference must have an empty transcript")
+        require(all(ref[key] == [] for key in ("deletableFillers", "facts", "positiveTerms", "negativeTerms")),
+                "no_speech reference cannot contain speech rubrics or term checks")
+        require(ref["modeCriteria"] == {"light": [], "structure": []}, "no_speech has no formatting rubric")
+        return ref
     transcript = string(ref["transcript"], "transcript")
     require(isinstance(ref["deletableFillers"], list), "deletableFillers must be a list")
     for filler in ref["deletableFillers"]:
@@ -211,7 +220,9 @@ def validate_manifest(manifest):
     fixture_ids, speakers = set(), {}
     for fixture in manifest["fixtures"]:
         shape(fixture, ("id", "speakerId", "split", "sourceKind", "category", "tags",
-                        "collectionStatus", "audioPath", "referencePath"), "fixture")
+                        "collectionStatus", "audioPath", "referencePath") +
+              (("expectation",) if isinstance(fixture, dict) and "expectation" in fixture else ()), "fixture")
+        require(fixture.get("expectation", "speech") in ("speech", "no_speech"), "fixture expectation invalid")
         for key in ("id", "speakerId", "category"):
             label(fixture[key], key)
         require(fixture["id"] not in fixture_ids, "duplicate fixture.id")
@@ -264,6 +275,8 @@ def freeze(manifest_path, lock_path):
         else:
             ref, ref_hash = read_json(fixture["referencePath"])
             validate_reference(ref, fixture["id"])
+            require(ref.get("expectation", "speech") == fixture.get("expectation", "speech"),
+                    "fixture and reference speech expectations differ")
             frozen[fixture["id"]] = {"audio": audio_metadata(fixture["audioPath"]), "referenceSha256": ref_hash}
     lock = {"schemaVersion": VERSION, "scoringVersion": SCORING, "manifestPath": str(manifest_path),
             "manifestSha256": manifest_hash, "manifest": manifest, "frozenFixtures": frozen,
@@ -277,9 +290,12 @@ def verify_lock(path):
     shape(lock, ("schemaVersion", "scoringVersion", "manifestPath", "manifestSha256", "manifest",
                  "frozenFixtures", "frozenAt"), "lock")
     require(type(lock["schemaVersion"]) is int and lock["schemaVersion"] == VERSION and
-            lock["scoringVersion"] == SCORING, "unsupported frozen scoring version")
+            lock["scoringVersion"] in SUPPORTED_SCORING, "unsupported frozen scoring version")
     manifest, manifest_hash = read_json(lock["manifestPath"])
     validate_manifest(manifest)
+    require(lock["scoringVersion"] != "speakmode-quality-v1" or
+            all(f.get("expectation", "speech") == "speech" for f in manifest["fixtures"]),
+            "no_speech fixtures require a v2 scoring lock")
     require(manifest_hash == lock["manifestSha256"] and manifest == lock["manifest"], "manifest changed since freeze")
     require(set(lock["frozenFixtures"]) == {f["id"] for f in manifest["fixtures"]}, "frozen fixture set differs")
     refs = {}
@@ -291,6 +307,8 @@ def verify_lock(path):
         ref, ref_hash = read_json(fixture["referencePath"])
         require(ref_hash == frozen["referenceSha256"], "reference changed since freeze")
         validate_reference(ref, fixture["id"])
+        require(ref.get("expectation", "speech") == fixture.get("expectation", "speech"),
+                "fixture and reference speech expectations differ")
         require(audio_metadata(fixture["audioPath"]) == frozen["audio"], "audio changed since freeze")
         refs[fixture["id"]] = ref
     return lock, refs
@@ -342,9 +360,11 @@ def validate_receipt(row, lock, stored=True):
             string(row[key], key, allow_empty=True)
     if row["status"] == "succeeded":
         required_text = "asrText" if arm["task"] == "asr" else "outputText"
-        string(row[required_text], required_text)
+        # Empty text is success only for an explicitly frozen no-speech fixture.
+        allow_empty = fixture.get("expectation") == "no_speech"
+        string(row[required_text], required_text, allow_empty=allow_empty)
         if arm["task"] == "pipeline":
-            string(row["asrText"], "asrText")
+            string(row["asrText"], "asrText", allow_empty=allow_empty)
     boolean(row["protocolComplete"], "protocolComplete", nullable=True)
     shape(row["latencyMs"], LATENCIES, "latencyMs")
     for key, value in row["latencyMs"].items():
@@ -521,6 +541,9 @@ def summarize_group(entries, refs, primary, reviews, arm, lock):
     positive_hit = positive_total = negative_hit = negative_total = negative_observed = 0
     critical_correct = critical_total = consensus = usable = protocol = attempts = 0
     mode_correct = mode_total = 0
+    no_speech_registered = sum(f.get("expectation") == "no_speech" for _, f in entries)
+    speech_registered = len(entries) - no_speech_registered
+    no_speech_observed = no_speech_false_text = no_speech_quiet = no_speech_attempted = no_speech_success = 0
     fact_kinds = defaultdict(lambda: {"numerator": 0, "denominator": 0})
     latency = {key: [] for key in LATENCIES}
     primary_rows = []
@@ -531,12 +554,32 @@ def summarize_group(entries, refs, primary, reviews, arm, lock):
         if row:
             primary_rows.append(row)
         attempts += state != "missing"
+        if fixture.get("expectation") == "no_speech":
+            no_speech_attempted += state != "missing"
+            no_speech_success += state == "succeeded"
         ref = refs.get(fixture["id"])
         if ref is None:
             continue
         # First failures and absent runs are scored as empty hypotheses; they
         # never disappear from aggregate CER/WER or positive-term denominators.
         hypothesis = row["asrText"] or "" if row else ""
+        if fixture.get("expectation") == "no_speech":
+            # Never treat a transport failure / missing request as correctly detected silence,
+            # nor divide CER by an empty reference. These outcomes have separate denominators.
+            if row and state == "succeeded":
+                protocol += row["protocolComplete"] is True
+                for key in LATENCIES:
+                    if row["latencyMs"][key] is not None:
+                        latency[key].append(row["latencyMs"][key])
+                if arm["task"] == "rewrite" or row["protocolComplete"] is True:
+                    no_speech_observed += 1
+                    texts = ([row["asrText"]] if arm["task"] == "asr" else
+                             [row["outputText"]] if arm["task"] == "rewrite" else
+                             [row["asrText"], row["outputText"]])
+                    emitted = any((text or "").strip() for text in texts)
+                    no_speech_false_text += emitted
+                    no_speech_quiet += not emitted
+            continue
         if arm["task"] in ("asr", "pipeline"):
             types = [("cer", cer_tokens)] if ref["language"] in ("zh", "mixed") else [("wer", wer_tokens)]
             if ref["language"] == "mixed":
@@ -576,21 +619,26 @@ def summarize_group(entries, refs, primary, reviews, arm, lock):
                            all(v == "correct" for v in verdict["factVerdicts"].values()) and
                            all(v == "correct" for v in verdict["modeVerdicts"].values()) and
                            (arm["task"] == "rewrite" or row["protocolComplete"] is True))
+    speech_attempts = attempts - no_speech_attempted
     for metric in metrics.values():
-        metric["rate"] = metric["edits"] / metric["referenceUnits"] if attempts and metric["referenceUnits"] else None
+        metric["rate"] = metric["edits"] / metric["referenceUnits"] if speech_attempts and metric["referenceUnits"] else None
     return {"registered": len(entries), "collected": sum(f["id"] in refs for _, f in entries),
             "state": "NOT_RUN" if not attempts else "PARTIAL" if status["missing"] else "MEASURED",
             "statuses": {k: status[k] for k in ("missing", "failed", "succeeded")},
-            "usableDraft": ratio(usable, len(entries), measured=bool(attempts and arm["task"] != "asr")),
-            "humanConsensusRuns": consensus, "unreviewedOrDisputedSuccesses": status["succeeded"] - consensus,
-            "criticalFacts": ratio(critical_correct, critical_total, measured=bool(attempts)),
-            "factsByKind": {kind: ratio(count["numerator"], count["denominator"], measured=bool(attempts))
+            "usableDraft": ratio(usable, speech_registered, measured=bool(speech_attempts and arm["task"] != "asr")),
+            "humanConsensusRuns": consensus, "unreviewedOrDisputedSuccesses": status["succeeded"] - no_speech_success - consensus,
+            "noSpeech": {"registered": no_speech_registered, "observed": no_speech_observed,
+                         "unobserved": no_speech_registered - no_speech_observed,
+                         "falseText": ratio(no_speech_false_text, no_speech_observed, measured=bool(no_speech_observed)),
+                         "quietSuccess": ratio(no_speech_quiet, no_speech_registered, measured=bool(no_speech_attempted))},
+            "criticalFacts": ratio(critical_correct, critical_total, measured=bool(speech_attempts)),
+            "factsByKind": {kind: ratio(count["numerator"], count["denominator"], measured=bool(speech_attempts))
                             for kind, count in sorted(fact_kinds.items())},
-            "modeCriteria": ratio(mode_correct, mode_total, measured=bool(attempts)),
+            "modeCriteria": ratio(mode_correct, mode_total, measured=bool(speech_attempts)),
             "protocolComplete": ratio(protocol, len(entries), measured=bool(attempts and arm["task"] != "rewrite")),
             "alignment": metrics,
-            "positiveTerms": ratio(positive_hit, positive_total, measured=bool(attempts)),
-            "negativeTermIntrusions": {**ratio(negative_hit, negative_observed, measured=bool(attempts)),
+            "positiveTerms": ratio(positive_hit, positive_total, measured=bool(speech_attempts)),
+            "negativeTermIntrusions": {**ratio(negative_hit, negative_observed, measured=bool(speech_attempts)),
                                        "registeredTermChecks": negative_total,
                                        "unobservedTermChecks": negative_total - negative_observed},
             "latencyMs": {key: {"n": len(values), "p50": percentile(values, .50), "p95": percentile(values, .95),
@@ -628,15 +676,16 @@ def evaluate(lock_path, receipts_dir, reviews_dir):
             entry_scores.append({"registrationId": rid, "fixtureId": fixture["id"], "armId": arm_id,
                                  "speakerId": fixture["speakerId"], "sourceKind": kind, "split": split,
                                  "category": fixture["category"], "collectionStatus": fixture["collectionStatus"],
+                                 "expectation": fixture.get("expectation", "speech"),
                                  "primaryRunId": row["runId"] if row else None,
                                  "status": row["status"] if row else "missing",
                                  "humanConsensus": bool(score["humanConsensusRuns"]),
                                  "usableDraft": score["usableDraft"], "alignment": score["alignment"],
                                  "positiveTerms": score["positiveTerms"],
                                  "negativeTermIntrusions": score["negativeTermIntrusions"],
-                                 "criticalFacts": score["criticalFacts"]})
+                                 "criticalFacts": score["criticalFacts"], "noSpeech": score["noSpeech"]})
     diagnostic = [r for r in rows if r["purpose"] == "diagnostic"]
-    return {"schemaVersion": VERSION, "scoringVersion": SCORING, "experimentId": lock["manifest"]["experimentId"],
+    return {"schemaVersion": VERSION, "scoringVersion": lock["scoringVersion"], "experimentId": lock["manifest"]["experimentId"],
             "sourceCommit": lock["manifest"]["sourceCommit"], "lockSha256": digest(lock),
             "arms": [{"id": a["id"], "task": a["task"], "mode": a["mode"], "configSha256": digest(a["config"]),
                       **{k: a["config"][k] for k in ("asrModel", "rewriteModel", "adapter", "region", "language")}}
@@ -648,6 +697,7 @@ def evaluate(lock_path, receipts_dir, reviews_dir):
             "allCallsCost": cost_summary(rows, sum(g["usableDraft"]["numerator"] for g in summary),
                                         attempted_audio_seconds(rows, lock)),
             "limitations": ["Offline statistics; no microphone, provider, delivery, or population acceptance proven.",
+                            "no_speech has no CER/WER denominator. falseText counts any non-whitespace ASR/output on completed runs; quietSuccess retains missing/failed registrations in its denominator.",
                             "Human ratings are declarations. Independence and blindness require an external operator.",
                             "Nearest-rank P95 with n<20 is exploratory, not a population tail estimate."]}
 

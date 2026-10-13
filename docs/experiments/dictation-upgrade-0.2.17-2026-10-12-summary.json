@@ -1,0 +1,218 @@
+{
+  "version": "0.2.17",
+  "frontendVersion": "0.4.16",
+  "date": "2026-10-12",
+  "cloudCalls": 31,
+  "plannedCap": 32,
+  "scope": "Fixed synthetic audio and text development/regression; not independent blind holdout or native microphone/paste acceptance",
+  "finalWaitPolicy": "Unicode characters <=400:5s,401..800:8s,>800:20s;shared deadline",
+  "timingProjectionNote": "Existing raw receipts preserve their prior 5/20s projections. finalPolicyBudgetMs is an explicit offline projection after adaptive policy was selected; no request re-run.",
+  "asrComparison": [
+    {
+      "runId": "legacy-empty",
+      "status": "passed",
+      "termCount": 5,
+      "recognizedTerms": 3,
+      "elapsedMs": 10498,
+      "finishEnqueuedToAsrEndMs": 52
+    },
+    {
+      "runId": "legacy-dictionary",
+      "status": "passed",
+      "termCount": 5,
+      "recognizedTerms": 5,
+      "elapsedMs": 10812,
+      "finishEnqueuedToAsrEndMs": 323
+    },
+    {
+      "runId": "audio31-empty",
+      "status": "passed",
+      "termCount": 5,
+      "recognizedTerms": 3,
+      "elapsedMs": 11543,
+      "finishEnqueuedToAsrEndMs": 1102
+    },
+    {
+      "runId": "audio31-dictionary",
+      "status": "passed",
+      "termCount": 5,
+      "recognizedTerms": 3,
+      "elapsedMs": 10849,
+      "finishEnqueuedToAsrEndMs": 430
+    }
+  ],
+  "asrModelChange": "No change: legacy with dictionary performed better on this one fixture. Audio3.1 remains selectable.",
+  "textArms": [
+    {
+      "arm": "user-long-v3",
+      "cloudCalls": 2,
+      "receiptSha256": "3f3b3987298a603f4f4f38e2f930e58b742fcddce13298a4dfd97e00172eebdc",
+      "results": [
+        {
+          "caseId": "ARGUS01",
+          "decision": "accept",
+          "elapsedMs": 13150,
+          "sourceChars": 1503,
+          "finalPolicyBudgetMs": 20000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 43,
+          "outputPauseCharacters": 0
+        }
+      ]
+    },
+    {
+      "arm": "guarded-regression",
+      "cloudCalls": 12,
+      "receiptSha256": "4d97ecd497218d8ada6211d8cb6f7aa64ffbb50d03e32f1ab3efe2b1689092ff",
+      "results": [
+        {
+          "caseId": "LC-H01",
+          "decision": "accept",
+          "elapsedMs": 4981,
+          "sourceChars": 439,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 3,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H02",
+          "decision": "accept",
+          "elapsedMs": 4673,
+          "sourceChars": 427,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 1,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H03",
+          "decision": "accept",
+          "elapsedMs": 4901,
+          "sourceChars": 444,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 2,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H04",
+          "decision": "accept",
+          "elapsedMs": 5493,
+          "sourceChars": 457,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 4,
+          "outputPauseCharacters": 3
+        },
+        {
+          "caseId": "LC-H05",
+          "decision": "accept",
+          "elapsedMs": 5304,
+          "sourceChars": 427,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 1,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H06",
+          "decision": "accept",
+          "elapsedMs": 4851,
+          "sourceChars": 454,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 1,
+          "outputPauseCharacters": 0
+        }
+      ]
+    },
+    {
+      "arm": "short-regression",
+      "cloudCalls": 11,
+      "receiptSha256": "c78b718049dcdefc5b97927264aa326e9f43c9e81d04e4a38961ccacad6c1942",
+      "results": [
+        {
+          "caseId": "LC-H01",
+          "decision": "accept",
+          "elapsedMs": 4610,
+          "sourceChars": 439,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 3,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H02",
+          "decision": "reject",
+          "elapsedMs": 2874,
+          "sourceChars": 427,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": false,
+          "sourcePauseCharacters": 1,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H03",
+          "decision": "accept",
+          "elapsedMs": 4711,
+          "sourceChars": 444,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 2,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H04",
+          "decision": "accept",
+          "elapsedMs": 4111,
+          "sourceChars": 457,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 4,
+          "outputPauseCharacters": 3
+        },
+        {
+          "caseId": "LC-H05",
+          "decision": "accept",
+          "elapsedMs": 3926,
+          "sourceChars": 427,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 1,
+          "outputPauseCharacters": 0
+        },
+        {
+          "caseId": "LC-H06",
+          "decision": "accept",
+          "elapsedMs": 3954,
+          "sourceChars": 454,
+          "finalPolicyBudgetMs": 8000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 1,
+          "outputPauseCharacters": 0
+        }
+      ]
+    },
+    {
+      "arm": "fresh-long-v3",
+      "cloudCalls": 2,
+      "receiptSha256": "954c8310930a2d07abe9a188ac56ed55fc056d57acce3b0d2b7f65e291ca384f",
+      "results": [
+        {
+          "caseId": "NEW-LONG-01",
+          "decision": "accept",
+          "elapsedMs": 8669,
+          "sourceChars": 906,
+          "finalPolicyBudgetMs": 20000,
+          "eligibleUnderFinalPolicy": true,
+          "sourcePauseCharacters": 5,
+          "outputPauseCharacters": 3
+        }
+      ]
+    }
+  ],
+  "nativeMicrophone": "NOT_RUN",
+  "nativePaste": "NOT_RUN",
+  "installedProfileWrittenDuringValidation": false
+}

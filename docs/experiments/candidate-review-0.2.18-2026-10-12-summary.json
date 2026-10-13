@@ -1,0 +1,62 @@
+{
+  "version": "0.2.18",
+  "frontendVersion": "0.4.17",
+  "scope": "Explicit human history review, not improved ASR or automatic fidelity",
+  "rust": {
+    "passed": 728,
+    "failed": 0,
+    "ignored": 3
+  },
+  "candidateBrowser": {
+    "passed": 17,
+    "failed": 0
+  },
+  "modeBrowser": {
+    "registered": 13,
+    "passed": 13,
+    "failed": 0
+  },
+  "candidateDiffGroups": 8,
+  "deterministicUnicodePairs": 400,
+  "legacyDiffChecks": 6,
+  "deliveryHelperChecks": 20,
+  "selectedInputsUnchanged": 229,
+  "buildReceipt": {
+    "version": "0.2.18",
+    "frontendVersion": "0.4.17",
+    "releaseDate": "2026-10-12",
+    "artifacts": [
+      {
+        "name": "SpeakMode.exe",
+        "bytes": 18700800,
+        "sha256": "e89c0ca029a92913a602fd57a225f9194faa79aa2d0295c99abebe0fc192574a",
+        "productVersion": "0.2.18",
+        "fileVersion": "0.2.18"
+      },
+      {
+        "name": "SpeakMode_0.2.18_x64-setup.exe",
+        "bytes": 5744725,
+        "sha256": "06933cff6d22fd52f578f6d9b8389c52eeac1436c105202abc8ae705a7593a88",
+        "productVersion": "0.2.18",
+        "fileVersion": "0.2.18"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 229,
+    "thirdPartyFilesVerified": 14,
+    "resourceManifestCopied": true,
+    "launcherSyntaxValid": true,
+    "profile": "existing installed LocalApplicationData/dev.speakmode.desktop",
+    "userProfileWrittenDuringBuild": false,
+    "appLaunched": false,
+    "installerLaunched": false,
+    "actualNativeDelivery": "NOT_RUN",
+    "gitPushed": false
+  },
+  "realCloudCalls": 0,
+  "actualMicrophone": "NOT_RUN",
+  "actualNativeDelivery": "NOT_RUN",
+  "actualInstallUpgrade": "NOT_RUN",
+  "evidence": "D:\\Codex_Project\\SpeakMode_Dev\\output\\validation\\candidate-review-0.2.18",
+  "release": "D:\\Codex_Project\\SpeakMode_Dev\\output\\releases\\2026-10-12-candidate-review-0.2.18"
+}

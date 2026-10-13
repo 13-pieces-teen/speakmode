@@ -1,0 +1,127 @@
+{
+  "schemaVersion": 1,
+  "version": "0.2.14",
+  "frontendVersion": "0.4.13",
+  "date": "2026-10-11",
+  "scope": "FINITE_GUARD_FIX_WITH_TWO_NEW_TEXT_REQUESTS_AND_OFFLINE_REPLAY",
+  "productionProtocol": "mode-contract-v1",
+  "productionModelUnchanged": true,
+  "budgetUnchanged": true,
+  "cloudCalls": 2,
+  "sourceScope": "USER_PROVIDED_TRANSCRIPT_NO_AUDIO",
+  "privateSourcePublished": false,
+  "currentGuardHashes": {
+    "disfluency": "815dbeea6d255b4495ce6c68b0e01e71b26e3028324e0d6115d5e07406aeb098",
+    "evaluationDisfluency": "808c6951bab6b9d2dc275100970270e5b88654029bd54d78b8d264cd572b8111",
+    "facts": "307206a38fb4d132400e267f542cfbd63f529801764ff451ba39a968e3c70cc8",
+    "integrity": "aef23651731cc4184d8e9182c09356075712100bab27c824b8bf10c014fd0801",
+    "parser": "7cce45cf1a6ea05ad7409f13fc41ac3e93482180e18af03786368e147c8739ff",
+    "semantics": "068b64f03f4c4c3f526cf6bcba94d185fdd024573abb8609e1e89f8e4bd1da3e"
+  },
+  "sameResponseComparison": {
+    "rows": 2,
+    "beforeParsed": 0,
+    "afterParsed": 2,
+    "sourceResponseAndLatencyUnchanged": true,
+    "arms": {
+      "baseline": {
+        "denominator": 1,
+        "generatedCompleteUsable": 1,
+        "beforeProjectedFinalUsable": 0,
+        "afterProjectedFinalUsable": 1,
+        "beforeFalseRejects": 1,
+        "afterFalseRejects": 0,
+        "acceptedCritical": 0
+      },
+      "candidate": {
+        "denominator": 1,
+        "generatedCompleteUsable": 1,
+        "beforeProjectedFinalUsable": 0,
+        "afterProjectedFinalUsable": 1,
+        "beforeFalseRejects": 1,
+        "afterFalseRejects": 0,
+        "acceptedCritical": 0
+      }
+    }
+  },
+  "previous68Responses": {
+    "rows": 68,
+    "beforeParsed": 64,
+    "afterParsed": 64,
+    "decisionAndProjectedDeliveryChanges": 0
+  },
+  "validation": {
+    "rustLibrary": {
+      "passed": 661,
+      "failed": 0,
+      "ignored": 3
+    },
+    "newFinitePropertyCases": {
+      "positive": 9,
+      "negative": 41
+    },
+    "replayTool": {
+      "passed": 2,
+      "failed": 0
+    },
+    "fixedGuardProbe": {
+      "passed": 52,
+      "total": 52
+    },
+    "legacyModeRegression": {
+      "passed": 19,
+      "failed": 2
+    },
+    "knownModeFailures": [
+      "targeted-count-correction/correct-target",
+      "unrelated-number/lost-number"
+    ],
+    "postReviewChallenges": {
+      "passed": 13,
+      "failed": 0
+    },
+    "reviewPythonSelfTests": {
+      "passed": 16,
+      "failed": 0
+    },
+    "typescriptAndVite": "PASS",
+    "deliveryFeedbackHelper": "PASS"
+  },
+  "nativeAudio": "NOT_RUN",
+  "actualNativePaste": "NOT_RUN",
+  "installerAcceptance": "NOT_RUN",
+  "gitPushed": false,
+  "distribution": {
+    "version": "0.2.14",
+    "frontendVersion": "0.4.13",
+    "releaseDate": "2026-10-11",
+    "artifacts": [
+      {
+        "name": "SpeakMode.exe",
+        "bytes": 18478080,
+        "sha256": "df90392425b485e87e393ecf68326bf65d64f9720df2ea64cf93028d4a4eecd0",
+        "productVersion": "0.2.14",
+        "fileVersion": "0.2.14"
+      },
+      {
+        "name": "SpeakMode_0.2.14_x64-setup.exe",
+        "bytes": 5674531,
+        "sha256": "f54f9223e0126a1dff404f962f05bc436dc67d79e3f60fc2bf77f6cfb2d90a5e",
+        "productVersion": "0.2.14",
+        "fileVersion": "0.2.14"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 188,
+    "thirdPartyFilesVerified": 14,
+    "resourceManifestCopied": true,
+    "launcherSyntaxValid": true,
+    "profile": "existing installed LocalApplicationData/dev.speakmode.desktop",
+    "userProfileWrittenDuringBuild": false,
+    "appLaunched": false,
+    "installerLaunched": false,
+    "actualNativeDelivery": "NOT_RUN",
+    "gitPushed": false
+  },
+  "buildCacheGiB": 8.259
+}

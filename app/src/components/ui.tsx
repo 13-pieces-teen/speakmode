@@ -26,7 +26,7 @@ export function ModeSelector({ value, onChange, compact = false, label = '选择
 
 export function ModeBadge({ mode, resolved, name, sourceState }: { mode: Mode; resolved?: ResolvedMode|null; name?: string; sourceState?: DictationSourceState }) {
   const { label } = useModes();
-  const sourceLabel = sourceState === 'unprocessed' ? '未整理' : sourceState === 'source' ? '识别稿' : null;
+  const sourceLabel = sourceState === 'unprocessed' ? '未整理' : sourceState === 'source' || sourceState === 'fallback' ? '识别稿' : null;
   return <Badge className="mode-badge" color={sourceLabel ? 'gray' : 'blue'} variant="soft" radius="medium" size="1">
     {sourceLabel ? <TextAlignLeftIcon aria-hidden="true" /> : <ModeIcon mode={mode} />}{sourceLabel ?? name ?? label(mode)}{!sourceLabel && sourceState === 'model' && mode === '自动' && resolved ? ` · ${resolved}` : ''}
   </Badge>;

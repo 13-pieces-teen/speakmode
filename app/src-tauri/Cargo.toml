@@ -1,6 +1,6 @@
 [package]
 name = "speakmode"
-version = "0.2.4"
+version = "0.2.19"
 edition = "2024"
 publish = false
 description = "SpeakMode Windows voice input"
@@ -28,6 +28,7 @@ tauri-build = { version = "2", optional = true, features = [] }
 anyhow = "=1.0.101"
 async-trait = "=0.1.89"
 base64 = "=0.22.1"
+brotli = "=9.0.0"
 chrono = { version = "0.4", features = ["serde"] }
 cpal = "=0.16.0"
 crossbeam-channel = "0.5"

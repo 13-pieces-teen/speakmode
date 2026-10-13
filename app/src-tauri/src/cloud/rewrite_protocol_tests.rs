@@ -5,6 +5,88 @@ use tokio::sync::{mpsc,oneshot};
 use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
 use std::time::Instant;
 
+#[tokio::test]
+async fn non_gated_auto_keeps_legacy_transport_and_does_not_upload_dictionary() {
+    assert!(!AUTOMATIC_PROTOCOL_PROMOTED);
+    let (mut config,mut mode,mut source)=fixture();
+    config.region=Some("singapore".into()); config.rewrite_model="qwen3.8-flash".into();
+    mode.base_mode=BaseMode::Auto; mode.mode_id="auto".into();
+    assert!(!uses_fluent_contract(&config,&mode));
+    assert_eq!(production_protocol_version(&config,&mode),REWRITE_PROMPT_VERSION);
+    source.items[0].text="嗯，用 typeless 测试。".into();
+    let original=source.clone();
+    let dictionary=DictionarySnapshot{version:7,entries:vec![crate::core::DictionaryEntry{
+        id:"term-1".into(),term:"Typeless".into(),created_at:"now".into(),updated_at:"now".into()}]};
+    let content=json!({"resolvedMode":"light","blocks":[{"text":"用 Typeless 测试。","sourceRefs":["attempt-1:item-1"]}]}).to_string();
+    let (url,request,server)=http_server("200 OK",envelope(content,"stop"),Duration::ZERO,Duration::ZERO).await;
+    let result=rewrite_with_client_dictionary(&build_client().unwrap(),&config,"test-only-not-a-real-key",&mode,&source,&dictionary,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
+    let (_,body)=request.await.unwrap(); server.await.unwrap();
+    assert_eq!(body["model"],"qwen3.8-flash"); assert_eq!(body["enable_thinking"],false);
+    assert_eq!(body,baseline_request_body(&config,&mode,&source).unwrap());
+    let data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert!(data.get("canonicalTerms").is_none());
+    assert!(!data.to_string().contains("attempt-1:item-1"));
+    assert_eq!(result.blocks[0].source_refs,vec!["attempt-1:item-1"]);
+    assert_eq!(source,original);
+}
+
+#[test]
+fn fluent_gate_is_explicit_and_legacy_contract_remains_frozen_outside_it() {
+    use sha2::{Digest,Sha256};
+    assert!(!AUTOMATIC_PROTOCOL_PROMOTED);
+    let (mut config,mut mode,source)=fixture();
+    config.region=Some("beijing".into()); config.rewrite_model="qwen3.8-flash".into();mode.base_mode=BaseMode::Auto;
+    assert!(!uses_automatic_contract(&config,&mode));
+    assert!(uses_fluent_contract(&config,&mode));
+    assert_eq!(FLUENT_PIPELINE_VERSION,"fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3");
+    assert_eq!(production_protocol_version(&config,&mode),MINIMUM_PIPELINE_VERSION);
+    let dictionary=DictionarySnapshot::default();
+    assert!(MINIMUM_PROTOCOL_PROMOTED);
+    assert_eq!(production_request_body(&config,&mode,&source,&dictionary).unwrap(),minimum::prepare(&config,&mode,&source,&dictionary,true).unwrap().body);
+    // Preserve the old experiment baseline explicitly even after production
+    // selects a different protocol for the narrow, evaluated configuration.
+    let baseline=baseline_request_body(&config,&mode,&source).unwrap();
+    assert_eq!(format!("{:x}",Sha256::digest(baseline["messages"][0]["content"].as_str().unwrap().as_bytes())),
+        "32af00059d7c1addf44a13304beca7357bc0f42aa3caa003cc2c172ec74a5c11");
+    assert_ne!(request_body(&config,&mode,&source).unwrap(),baseline);
+    for variation in 0..7 {
+        let mut other_config=config.clone();let mut other_mode=mode.clone();
+        match variation {
+            0=>other_config.region=Some("singapore".into()),
+            1=>other_config.region=None,
+            2=>other_config.rewrite_model="qwen-flash".into(),
+            3=>other_config.rewrite_model="qwen3.7-plus".into(),
+            4=>other_mode.base_mode=BaseMode::Light,
+            5=>other_mode.base_mode=BaseMode::Structure,
+            _=>other_mode.rules="按邮件格式".into(),
+        }
+        assert!(!uses_fluent_contract(&other_config,&other_mode),"variation {variation}");
+        assert!(!uses_automatic_contract(&other_config,&other_mode));
+        if variation>=4 {
+            assert!(uses_minimum_contract(&other_config,&other_mode));
+            assert_eq!(production_protocol_version(&other_config,&other_mode),MINIMUM_PIPELINE_VERSION);
+        } else {
+            assert_eq!(production_protocol_version(&other_config,&other_mode),REWRITE_PROMPT_VERSION);
+            assert_eq!(production_request_body(&other_config,&other_mode,&source,&dictionary).unwrap(),baseline_request_body(&other_config,&other_mode,&source).unwrap());
+        }
+    }
+}
+
+#[tokio::test]
+async fn non_gated_auto_rejects_fluent_schema_and_late_cancelled_legacy_response() {
+    let (mut config,mut mode,source)=fixture();config.region=Some("singapore".into());config.rewrite_model="qwen3.8-flash".into();mode.base_mode=BaseMode::Auto;
+    assert!(!uses_fluent_contract(&config,&mode));
+    let dictionary=DictionarySnapshot::default();
+    let content=json!({"resolvedMode":"light","text":"如果审核通过，再发布，不要今天发。"}).to_string();
+    let (url,_,server)=http_server("200 OK",envelope(content,"stop"),Duration::ZERO,Duration::ZERO).await;
+    let failure=rewrite_with_client_dictionary(&build_client().unwrap(),&config,"test-only",&mode,&source,&dictionary,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap_err();
+    assert_eq!(failure.code,"invalid_output");server.await.unwrap();
+    let (url,request,server)=http_server("200 OK",envelope(valid_content(),"stop"),Duration::ZERO,Duration::from_millis(150)).await;
+    let cancel=CancellationToken::new();let token=cancel.clone();tokio::spawn(async move{request.await.unwrap();token.cancel();});
+    let failure=rewrite_with_client_dictionary(&build_client().unwrap(),&config,"test-only",&mode,&source,&dictionary,cancel,&url,Duration::from_secs(2)).await.unwrap_err();
+    assert_eq!(failure.code,"cancelled");server.await.unwrap();
+}
+
 #[path="../../tests/fixtures/rewrite_parser_0_1_1.rs"]
 mod baseline_parser;
 

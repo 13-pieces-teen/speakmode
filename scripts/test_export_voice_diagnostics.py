@@ -31,6 +31,93 @@ def fixture():
 
 
 class ExportBoundaries(unittest.TestCase):
+    def test_minimum_edit_protocol_is_known_and_private_review_is_filtered(self):
+        protocol = "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2"
+        clean = module.filter_rewrite(dict(protocolVersion=protocol, configuredBudgetMs=5000,
+                    outcome="validated", fallbackReason=None, errorCode=None, durationMs=2400,
+                    review={"source": "PRIVATE_SENTINEL", "draft": "PRIVATE_SENTINEL"}))
+        self.assertEqual(clean["protocolVersion"], protocol)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+    def test_compact_review_protocol_is_identifiable_without_exporting_review_text(self):
+        protocol = "fluent-dictation-v1+semantic-review-compact-v2"
+        clean = module.filter_rewrite(dict(protocolVersion=protocol, configuredBudgetMs=5000,
+                    outcome="validated", fallbackReason=None, errorCode=None, durationMs=2192,
+                    review={"source": "PRIVATE_SENTINEL", "draft": "PRIVATE_SENTINEL"}))
+        self.assertEqual(clean["protocolVersion"], protocol)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+
+    def test_rewrite_metadata_survives_ready_outcome_without_claiming_validation(self):
+        raw = self.wire_fixture()
+        row = raw["traces"][0]
+        row.update(outcome="ready", errorCode=None, rewrite={
+            "protocolVersion": "mode-contract-v1", "configuredBudgetMs": 5000,
+            "outcome": "fallback", "fallbackReason": "meaningRisk",
+            "errorCode": "rewrite_meaning_risk", "durationMs": 3100.25,
+            "prompt": "PRIVATE_SENTINEL", "response": "PRIVATE_SENTINEL", "apiKey": "PRIVATE_SENTINEL"})
+        clean = module.filter_snapshot(raw)["traces"][0]
+        self.assertEqual(clean["outcome"], "ready")
+        self.assertEqual(clean["rewrite"]["outcome"], "fallback")
+        self.assertEqual(clean["rewrite"]["fallbackReason"], "meaningRisk")
+        self.assertEqual(clean["rewrite"]["errorCode"], "rewrite_meaning_risk")
+        self.assertEqual(clean["rewrite"]["durationMs"], 3100.25)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+
+    def test_rewrite_metadata_absent_in_old_receipts_remains_absent(self):
+        for raw in (fixture(), self.wire_fixture()):
+            self.assertNotIn("rewrite", module.filter_snapshot(raw)["traces"][0])
+            raw["traces"][0]["rewrite"] = None
+            self.assertIsNone(module.filter_snapshot(raw)["traces"][0]["rewrite"])
+
+    def test_rewrite_metadata_redacts_unknown_strings_and_rejects_bad_timings(self):
+        value = dict(protocolVersion="PRIVATE_SENTINEL", configuredBudgetMs=5000,
+                     outcome="PRIVATE_SENTINEL", fallbackReason="PRIVATE_SENTINEL",
+                     errorCode="PRIVATE_SENTINEL", durationMs=200)
+        clean = module.filter_rewrite(value)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+        self.assertIsNone(clean["errorCode"])
+        for field, invalid in (("configuredBudgetMs", True), ("configuredBudgetMs", 0),
+                               ("configuredBudgetMs", 120001), ("durationMs", -1),
+                               ("durationMs", float("nan")), ("durationMs", "private text")):
+            with self.subTest(field=field, invalid=invalid), self.assertRaises(module.ExportError):
+                module.filter_rewrite({**value, field: invalid})
+
+    def test_rewrite_error_codes_keep_provider_and_parser_causes_distinct(self):
+        for code in ("rewrite_timeout", "authentication_failed", "rewrite_service_error",
+                     "invalid_source_mapping", "incomplete_source_coverage", "truncated_output"):
+            clean = module.filter_rewrite(dict(protocolVersion="mode-contract-v1", configuredBudgetMs=5000,
+                outcome="fallback", fallbackReason="invalidOutput", errorCode=code, durationMs=100))
+            self.assertEqual(clean["errorCode"], code)
+
+    def test_admission_and_semantic_rejections_keep_fixed_labels_without_private_evidence(self):
+        for code in ("rewrite_admission_rejected", "rewrite_semantic_rejected"):
+            with self.subTest(code=code):
+                raw = self.wire_fixture()
+                row = raw["traces"][0]
+                row.update(outcome="ready", errorCode=code, rewrite={
+                    "protocolVersion": "fluent-dictation-v1+semantic-review-compact-v2",
+                    "configuredBudgetMs": 20000, "outcome": "fallback", "fallbackReason": "meaningRisk",
+                    "errorCode": code, "durationMs": 10400,
+                    "numericKeys": ["PRIVATE_SENTINEL"], "sourceQuote": "PRIVATE_SENTINEL",
+                    "draftQuote": "PRIVATE_SENTINEL", "reviewResponse": "PRIVATE_SENTINEL"})
+                clean = module.filter_snapshot(raw)["traces"][0]
+                self.assertEqual(clean["errorCode"], code)
+                self.assertEqual(clean["rewrite"]["errorCode"], code)
+                self.assertEqual(clean["rewrite"]["fallbackReason"], "meaningRisk")
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+                row["errorCode"] = row["rewrite"]["errorCode"] = code + ":PRIVATE_SENTINEL"
+                clean = module.filter_snapshot(raw)["traces"][0]
+                self.assertIsNone(clean["errorCode"])
+                self.assertIsNone(clean["rewrite"]["errorCode"])
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+
+    def test_fallback_stage_is_exported_without_claiming_validation(self):
+        raw = fixture()
+        raw['traces'][0]['marks'] = [{'stage': 'rewriteStarted', 'offsetMs': 100}, {'stage': 'rewriteFallbackSelected', 'offsetMs': 200}]
+        clean = module.filter_snapshot(raw)
+        stages = [mark['stage'] for mark in clean['traces'][0]['marks']]
+        self.assertEqual(stages, ['rewriteStarted', 'rewriteFallbackSelected'])
+        self.assertNotIn('rewriteValidated', stages)
+
     def test_fixed_target_capture_codes_preserved_without_arbitrary_details(self):
         for code in ('stop_anchor_unavailable','stop_focus_changed','target_not_editable',
                      'target_capability_unsupported','target_inspection_timeout'):
@@ -76,6 +163,71 @@ class ExportBoundaries(unittest.TestCase):
         self.assertEqual(row["errorCode"], "asr_incomplete")
         self.assertEqual(row["capture"]["inputSampleRate"], 48000)
 
+    def test_conditioning_metadata_is_optional_and_contains_only_typed_scalars(self):
+        raw = self.wire_fixture()
+        self.assertIsNone(module.filter_snapshot(raw)["traces"][0]["capture"]["conditioning"])
+        levels = dict(profile="softVoice", version="soft-voice-v1", sampleRateHz=16000,
+                      realSamples=1600, inputRmsDbfs=-48.2, outputRmsDbfs=-40.1,
+                      inputPeakDbfs=-39, outputPeakDbfs=-30, meanGainDb=8.1, maxGainDb=12,
+                      inputClippedSamples=0, outputClippedSamples=0, peakLimitedSamples=2,
+                      nonfiniteSamples=0, processingUs=72, pcm=["PRIVATE_SENTINEL"], transcript="PRIVATE_SENTINEL")
+        raw["traces"][0]["capture"]["conditioning"] = levels
+        result = module.filter_snapshot(raw)
+        clean = result["traces"][0]["capture"]["conditioning"]
+        self.assertEqual(clean["inputRmsDbfs"], -48.2)
+        self.assertEqual(clean["realSamples"], 1600)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
+        for field, invalid in (("realSamples", -1), ("processingUs", True),
+                               ("inputRmsDbfs", float("nan")), ("maxGainDb", "PRIVATE_SENTINEL"),
+                               ("sampleRateHz", 48000), ("profile", "PRIVATE_SENTINEL")):
+            bad = copy.deepcopy(raw)
+            bad["traces"][0]["capture"]["conditioning"][field] = invalid
+            with self.subTest(field=field), self.assertRaises(module.ExportError) as error:
+                module.filter_snapshot(bad)
+            self.assertNotIn("PRIVATE_SENTINEL", str(error.exception))
+
+    def test_native_receipt_durations_are_optional_for_old_v1_and_v2(self):
+        for raw in (fixture(), self.wire_fixture()):
+            value = module.filter_snapshot(raw)
+            durations = value["traces"][0]["durations"]
+            self.assertIsNone(durations["readyToNativeDeliveryReceiptMs"])
+            self.assertIsNone(durations["stopToNativeDeliveryReceiptMs"])
+
+    def test_native_receipt_elapsed_times_never_upgrade_ready_to_delivery_success(self):
+        for raw in (fixture(), self.wire_fixture()):
+            row = raw["traces"][0]
+            row.update(outcome="ready", deliveryState="unconfirmed")
+            row["marks"].extend([
+                {"stage": "stopIntentReceived", "offsetMs": 4000},
+                {"stage": "readyCommitted", "offsetMs": 4500},
+                {"stage": "nativeDeliveryReceipt", "offsetMs": 4700},
+            ])
+            row["durations"].update(readyToNativeDeliveryReceiptMs=200,
+                                    stopToNativeDeliveryReceiptMs=700)
+            clean = module.filter_snapshot(raw)["traces"][0]
+            self.assertEqual(clean["durations"]["readyToNativeDeliveryReceiptMs"], 200)
+            self.assertEqual(clean["durations"]["stopToNativeDeliveryReceiptMs"], 700)
+            self.assertEqual(clean["outcome"], "ready")
+            self.assertNotIn("deliveryState", clean)
+            self.assertNotIn("deliveryConfirmed", clean)
+            self.assertNotIn("success", json.dumps(clean))
+
+    def test_native_receipt_timings_remain_typed_and_duplicate_receipts_rejected(self):
+        for field in ("readyToNativeDeliveryReceiptMs", "stopToNativeDeliveryReceiptMs"):
+            for invalid in (float("nan"), float("inf"), -1, True, "PRIVATE_SENTINEL"):
+                raw = self.wire_fixture()
+                raw["traces"][0]["durations"][field] = invalid
+                with self.subTest(field=field, invalid=invalid), self.assertRaises(module.ExportError) as error:
+                    module.filter_snapshot(raw)
+                self.assertNotIn("PRIVATE_SENTINEL", str(error.exception))
+        raw = self.wire_fixture()
+        raw["traces"][0]["marks"].extend([
+            {"stage": "nativeDeliveryReceipt", "offsetMs": 4500},
+            {"stage": "nativeDeliveryReceipt", "offsetMs": 4600},
+        ])
+        with self.assertRaisesRegex(module.ExportError, "duplicate"):
+            module.filter_snapshot(raw)
+
     def test_v2_drops_nested_payload_and_provider_identifiers(self):
         raw = self.wire_fixture()
         row = raw["traces"][0]
@@ -101,6 +253,20 @@ class ExportBoundaries(unittest.TestCase):
             with self.assertRaises(module.ExportError) as error:
                 module.filter_snapshot(raw)
             self.assertNotIn("PRIVATE_SENTINEL", str(error.exception))
+
+    def test_dictionary_metadata_keeps_counts_and_drops_private_terms(self):
+        value = self.wire_fixture()
+        value["traces"][0]["asr"]["dictionary"] = {
+            "version": 8, "entryCount": 2, "vocabularyCount": 2, "contextChunks": 0,
+            "support": "vocabularyAndContext", "socketWritten": True,
+            "effectivenessVerified": True, "terms": ["PRIVATE_TERM"], "sourceText": "PRIVATE_SOURCE"}
+        clean = module.filter_snapshot(value)
+        dictionary = clean["traces"][0]["asr"]["dictionary"]
+        self.assertEqual(dictionary["version"], 8)
+        self.assertEqual(dictionary["entryCount"], 2)
+        self.assertTrue(dictionary["socketWritten"])
+        self.assertFalse(dictionary["effectivenessVerified"])
+        self.assertNotIn("PRIVATE", json.dumps(clean))
 
     def test_v2_bounds_event_arrays_and_rejects_duplicate_event_kinds(self):
         for collection, limit in (("eventTail", 32), ("eventCounts", 14)):

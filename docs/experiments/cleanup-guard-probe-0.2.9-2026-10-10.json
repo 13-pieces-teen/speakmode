@@ -1,0 +1,865 @@
+{
+  "expectationsMet": 64,
+  "mismatches": 0,
+  "rows": [
+    {
+      "actualAccepted": true,
+      "category": "screenshot-text-only",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "visible-exact",
+      "output": "轻语的效果，然后可以让呢，目前的应用做得更平滑一些。",
+      "source": [
+        "轻语的效果，然后可以让呢，目前的应用做得更平滑一些。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "screenshot-text-only",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "visible-remove-filler",
+      "output": "轻语的效果，可以让目前的应用做得更平滑一些。",
+      "source": [
+        "轻语的效果，然后可以让呢，目前的应用做得更平滑一些。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "screenshot-text-only",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "visible-repunctuate",
+      "output": "轻语的效果：可以让目前的应用做得更平滑一些。",
+      "source": [
+        "轻语的效果，然后可以让呢，目前的应用做得更平滑一些。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "qualifier-scope",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "currently-synonym",
+      "output": "当前应用的延迟是100毫秒。",
+      "source": [
+        "目前应用的延迟是100毫秒。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "qualifier-scope",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "currently-synonym-prose",
+      "output": "当前的应用做得更平滑一些。",
+      "source": [
+        "目前的应用做得更平滑一些。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "filler",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "filler-ne",
+      "output": "这个功能可以让应用更平滑。",
+      "source": [
+        "这个功能呢，可以让应用更平滑。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "filler",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "filler-ranhou",
+      "output": "这个功能可以让应用更平滑。",
+      "source": [
+        "然后这个功能，可以让应用更平滑。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-boundary",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "yi-xie",
+      "output": "让应用更平滑。",
+      "source": [
+        "让应用更平滑一些。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-boundary",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "yi-xia",
+      "output": "优化录音体验。",
+      "source": [
+        "优化一下录音体验。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-boundary",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "yi-dian",
+      "output": "改善录音体验。",
+      "source": [
+        "让录音体验好一点。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-boundary",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "yi-bian",
+      "output": "我的意思是，让用户轻声说话也能被识别。",
+      "source": [
+        "我重新解释一遍，就是让用户轻声说话也能被识别。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-boundary",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "first-point",
+      "output": "- 先粘贴。\n- 清理语气词。",
+      "source": [
+        "第一点是先粘贴，第二点是清理语气词。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "candidate-false-positive",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "indefinite-count",
+      "output": "这是这样的功能。",
+      "source": [
+        "这是一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "candidate-false-positive",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "indefinite-filler",
+      "output": "我们希望体验更好。",
+      "source": [
+        "我们希望有一个更好的体验。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "candidate-false-positive",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "count-synonym",
+      "output": "增加一项功能。",
+      "source": [
+        "增加一个功能。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "candidate-false-positive",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "very-natural",
+      "output": "这个体验很自然。",
+      "source": [
+        "这个体验十分自然。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "candidate-false-positive",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "very-clear",
+      "output": "这个问题很清楚。",
+      "source": [
+        "这个问题十分清楚。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "repetition",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "repeat-identical",
+      "output": "这个功能很好。",
+      "source": [
+        "这个功能很好，这个功能很好。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "repetition",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "repeat-count",
+      "output": "增加一个功能。",
+      "source": [
+        "增加一个功能。",
+        "增加一个功能。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "filler",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "filler-amount",
+      "output": "预算是3500元。",
+      "source": [
+        "嗯，那个，预算是三千五百元，就是，三千五百元。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "self-correction",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "semantic-repair",
+      "output": "我要的是提高识别质量。",
+      "source": [
+        "我要的其实是提高音量，不对，我的意思是提高识别质量。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "self-correction",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "semantic-repair-fragments",
+      "output": "我要的是提高识别质量。",
+      "source": [
+        "我要的其实是提高音量。",
+        "不对，我的意思是提高识别质量。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "self-correction",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "numeric-repair",
+      "output": "预算是3500元。",
+      "source": [
+        "预算是5000元，不对，是3500元。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "self-correction",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "numeric-repair-fragments",
+      "output": "预算是3500元。",
+      "source": [
+        "预算是5000元。",
+        "不对，是3500元。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "layout",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "presentation-bullets",
+      "output": "1. 先粘贴结果。\n2. 清理语气词。\n3. 调整排版。",
+      "source": [
+        "先粘贴结果，然后清理语气词，最后调整排版。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "numeric-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "real-number-kept",
+      "output": "预算是3500元。",
+      "source": [
+        "预算是三千五百元。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "numeric-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "real-number-changed",
+      "output": "预算是5000元。",
+      "source": [
+        "预算是三千五百元。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "numeric-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "real-number-dropped",
+      "output": "预算已安排。",
+      "source": [
+        "预算是三千五百元。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "numeric-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "real-count-changed",
+      "output": "每次发送两个请求。",
+      "source": [
+        "每次发送一个请求。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "numeric-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "real-unit-changed",
+      "output": "延迟是100秒。",
+      "source": [
+        "延迟是100毫秒。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "numeric-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "version-changed",
+      "output": "当前版本0.2.7。",
+      "source": [
+        "当前版本0.2.8。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "semantic-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能遗漏时间、条件或否定等限定，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "negative-dropped",
+      "output": "发邀请。",
+      "source": [
+        "不要发邀请。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-generalization",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "new-degree-wording",
+      "output": "这个录音功能很流畅。",
+      "source": [
+        "这个录音功能十分流畅。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-generalization",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "new-experience-wording",
+      "output": "新界面为同学带来比较自然的体验。",
+      "source": [
+        "新界面为同学带来一个比较自然的体验。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "prose-generalization",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "new-experience-expectation",
+      "output": "团队期待体验更流畅。",
+      "source": [
+        "团队期待有一个更流畅的体验。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "source-boundary",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "experience-source-items",
+      "output": "我们希望录音后体验更顺畅。",
+      "source": [
+        "我们在录音后。",
+        "希望有一个更顺畅的体验。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "source-boundary",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "count-source-items",
+      "output": "我们在录音后实际需要新功能。",
+      "source": [
+        "我们在录音后。",
+        "实际需要一个新功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "degree-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "ten-duration",
+      "output": "耗时五分。",
+      "source": [
+        "耗时十分。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "degree-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "ten-minutes",
+      "output": "耗时五分钟。",
+      "source": [
+        "耗时十分钟。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "degree-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "ten-score",
+      "output": "评分九分。",
+      "source": [
+        "评分十分。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "degree-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "ten-fraction",
+      "output": "五分之一会失败。",
+      "source": [
+        "十分之一会失败。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "degree-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "degree-with-real-amount",
+      "output": "体验很自然，预算五元。",
+      "source": [
+        "体验十分自然，预算十元。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "actual-feature-count",
+      "output": "新增功能。",
+      "source": [
+        "新增一个功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能遗漏时间、条件或否定等限定，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "only-one",
+      "output": "仅这样的功能。",
+      "source": [
+        "仅一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "each-time-one",
+      "output": "每次提供更好的体验。",
+      "source": [
+        "每次提供一个更好的体验。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "at-least-one",
+      "output": "有这样的功能。",
+      "source": [
+        "至少有一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "actual-one",
+      "output": "实际是这样的功能。",
+      "source": [
+        "实际是一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "total-one",
+      "output": "总数是这样的功能。",
+      "source": [
+        "总数是一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "one-sufficient",
+      "output": "这是这样的功能就够了。",
+      "source": [
+        "这是一个这样的功能就够了。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能新增数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "article-to-two",
+      "output": "这是两个这样的功能。",
+      "source": [
+        "这是一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能新增数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "experience-to-two",
+      "output": "我们希望有两个更好的体验。",
+      "source": [
+        "我们希望有一个更好的体验。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "article-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能遗漏时间、条件或否定等限定，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "article-negation-dropped",
+      "output": "这是这样的功能。",
+      "source": [
+        "这不是一个这样的功能。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "classifier-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "feature-classifier-reverse",
+      "output": "增加一个功能。",
+      "source": [
+        "增加一项功能。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "classifier-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "feature-classifier-three",
+      "output": "增加3项功能。",
+      "source": [
+        "增加三个功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "classifier-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "feature-classifier-value-change",
+      "output": "增加两项功能。",
+      "source": [
+        "增加一个功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "classifier-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "feature-classifier-drop",
+      "output": "增加功能。",
+      "source": [
+        "增加一项功能。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "classifier-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "feature-classifier-unit-change",
+      "output": "增加一条功能。",
+      "source": [
+        "增加一项功能。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "clock-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "clock-unchanged-format",
+      "output": "10:10结束。",
+      "source": [
+        "十点十分结束。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "clock-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "clock-minute-change",
+      "output": "十点五分结束。",
+      "source": [
+        "十点十分结束。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "clock-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "clock-hour-change",
+      "output": "九点十分结束。",
+      "source": [
+        "十点十分结束。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "clock-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "decimal-duration-kept",
+      "output": "耗时630秒。",
+      "source": [
+        "耗时十点五分钟。"
+      ]
+    },
+    {
+      "actualAccepted": false,
+      "category": "clock-control",
+      "error": {
+        "code": "rewrite_meaning_risk",
+        "message": "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理"
+      },
+      "expectationMet": true,
+      "expectedAccepted": false,
+      "id": "decimal-is-not-clock",
+      "output": "耗时10:05。",
+      "source": [
+        "耗时十点五分钟。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "clock-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "ordinal-point-degree",
+      "output": "第一点很自然。",
+      "source": [
+        "第一点十分自然。"
+      ]
+    },
+    {
+      "actualAccepted": true,
+      "category": "clock-control",
+      "error": null,
+      "expectationMet": true,
+      "expectedAccepted": true,
+      "id": "deictic-point-degree",
+      "output": "这一点很清楚。",
+      "source": [
+        "这一点十分清楚。"
+      ]
+    }
+  ],
+  "scope": "offline-synthetic-production-parser-probe; screenshot full source/output unavailable",
+  "total": 64
+}

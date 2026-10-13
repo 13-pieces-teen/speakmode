@@ -1,5 +1,6 @@
 mod session;
 mod diagnostics;
+mod typeless_import;
 pub use session::{LiveSession, SessionPhase};
 
 use crate::{cloud::{self, CloudError, credentials, rewrite}, core::*, platform};
@@ -49,7 +50,38 @@ pub struct CommandRequest {pub name:String,#[serde(default)]pub payload:Value}
 #[serde(rename_all="camelCase")]
 pub struct ProviderStatus {pub config:ProviderConfig,pub configured:bool,pub credential_configured:bool,pub status:String,pub message:Option<String>}
 
-struct CandidateSlot {key:String,run:String,cancel:CancellationToken,base:String,result:Option<OutputRevision>,adopting:Option<Arc<CommitGuard>>}
+#[derive(Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+struct HistoryCandidate {
+    #[serde(flatten)] revision:OutputRevision,
+    review_issues:Vec<rewrite::ManualReviewIssue>,
+}
+struct CandidateSlot {key:String,run:String,cancel:CancellationToken,base:String,result:Option<HistoryCandidate>,adopting:Option<Arc<CommitGuard>>}
+
+fn reviewed_candidate(candidate:&OutputRevision,payload:&Value)->Result<OutputRevision> {
+    let mut reviewed=candidate.clone();
+    if let Some(value)=payload.get("reviewedText") {
+        let text=value.as_str().ok_or_else(||ApiError::new("invalid_payload","revision","编辑文本格式无效"))?;
+        if text.trim().is_empty() || text.len()>320_000 || text.chars().count()>80_000 || text.contains('\0') {
+            return Err(ApiError::new("invalid_payload","revision","结果不能为空或超过八万字"));
+        }
+        if text!=candidate.blocks.iter().map(|b|b.text.as_str()).collect::<Vec<_>>().join("\n\n") {
+            // The whole manually edited document is bound to the frozen source
+            // set. Diff chunks are display/choice data, never inferred ASR ranges.
+            let mut refs=Vec::new();
+            for block in &candidate.blocks {for source in &block.source_refs {if !refs.contains(source){refs.push(source.clone());}}}
+            reviewed.blocks=vec![OutputBlock{id:Uuid::new_v4().to_string(),text:text.into(),source_refs:refs}];
+        }
+    }
+    Ok(reviewed)
+}
+
+fn candidate_for_adoption(candidate:&HistoryCandidate,payload:&Value)->Result<OutputRevision> {
+    if !candidate.review_issues.is_empty() && !payload.get("reviewedText").is_some_and(Value::is_string) {
+        return Err(ApiError::new("candidate_review_required","revision","请在对照中确认或编辑候选后保存"));
+    }
+    reviewed_candidate(&candidate.revision,payload)
+}
 #[derive(Clone)]
 enum ReplayValue {Safe(Value),Session(String,u64),Mode(String,u64),Detail(String),Candidate(String,String),Capture(String),Dictionary(u64),Correction(String,String,Option<u64>,CorrectionDictionaryStatus),Acknowledged}
 struct RequestRecord {fingerprint:String,outcome:Mutex<Option<Result<ReplayValue>>>,completed:tokio::sync::Notify}
@@ -243,7 +275,7 @@ impl AppHub {
     }
 
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
-        if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.resizeRecorder"|"session.captionRendered") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
+        if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.resizeRecorder"|"session.captionRendered"|"result.copy"|"recoverable.copy") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
         if !matches!(window,"main"|"recording"){return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
         let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"usage.total"|"diagnostics.get"|"session.captionRendered");
         if !mutation{return self.execute_command(window,request).await;}
@@ -283,7 +315,7 @@ impl AppHub {
         match name {
             "session.start"=>ReplayValue::Safe(value.clone()),
             "session.stop"|"session.selectMode"|"asr.retry"|"rewrite.retry"|"result.retrySave"|"recovery.activate"=>ReplayValue::Session(value.get("sessionId").or_else(||value.get("id")).and_then(Value::as_str).unwrap_or("").into(),value["generation"].as_u64().unwrap_or(0)),
-            "dictionary.save"|"dictionary.import"|"dictionary.delete"=>ReplayValue::Dictionary(value["version"].as_u64().unwrap_or(0)),
+            "dictionary.save"|"dictionary.import"|"dictionary.importTypeless"|"dictionary.delete"=>ReplayValue::Dictionary(value["version"].as_u64().unwrap_or(0)),
             "revision.correctTerm"=>ReplayValue::Correction(value.pointer("/detail/session/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/detail/output/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/dictionary/version").and_then(Value::as_u64),serde_json::from_value(value["dictionaryStatus"].clone()).unwrap_or(CorrectionDictionaryStatus::NotRequested)),
             "mode.save"=>ReplayValue::Mode(id("id"),value["revision"].as_u64().unwrap_or(0)),
             "revision.adopt"|"revision.edit"|"revision.restore"|"revision.undo"|"result.useSource"=>ReplayValue::Detail(value.pointer("/session/id").and_then(Value::as_str).unwrap_or("").into()),
@@ -314,6 +346,13 @@ impl AppHub {
     }
     async fn execute_command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
         let p=request.payload;
+        // Recorder copy is restricted to its live session. It must never fall
+        // through to the main panel's arbitrary saved-result/source copy API.
+        if window=="recording" && matches!(request.name.as_str(),"result.copy"|"recoverable.copy") {
+            let hub=Arc::clone(self);let name=request.name;
+            return tokio::task::spawn_blocking(move||hub.copy_current_recorder_with(&name,&p,|content|platform::delivery::copy_text(content).map_err(Into::into)))
+                .await.map_err(|_|ApiError::new("native_unavailable","result","复制未完成"))?;
+        }
         if matches!(request.name.as_str(),"session.stop"|"session.cancel"|"session.selectMode"|"asr.retry"|"rewrite.retry"|"result.retrySave"){
             text(&p,"sessionId")?;number(&p,"expectedGeneration")?;
         }
@@ -331,6 +370,7 @@ impl AppHub {
             "dictionary.list"=>wire(self.db.snapshot().dictionary),
             "dictionary.save"=>self.dictionary_write(DbCommand::SaveDictionary{draft:parse(p["draft"].clone())?,expected_version:number(&p,"expectedVersion")?}).await,
             "dictionary.import"=>self.dictionary_write(DbCommand::ImportDictionary{terms:parse(p["terms"].clone())?,expected_version:number(&p,"expectedVersion")?}).await,
+            "dictionary.importTypeless"=>self.import_typeless_dictionary(number(&p,"expectedVersion")?).await,
             "dictionary.delete"=>self.dictionary_write(DbCommand::DeleteDictionary{entry_id:text(&p,"entryId")?.into(),expected_version:number(&p,"expectedVersion")?}).await,
             "mode.save"=>db_wire(self.db_write(DbCommand::SaveMode{draft:parse(p.get("draft").cloned().unwrap_or(p.clone()))?},self.operation_guard(),DbPriority::Normal).await?),
             "mode.delete"=>{self.db_write(DbCommand::DeleteMode{id:text(&p,"modeId")?.into(),expected_revision:number(&p,"expectedRevision")?},self.operation_guard(),DbPriority::Normal).await?;Ok(Value::Null)},
@@ -373,7 +413,7 @@ impl AppHub {
                 let id=text(&p,"sessionId")?.to_owned();let expected=text(&p,"expectedCurrentRevisionId")?.to_owned();
                 let candidate_id=p.get("candidateId").and_then(Value::as_str).or_else(||p.pointer("/candidate/id").and_then(Value::as_str)).ok_or_else(||ApiError::new("invalid_payload","revision","缺少候选身份"))?.to_owned();
                 let record_guard=self.history_guard(&id).await?;let adopt_guard=record_guard.operation();
-                let candidate={let mut i=self.inner.lock().unwrap();let slot=i.candidate.as_mut().filter(|c|c.key==id&&c.base==expected&&c.run==candidate_id&&!c.cancel.is_cancelled()).ok_or_else(||ApiError::new("candidate_expired","revision","候选已过期，请重新整理"))?;let candidate=slot.result.clone().ok_or_else(||ApiError::new("candidate_expired","revision","候选尚未完成"))?;if slot.adopting.is_some(){return Err(ApiError::new("candidate_busy","revision","正在采用这个候选，请稍候"));}slot.adopting=Some(Arc::clone(&adopt_guard));candidate};
+                let candidate={let mut i=self.inner.lock().unwrap();let slot=i.candidate.as_mut().filter(|c|c.key==id&&c.base==expected&&c.run==candidate_id&&!c.cancel.is_cancelled()).ok_or_else(||ApiError::new("candidate_expired","revision","候选已过期，请重新整理"))?;let original=slot.result.as_ref().ok_or_else(||ApiError::new("candidate_expired","revision","候选尚未完成"))?;let candidate=candidate_for_adoption(original,&p)?;if slot.adopting.is_some(){return Err(ApiError::new("candidate_busy","revision","正在采用这个候选，请稍候"));}slot.adopting=Some(Arc::clone(&adopt_guard));candidate};
                 let intent=self.reserve_revision_intent(&id);
                 let committed=self.db_write(DbCommand::Adopt{session_id:id.clone(),expected_current_revision_id:expected.clone(),candidate},adopt_guard,DbPriority::Normal).await;
                 if committed.is_err(){let mut i=self.inner.lock().unwrap();if let Some(slot)=i.candidate.as_mut().filter(|c|c.key==id&&c.run==candidate_id){slot.adopting=None;}}
@@ -561,27 +601,36 @@ impl AppHub {
         if let Some((_,token))=i.preview.take(){token.cancel();}
         if let Some(slot)=i.candidate.take(){slot.cancel.cancel();if let Some(guard)=slot.adopting{guard.cancel();}}
     }
+    fn auxiliary_rewrite_snapshot(&self)->(ProviderConfig,DictionarySnapshot) {
+        // History does not persist its original vocabulary. An explicit preview
+        // or reprocess freezes today's provider and dictionary together once.
+        let snapshot=self.db.snapshot();(snapshot.provider_config,snapshot.dictionary)
+    }
     async fn preview(self:&Arc<Self>,p:Value)->Result<Value> {
         let key=operation_id(&p,"runId")?.to_owned();let operation=format!("preview:{key}");
         let (_,mode)=preview_options(&p)?;
         let source_input=preview_source_input(&p)?;
         let cancel=CancellationToken::new();
-        let (config,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;(self.db.snapshot().provider_config,self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
+        let (config,dictionary,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;let (config,dictionary)=self.auxiliary_rewrite_snapshot();(config,dictionary,self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
         let source=self.load_preview_source(source_input,&key).await?;
         rewrite::validate_source(&source.revision)?;
         cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
         self.validate_preview_source(&source).await?;
         let lease=self.reserve_preview(&key,&source,cancel.clone(),epoch)?;
-        let config=&config;let secret=&secret;
+        let preview_mode=mode.clone().unwrap_or(ModeSnapshot{mode_id:"light".into(),name:"轻整理".into(),base_mode:BaseMode::Light,rules:String::new(),revision:1});
+        let protocol=rewrite::manual_protocol_version(&config,&preview_mode,&source.revision);
+        let config=&config;let secret=&secret;let dictionary=&dictionary;
         let work=async {
-            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {rewrite::rewrite(config,secret,&mode,&source,cancel).await}).await?;
+            // User-requested trials are human-reviewed drafts, one call per
+            // layout. Never use this result to authorize automatic delivery.
+            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {rewrite::rewrite_manual_candidate(config,secret,&mode,&source,dictionary,cancel).await.map(|candidate|candidate.draft)}).await?;
             self.validate_preview_source(&source).await?;
             Ok::<_,ApiError>(result)
         };
         let result=match (AuxiliaryFuture{future:Some(Box::pin(work)),lease:Some(lease)}).await{Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}return Err(error.for_operation("application",&key));}};
         let mut i=self.inner.lock().unwrap();if cancel.is_cancelled()||!i.preview.as_ref().is_some_and(|(id,_)|id==&key){return Err(ApiError::new("cancelled","preview","试用已过期"));}i.preview=None;
-        Ok(preview_response(&key,&source,result))
+        Ok(preview_response(&key,&source,result,protocol))
     }
 
     async fn make_candidate(self:&Arc<Self>,p:&Value,retry:bool)->Result<Value> {
@@ -593,7 +642,7 @@ impl AppHub {
         let mode=db_mode(self.db_read(DbCommand::ModeSnapshot{id:p.get("modeId").and_then(Value::as_str).unwrap_or(&detail.session.seed.mode_snapshot.mode_id).into(),revision:None}).await?)?;
         let base=detail.output.as_ref().map(|v|v.id.clone()).unwrap_or_default();
         if p.get("baseRevisionId").and_then(Value::as_str).is_some_and(|v|v!=base){return Err(ApiError::new("revisionConflict","rewrite","记录已变化，请重新核对"));}
-        let config=self.db.snapshot().provider_config;
+        let (config,dictionary)=self.auxiliary_rewrite_snapshot();
         cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
         let cancel=CancellationToken::new();
@@ -607,12 +656,13 @@ impl AppHub {
             i.candidate=Some(CandidateSlot{key:id.clone(),run:run.clone(),cancel:cancel.clone(),base,result:None,adopting:None});
             i.auxiliary_workers.insert(operation.clone(),cancel.clone());AuxiliaryLease{hub:Arc::clone(self),key:operation}
         };
-        let generated=match (AuxiliaryFuture{future:Some(Box::pin(rewrite::rewrite(&config,&secret,&mode,&detail.source,cancel.clone()))),lease:Some(lease)}).await {
+        let generated=match (AuxiliaryFuture{future:Some(Box::pin(rewrite::rewrite_manual_candidate(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone()))),lease:Some(lease)}).await {
             Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.candidate.as_ref().is_some_and(|slot|slot.key==id&&slot.run==run){i.candidate=None;}return Err(ApiError::from(error).for_operation("application",&run));}
         };
-        let candidate=OutputRevision{id:run.clone(),session_id:id.clone(),parent_revision_id:None,base_revision_id:detail.output.as_ref().map(|o|o.id.clone()),source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,blocks:generated.blocks,kind:RevisionKind::Adopt,creation_reason:if retry{CreationReason::Retry}else{CreationReason::History},created_at:now()};
+        let candidate=OutputRevision{id:run.clone(),session_id:id.clone(),parent_revision_id:None,base_revision_id:detail.output.as_ref().map(|o|o.id.clone()),source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:generated.draft.resolved_mode,rewrite_fallback:None,blocks:generated.draft.blocks,kind:RevisionKind::Adopt,creation_reason:if retry{CreationReason::Retry}else{CreationReason::History},created_at:now()};
         let current=db_detail(self.db_read(DbCommand::GetResult{session_id:id.clone()}).await?)?;let mut i=self.inner.lock().unwrap();
         if i.guards.get(&id).is_some_and(|g|g.is_cancelled())||cancel.is_cancelled()||!i.candidate.as_ref().is_some_and(|s|s.key==id&&s.run==run&&!s.cancel.is_cancelled())||current.output.as_ref().map(|o|o.id.as_str()).unwrap_or("")!=candidate.base_revision_id.as_deref().unwrap_or(""){return Err(ApiError::new("revisionConflict","rewrite","当前记录已变化，候选不能覆盖新版本"));}
+        let candidate=HistoryCandidate{revision:candidate,review_issues:generated.review_issues};
         i.candidate.as_mut().unwrap().result=Some(candidate.clone());wire(candidate)
     }
 }

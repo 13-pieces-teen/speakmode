@@ -31,6 +31,12 @@ def reference(fid):
                              for mode in ("light", "structure")}}
 
 
+def no_speech_reference(fid):
+    return {"schemaVersion": 1, "fixtureId": fid, "expectation": "no_speech", "language": "zh",
+            "transcript": "", "deletableFillers": [], "facts": [], "positiveTerms": [], "negativeTerms": [],
+            "modeCriteria": {"light": [], "structure": []}}
+
+
 class QualityBoundaries(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -267,6 +273,105 @@ class QualityBoundaries(unittest.TestCase):
         self.assertNotIn(reference("sample")["transcript"], report_text)
         self.assertNotIn(str(self.root), report_text)
         self.assertNotIn("不要发邀请", report_text)
+
+    def prepare_no_speech(self):
+        self.manifest["fixtures"][0]["expectation"] = "no_speech"
+        write(self.ref, no_speech_reference("sample"))
+
+    def test_no_speech_empty_success_has_separate_denominators_and_no_cer(self):
+        self.prepare_no_speech()
+        self.freeze()
+        before = self.evaluate()["groups"][0]
+        self.assertIsNone(before["noSpeech"]["quietSuccess"]["rate"])
+        row = self.receipt()
+        row.update(asrText="", outputText="")
+        self.record(row)
+        report = self.evaluate()
+        group = report["groups"][0]
+        self.assertEqual(group["noSpeech"], {"registered": 1, "observed": 1, "unobserved": 0,
+            "falseText": {"numerator": 0, "denominator": 1, "rate": 0},
+            "quietSuccess": {"numerator": 1, "denominator": 1, "rate": 1}})
+        self.assertEqual(group["usableDraft"]["denominator"], 0)
+        self.assertIsNone(group["alignment"]["cer"]["rate"])
+        self.assertEqual(group["alignment"]["cer"]["referenceUnits"], 0)
+        self.assertEqual(group["unreviewedOrDisputedSuccesses"], 0)
+        self.assertEqual(report["registrations"][0]["expectation"], "no_speech")
+
+    def test_no_speech_failure_is_unobserved_and_not_correct_silence(self):
+        self.prepare_no_speech()
+        self.freeze()
+        row = self.receipt(status="failed")
+        row.update(asrText=None, outputText=None, protocolComplete=False, errorCode="transport-failure")
+        self.record(row)
+        score = self.evaluate()["groups"][0]["noSpeech"]
+        self.assertEqual(score["unobserved"], 1)
+        self.assertIsNone(score["falseText"]["rate"])
+        self.assertEqual(score["quietSuccess"], {"numerator": 0, "denominator": 1, "rate": 0})
+
+    def test_no_speech_catches_transcript_hallucination_even_if_rewrite_removes_it(self):
+        self.prepare_no_speech()
+        self.freeze()
+        row = self.receipt()
+        row.update(asrText="谢谢观看", outputText="")
+        self.record(row)
+        score = self.evaluate()["groups"][0]["noSpeech"]
+        self.assertEqual(score["falseText"]["rate"], 1)
+        self.assertEqual(score["quietSuccess"]["rate"], 0)
+
+    def test_no_speech_registration_never_dilutes_speech_draft_or_cer_denominators(self):
+        noise_ref = self.root / "noise-reference.json"
+        write(noise_ref, no_speech_reference("noise"))
+        noise = copy.deepcopy(self.manifest["fixtures"][0])
+        noise.update(id="noise", speakerId="synthetic-noise", expectation="no_speech", referencePath=str(noise_ref))
+        self.manifest["fixtures"].append(noise)
+        self.freeze()
+        self.record(self.receipt())
+        self.review()
+        self.review(reviewer="r2")
+        self.rid = next(rid for rid, (fixture, _) in lab.registrations(self.lock).items() if fixture["id"] == "noise")
+        row = self.receipt(run="noise-result")
+        row.update(asrText="", outputText="")
+        self.record(row)
+        score = self.evaluate()["groups"][0]
+        self.assertEqual(score["usableDraft"], {"numerator": 1, "denominator": 1, "rate": 1})
+        self.assertEqual(score["alignment"]["cer"]["scoredRegistrations"], 1)
+        self.assertEqual(score["noSpeech"]["quietSuccess"]["rate"], 1)
+
+    def test_no_speech_only_execution_cannot_claim_speech_metrics_were_measured(self):
+        noise_ref = self.root / "noise-reference.json"
+        write(noise_ref, no_speech_reference("noise"))
+        noise = copy.deepcopy(self.manifest["fixtures"][0])
+        noise.update(id="noise", speakerId="synthetic-noise", expectation="no_speech", referencePath=str(noise_ref))
+        self.manifest["fixtures"].append(noise)
+        self.freeze()
+        self.rid = next(rid for rid, (fixture, _) in lab.registrations(self.lock).items() if fixture["id"] == "noise")
+        row = self.receipt(run="noise-result")
+        row.update(asrText="", outputText="")
+        self.record(row)
+        score = self.evaluate()["groups"][0]
+        self.assertIsNone(score["usableDraft"]["rate"])
+        self.assertIsNone(score["alignment"]["cer"]["rate"])
+        self.assertIsNone(score["criticalFacts"]["rate"])
+        self.assertEqual(score["noSpeech"]["quietSuccess"]["rate"], 1)
+
+    def test_empty_speech_success_and_mislabeled_no_speech_reference_are_rejected(self):
+        self.freeze()
+        row = self.receipt()
+        row.update(asrText="", outputText="")
+        with self.assertRaises(lab.ValidationError):
+            self.record(row)
+        with self.assertRaises(lab.ValidationError):
+            lab.validate_reference({**reference("sample"), "expectation": "no_speech"}, "sample")
+        self.lock_path.unlink()  # This test's temporary lock only.
+        write(self.ref, no_speech_reference("sample"))
+        with self.assertRaises(lab.ValidationError):
+            self.freeze()
+
+    def test_speech_only_legacy_scoring_locks_still_verify(self):
+        self.freeze()
+        self.lock["scoringVersion"] = "speakmode-quality-v1"
+        write(self.lock_path, self.lock)
+        self.assertEqual(self.evaluate()["scoringVersion"], "speakmode-quality-v1")
 
     def test_24_collection_tasks_claim_no_recordings_or_rate(self):
         directory = self.root / "collection"
