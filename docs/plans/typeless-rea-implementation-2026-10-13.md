@@ -143,3 +143,5 @@ B 后的决策：若耗时主要在 ASR 收尾或失败重放，推进 C；若�
 | C5 | DEFERRED_BY_GATE | 术语样例退步、独立预留不足，生产 Retry 保持原路径 |
 
 52 次 ASR 上限已使用 6 次。保留所有本地预检失败与顺序调整记录；后续正式比较需补素材并重新安排剩余请求预算。
+
+**PR #8 提交后的 B1 更新。** 期限修复已提交为 [PR #8](https://github.com/13-pieces-teen/speakmode/pull/8)。随后在独立分支实施了[原生 Helper 调查和宿主验证](../experiments/input-helper-validation-2026-10-13.md)：本机 Ghidra/JDK 准备完毕，四个目标导出与 11 个相关过程形成证据；原生 16/16、Edge 19/19 通过。Word 曾连续四轮各 5 场景通过，保留一次初期 UIA 超时；末两轮前台权限不满足，均在输入前停止。30 格矩阵为 15 PASS、5 CONDITIONAL、10 NOT_RUN，B1 保持 PARTIAL。生产派发策略未改；下一步优先补 Word 稳定性和剩余宿主，B2 与 C 的真人/质量条件仍未满足。本次新增 ASR 请求为零。

@@ -1,0 +1,31 @@
+host,scenario,status,scope
+Windows Edit/RichEdit,Chinese-English-emoji,PASS,owned synthetic readback; no ASR/UI session
+Windows Edit/RichEdit,long-multiline,PASS,owned synthetic readback; no ASR/UI session
+Windows Edit/RichEdit,selection-replacement,PASS,owned synthetic readback; no ASR/UI session
+Windows Edit/RichEdit,window-change-before-dispatch,PASS,owned synthetic readback; no ASR/UI session
+Windows Edit/RichEdit,cancel-before-dispatch,PASS,owned synthetic readback; no ASR/UI session
+Edge textarea,Chinese-English-emoji,PASS,owned synthetic readback; no ASR/UI session
+Edge textarea,long-multiline,PASS,owned synthetic readback; no ASR/UI session
+Edge textarea,selection-replacement,PASS,owned synthetic readback; no ASR/UI session
+Edge textarea,window-change-before-dispatch,PASS,owned synthetic readback; no ASR/UI session
+Edge textarea,cancel-before-dispatch,PASS,owned synthetic readback; no ASR/UI session
+Edge contenteditable,Chinese-English-emoji,PASS,owned synthetic readback; no ASR/UI session
+Edge contenteditable,long-multiline,PASS,owned synthetic readback; no ASR/UI session
+Edge contenteditable,selection-replacement,PASS,owned synthetic readback; no ASR/UI session
+Edge contenteditable,window-change-before-dispatch,PASS,owned synthetic readback; no ASR/UI session
+Edge contenteditable,cancel-before-dispatch,PASS,owned synthetic readback; no ASR/UI session
+Word,Chinese-English-emoji,CONDITIONAL,ready fixtures passed; final foreground admission denied; one earlier UIA timeout
+Word,long-multiline,CONDITIONAL,ready fixtures passed; final foreground admission denied; one earlier UIA timeout
+Word,selection-replacement,CONDITIONAL,ready fixtures passed; final foreground admission denied; one earlier UIA timeout
+Word,window-change-before-dispatch,CONDITIONAL,ready fixtures passed; final foreground admission denied; one earlier UIA timeout
+Word,cancel-before-dispatch,CONDITIONAL,ready fixtures passed; final foreground admission denied; one earlier UIA timeout
+Feishu,Chinese-English-emoji,NOT_RUN,no validated isolated fixture in this run
+Feishu,long-multiline,NOT_RUN,no validated isolated fixture in this run
+Feishu,selection-replacement,NOT_RUN,no validated isolated fixture in this run
+Feishu,window-change-before-dispatch,NOT_RUN,no validated isolated fixture in this run
+Feishu,cancel-before-dispatch,NOT_RUN,no validated isolated fixture in this run
+VS Code,Chinese-English-emoji,NOT_RUN,no validated isolated fixture in this run
+VS Code,long-multiline,NOT_RUN,no validated isolated fixture in this run
+VS Code,selection-replacement,NOT_RUN,no validated isolated fixture in this run
+VS Code,window-change-before-dispatch,NOT_RUN,no validated isolated fixture in this run
+VS Code,cancel-before-dispatch,NOT_RUN,no validated isolated fixture in this run

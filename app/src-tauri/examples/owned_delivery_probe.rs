@@ -4,6 +4,8 @@
 //! Usage: owned_delivery_probe --fixture-script ABS --scratch-dir ABS --out ABS
 
 #[cfg(windows)]
+#[path="support/owned_delivery_cases.rs"] mod cases;
+#[cfg(windows)]
 mod probe {
     use anyhow::{Context, Result, bail, ensure};
     use serde_json::{Value, json};
@@ -18,8 +20,9 @@ mod probe {
         GetWindowTextW, IsWindow, SendMessageTimeoutW, SetForegroundWindow,
         SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT};
 
-    const SCENARIOS: [&str; 8] = ["edit", "rich", "readonly", "password", "caret-change",
-        "field-change", "anchor-caret-change", "anchor-field-change"];
+    const SCENARIOS: [&str; 16] = ["edit", "rich", "readonly", "password", "caret-change",
+        "field-change", "anchor-caret-change", "anchor-field-change", "edit-emoji", "rich-emoji",
+        "edit-long", "rich-long", "edit-cancel", "rich-cancel", "edit-window", "rich-window"];
 
     struct Args { fixture_script: PathBuf, scratch_dir: PathBuf, out: PathBuf }
     impl Args {
@@ -48,12 +51,12 @@ mod probe {
         }
     }
 
-    struct Fixture { child: Child, root: HWND, editor: HWND, second: HWND,
+    struct Fixture { child: Child, root: HWND, editor: HWND, second: HWND, alternate: HWND,
         id: String, scratch_dir: PathBuf }
     impl Fixture {
         fn owned(&mut self) -> bool {
             if !matches!(self.child.try_wait(), Ok(None)) { return false; }
-            for hwnd in [self.root, self.editor, self.second] {
+            for hwnd in [self.root, self.editor, self.second, self.alternate] {
                 if !unsafe { IsWindow(hwnd) }.as_bool() { return false; }
                 let mut pid = 0;
                 unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)); }
@@ -78,7 +81,7 @@ mod probe {
         }
         fn read_owned_text(&mut self) -> Result<String> {
             ensure!(self.owned(), "owned fixture identity changed before synthetic readback");
-            let mut text = [0u16; 2048];
+            let mut text = [0u16; 16384];
             self.message(self.editor, 0x000D, WPARAM(text.len()), LPARAM(text.as_mut_ptr() as isize))?;
             let end = text.iter().position(|value| *value == 0).context("owned fixture text exceeded limit")?;
             Ok(String::from_utf16_lossy(&text[..end]).replace("\r\n", "\n").replace('\r', "\n"))
@@ -109,7 +112,9 @@ mod probe {
     fn run_scenario(args: &Args, kind: &str, phase: &mut &'static str) -> Result<Value> {
         *phase = "fixtureStartup";
         let actual_kind = if matches!(kind, "caret-change" | "field-change" |
-            "anchor-caret-change" | "anchor-field-change") { "edit" } else { kind };
+            "anchor-caret-change" | "anchor-field-change") { "edit" } else { kind.split('-').next().unwrap() };
+        let variant = kind.strip_prefix(actual_kind).unwrap_or("").trim_start_matches('-');
+        let blocked = matches!(kind, "caret-change" | "field-change") || matches!(variant,"cancel"|"window");
         let id = uuid::Uuid::new_v4().simple().to_string();
         let windows_dir = std::env::var_os("SystemRoot").context("Windows SystemRoot unavailable")?;
         let powershell = Path::new(&windows_dir).join("System32/WindowsPowerShell/v1.0/powershell.exe");
@@ -124,7 +129,7 @@ mod probe {
         let child_permission = unsafe { AllowSetForegroundWindow(child.id()) }.is_ok();
         // Establish cleanup ownership before waiting on or parsing metadata.
         let mut fixture = Fixture { child, root: HWND::default(), editor: HWND::default(),
-            second: HWND::default(), id, scratch_dir: args.scratch_dir.clone() };
+            second: HWND::default(), alternate: HWND::default(), id, scratch_dir: args.scratch_dir.clone() };
         let ready = args.scratch_dir.join(format!("{}-ready.json", fixture.id));
         let deadline = Instant::now() + Duration::from_secs(8);
         while !ready.is_file() && Instant::now() < deadline {
@@ -138,6 +143,7 @@ mod probe {
         fixture.root = metadata_hwnd(&metadata, "hwnd")?;
         fixture.editor = metadata_hwnd(&metadata, "editor")?;
         fixture.second = metadata_hwnd(&metadata, "second")?;
+        fixture.alternate = metadata_hwnd(&metadata, "alternate")?;
         ensure!(fixture.owned(), "fixture window PID/title ownership mismatch");
         *phase = "foregroundReadiness";
         let parent_activation = unsafe { SetForegroundWindow(fixture.root) }.as_bool();
@@ -187,11 +193,28 @@ mod probe {
         let permit = DeliveryPermit::from_committed_attempt(format!("owned-fixture-{}", fixture.id), 1);
         if kind == "caret-change" { fixture.message(fixture.editor, 0x00B1, WPARAM(0), LPARAM(0))?; }
         if kind == "field-change" { fixture.message(fixture.root, 0x8032, WPARAM(0), LPARAM(0))?; }
-        let text = "SpeakMode 合成测试。\r\n1. 保留否定。";
+        let text = if variant.is_empty() { "SpeakMode 合成测试。\r\n1. 保留否定。".into() } else { crate::cases::payload(variant) };
+        if variant == "cancel" { ensure!(permit.cancel_before_injection(), "prepared attempt cancellation failed"); }
+        if variant == "window" {
+            *phase = "foregroundReadiness";
+            fixture.message(fixture.root, 0x8036, WPARAM(0), LPARAM(0))?;
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while unsafe { GetForegroundWindow() } != fixture.alternate && Instant::now() < deadline {
+                ensure!(fixture.owned(), "alternate fixture ownership changed");
+                thread::sleep(Duration::from_millis(20));
+            }
+            ensure!(unsafe { GetForegroundWindow() } == fixture.alternate, "owned second window did not become foreground");
+        }
         *phase = "nativeDispatch";
-        let receipt = dispatch_once(&permit, &target, text, || unsafe { GetForegroundWindow() } == fixture.root);
-        if matches!(kind, "caret-change" | "field-change") {
-            ensure!(receipt.reason_code.as_deref() == Some("targetChangedBeforeDelivery"), "target change not rejected");
+        // Allow either verified owned window in the harness gate so the real
+        // production target validation, rather than this gate, rejects switching.
+        let receipt = dispatch_once(&permit, &target, &text, || {
+            let active = unsafe { GetForegroundWindow() };
+            active == fixture.root || (variant == "window" && active == fixture.alternate)
+        });
+        if blocked {
+            let expected_reason = if variant == "cancel" { "attemptConsumed" } else { "targetChangedBeforeDelivery" };
+            ensure!(receipt.reason_code.as_deref() == Some(expected_reason), "changed/cancelled target not rejected: {:?}", receipt.reason_code);
             ensure!(receipt.input_events == 0 && !receipt.clipboard_changed, "rejected target received native mutation");
             ensure!(fixture.read_owned_text()? == "alpha | omega", "rejected target changed owned text");
         } else {
@@ -204,15 +227,15 @@ mod probe {
                 thread::sleep(Duration::from_millis(25));
             }
             ensure!(fixture.read_owned_text()? == expected, "controlled owned edit readback did not confirm insertion");
-            let duplicate = dispatch_once(&permit, &target, text, || true);
+            let duplicate = dispatch_once(&permit, &target, &text, || true);
             ensure!(duplicate.input_events == 0 && duplicate.reason_code.as_deref() == Some("attemptConsumed"),
                 "duplicate paste attempt was not rejected");
             ensure!(fixture.read_owned_text()? == expected, "duplicate attempt changed owned text");
         }
         Ok(json!({"scenario":kind,"passed":true,"receipt":receipt,
             "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation},
-            "ownedReadbackConfirmed":!matches!(kind,"caret-change" | "field-change"),
-            "repeatPasteRejected":!matches!(kind,"caret-change" | "field-change")}))
+            "ownedReadbackConfirmed":!blocked,"unchangedReadbackConfirmed":blocked,
+            "payloadUtf16Units":text.encode_utf16().count(),"repeatPasteRejected":!blocked}))
     }
 
     fn run(args: &Args) -> Result<Value> {
@@ -258,7 +281,7 @@ mod probe {
             .map_err(anyhow::Error::from).and_then(|_| { output.write_all(b"\n")?; output.sync_all()?; Ok(()) }) {
             eprintln!("reserved receipt write failed: {error:#}"); return 2;
         }
-        println!("{}", json!({"status":report["status"],"receipt":args.out,"scenarios":8}));
+        println!("{}", json!({"status":report["status"],"receipt":args.out,"scenarios":SCENARIOS.len()}));
         if report["status"] == "PASS" { 0 } else { 1 }
     }
 }
