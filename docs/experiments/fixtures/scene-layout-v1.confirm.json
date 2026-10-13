@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "split": "confirm",
+  "cases": [
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "C01",
+      "category": "fresh-chat-actions",
+      "scene": "chat",
+      "sourceItems": [
+        "嗯，明早先发一版截图，再让设计同学看一下按钮的位置，然后把反馈放到同一条消息里。暂时别改颜色。"
+      ],
+      "expectations": [
+        "自然聊天句，不强制编号；明早、三项动作顺序和暂不改色完整"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "C02",
+      "category": "fresh-chat-condition",
+      "scene": "chat",
+      "sourceItems": [
+        "帮我先检查蓝牙麦克风，再确认一下系统权限，最后录一段十秒的音频。如果蓝牙断了就停下来，不要自动换成外放。"
+      ],
+      "expectations": [
+        "聊天自然句；检查、权限、10秒录音顺序完整；断蓝牙停止且不自动外放"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "C03",
+      "category": "fresh-chat-budget",
+      "scene": "chat",
+      "sourceItems": [
+        "先给小周发报价，再跟他确认交付日期，等他同意之后才安排演示。报价两千四，不包括硬件费用。"
+      ],
+      "expectations": [
+        "自然聊天句，不强制编号；小周、2400不含硬件、同意后才演示完整"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "C04",
+      "category": "document-keeps-list",
+      "scene": "document",
+      "sourceItems": [
+        "嗯，发布前要检查安装包签名，确认卸载后数据的处理，再跑一次录音测试。没有跑过的项目标为待验证。"
+      ],
+      "expectations": [
+        "文档检查项分点或分段；未跑项待验证；本地候选不改变文档成稿"
+      ]
+    },
+    {
+      "baseMode": "structure",
+      "rules": "保留编号，每条单独一行。",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "C05",
+      "category": "explicit-structure-kept-in-chat",
+      "scene": "chat",
+      "sourceItems": [
+        "先检查网络，再检查服务配置。配置为空就提示填写，网络没通就先不要发请求。"
+      ],
+      "expectations": [
+        "显式编号和换行保留；配置/网络对应处理不串位"
+      ]
+    },
+    {
+      "baseMode": "auto",
+      "rules": "",
+      "useNearbyText": false,
+      "nearbyText": null,
+      "id": "C06",
+      "category": "spoken-list-protected",
+      "scene": "chat",
+      "sourceItems": [
+        "请列出清单，第一项检查电量，第二项确认录音设备。电量低于百分之二十就先充电。"
+      ],
+      "expectations": [
+        "口述明确要求清单时保留列表；20%条件与充电完整"
+      ]
+    }
+  ]
+}
