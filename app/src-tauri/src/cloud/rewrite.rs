@@ -6,6 +6,10 @@ use std::{collections::HashSet, sync::OnceLock, time::Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[path="rewrite_execution.rs"]
+pub(crate) mod execution;
+use execution::{RequestStage, RewriteExecution};
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RewriteResult { pub resolved_mode: BaseMode, pub blocks: Vec<OutputBlock> }
@@ -436,8 +440,13 @@ pub async fn rewrite(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot,
 }
 
 pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken) -> Result<RewriteResult, CloudError> {
+    // Explicit preview/history callers retain their own 20-second budget.
+    rewrite_with_execution(config,secret,mode,source,dictionary,cancel,RewriteExecution::for_duration(Duration::from_secs(20))).await
+}
+
+pub(crate) async fn rewrite_with_execution(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken, execution: RewriteExecution) -> Result<RewriteResult, CloudError> {
     let endpoint = endpoints(config)?.rewrite;
-    rewrite_with_client_dictionary(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,Duration::from_secs(20)).await
+    rewrite_with_client_execution(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution).await
 }
 
 pub(crate) fn validate_source(source:&SourceRevision)->Result<(),CloudError> {
@@ -479,43 +488,35 @@ async fn rewrite_with_client(client:&reqwest::Client,config:&ProviderConfig,secr
     rewrite_with_client_dictionary(client,config,secret,mode,source,&DictionarySnapshot::default(),cancel,endpoint,timeout).await
 }
 
+#[cfg(test)]
 async fn rewrite_with_client_dictionary(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,timeout:Duration)->Result<RewriteResult,CloudError> {
+    rewrite_with_client_execution(client,config,secret,mode,source,dictionary,cancel,endpoint,RewriteExecution::for_duration(timeout)).await
+}
+
+// The engine regression substitutes only the transport endpoint, keeping the
+// production dispatcher, coordinator, storage and deadline unchanged.
+pub(crate) async fn rewrite_with_client_execution(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError> {
+    execution.checkpoint(&cancel)?;
     if uses_minimum_contract(config,mode) {
-        return minimum_pipeline::run(client,config,secret,mode,source,dictionary,cancel,endpoint,timeout).await;
+        return minimum_pipeline::run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await;
     }
     if uses_fluent_contract(config,mode) {
-        return fluent_pipeline::run(client,config,secret,mode,source,dictionary,cancel,endpoint,timeout).await;
+        return fluent_pipeline::run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await;
     }
     let body = production_request_body(config, mode, source, dictionary)?;
     let job = async {
-        let mut request=client.post(endpoint).timeout(timeout).bearer_auth(secret).json(&body);
-        if let Some(workspace)=config.workspace.as_deref().filter(|workspace|!workspace.is_empty()) {request=request.header("X-DashScope-WorkSpace",workspace);}
-        let response = request.send().await
-            .map_err(|error| if error.is_timeout() {CloudError::new("rewrite_timeout","rewrite","整理服务超时，识别稿仍保留")} else {CloudError::new("rewrite_network", "rewrite", "整理服务连接失败，识别稿仍保留")})?;
-        if !response.status().is_success() {
-            let code = match response.status().as_u16() { 401|403 => "authentication_failed", 429 => "rate_limited", _ => "rewrite_service_error" };
-            return Err(CloudError::new(code, "rewrite", "整理服务未接受请求，请检查 Key、模型权限或额度"));
-        }
-        // Cap response bytes before parsing; raw provider bodies are never exposed or logged.
-        let mut response = response;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|error|if error.is_timeout() {CloudError::new("rewrite_timeout","rewrite","整理响应超时，识别稿仍保留")} else {CloudError::new("rewrite_network", "rewrite", "整理响应中断")})? {
-            if bytes.len() + chunk.len() > 1024 * 1024 { return Err(CloudError::new("response_too_large", "rewrite", "整理响应超过容量限制")); }
-            bytes.extend_from_slice(&chunk);
-        }
-        let data: Value = serde_json::from_slice(&bytes).map_err(|_| CloudError::new("invalid_response", "rewrite", "整理响应格式无效"))?;
-        if data.pointer("/choices/0/finish_reason").and_then(Value::as_str) != Some("stop") {
-            return Err(CloudError::new("truncated_output", "rewrite", "整理响应未完整结束，识别稿仍保留"));
-        }
-        let content = data.pointer("/choices/0/message/content").and_then(Value::as_str).ok_or_else(|| CloudError::new("empty_output", "rewrite", "整理响应为空"))?;
-        if uses_automatic_contract(config,mode) { parse_automatic_output(content,mode,source) }
-        else { parse_model_output(content, mode, source) }
+        let content = fluent_pipeline::request_observed(client,config,secret,endpoint,&body,&cancel,&execution,RequestStage::Generation).await?;
+        let result = if uses_automatic_contract(config,mode) { parse_automatic_output(&content,mode,source) }
+            else { parse_model_output(&content, mode, source) };
+        execution.checkpoint(&cancel)?;
+        result
     };
     let result=tokio::select! { biased;
         _ = cancel.cancelled() => Err(CloudError::new("cancelled", "rewrite", "已取消整理")),
-        result = job => result,
+        result = tokio::time::timeout_at(execution.deadline,job) => result.unwrap_or_else(|_|Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，识别稿仍保留"))),
     };
-    if cancel.is_cancelled(){Err(CloudError::new("cancelled","rewrite","已取消整理"))}else{result}
+    execution.checkpoint(&cancel)?;
+    result
 }
 
 #[cfg(test)]

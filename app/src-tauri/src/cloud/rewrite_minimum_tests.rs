@@ -17,16 +17,16 @@ fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
 }
 
 #[derive(Clone)]
-struct Reply { content: String, finish: &'static str, status: u16, delay: Duration }
+pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration }
 impl Reply {
-    fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO } }
+    pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO } }
     fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
-    fn after(mut self, millis: u64) -> Self { self.delay = Duration::from_millis(millis); self }
+    pub(crate) fn after(mut self, millis: u64) -> Self { self.delay = Duration::from_millis(millis); self }
 }
-struct Server { endpoint: String, requests: Arc<Mutex<Vec<Value>>>, arrived: Arc<Notify>, task: JoinHandle<()> }
+pub(crate) struct Server { pub(crate) endpoint: String, requests: Arc<Mutex<Vec<Value>>>, arrived: Arc<Notify>, task: JoinHandle<()> }
 impl Drop for Server { fn drop(&mut self) { self.task.abort(); } }
 impl Server {
-    async fn new(replies: Vec<Reply>) -> Self {
+    pub(crate) async fn new(replies: Vec<Reply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}/test", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new())); let seen = requests.clone();
@@ -65,7 +65,7 @@ impl Server {
         });
         Self { endpoint, requests, arrived, task }
     }
-    fn count(&self) -> usize { self.requests.lock().unwrap().len() }
+    pub(crate) fn count(&self) -> usize { self.requests.lock().unwrap().len() }
     async fn wait_for(&self, count: usize) {
         tokio::time::timeout(Duration::from_secs(3), async {
             while self.count() < count { self.arrived.notified().await; }
@@ -73,7 +73,7 @@ impl Server {
     }
 }
 
-fn rejection(source:&str,draft:&str,dimension:&str)->String {
+pub(crate) fn rejection(source:&str,draft:&str,dimension:&str)->String {
     let mut value:Value=serde_json::from_str(ACCEPT).unwrap();value["decision"]=json!("reject");value["checks"][dimension]=json!("fail");
     value["issues"]=json!([{"dimension":dimension,"sourceQuote":source,"draftQuote":draft,"reason":"局部搭配不自然"}]);value.to_string()
 }

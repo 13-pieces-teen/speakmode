@@ -31,6 +31,28 @@ def fixture():
 
 
 class ExportBoundaries(unittest.TestCase):
+    def test_request_timings_export_only_bounded_metadata(self):
+        raw = dict(stage="generation", startMs=100, endMs=300, durationMs=200,
+                   remainingBudgetMs=4999, outcome="responseReceived", prompt="PRIVATE_SENTINEL",
+                   response="PRIVATE_SENTINEL", apiKey="PRIVATE_SENTINEL")
+        clean = module.filter_rewrite_requests([raw])
+        self.assertEqual(clean[0]["durationMs"], 200)
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+        self.assertEqual(module.filter_rewrite_requests([]), [])
+        inflight = {**raw, "endMs": None, "durationMs": None, "outcome": None}
+        self.assertIsNone(module.filter_rewrite_requests([inflight])[0]["outcome"])
+        for invalid in ([raw] * 5, [raw, raw], [{**raw, "endMs": 90}],
+                        [{**raw, "durationMs": 199}], [{**raw, "remainingBudgetMs": True}],
+                        [{**raw, "remainingBudgetMs": 120001}], [{**raw, "startMs": "PRIVATE_SENTINEL"}],
+                        [{**raw, "endMs": None}], [{**raw, "durationMs": float("nan")}], {}):
+            with self.subTest(invalid=invalid), self.assertRaises(module.ExportError):
+                module.filter_rewrite_requests(invalid)
+
+    def test_unknown_request_labels_never_export_arbitrary_text(self):
+        raw = dict(stage="PRIVATE_SENTINEL", startMs=0, endMs=1, durationMs=1,
+                   remainingBudgetMs=4999, outcome="PRIVATE_SENTINEL")
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(module.filter_rewrite_requests([raw])))
+
     def test_minimum_edit_protocol_is_known_and_private_review_is_filtered(self):
         protocol = "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2"
         clean = module.filter_rewrite(dict(protocolVersion=protocol, configuredBudgetMs=5000,

@@ -2,6 +2,7 @@
 //! No disk IO, transcript, PCM, prompt, credentials or host text enters it.
 use crate::core::{ModeSnapshot, ProviderConfig, RewriteFallbackReason};
 use crate::cloud::asr::{AudioCounts,AsrTelemetry,AsrTelemetryView};
+use crate::cloud::rewrite::execution::{RequestEvent,RequestStage,RequestOutcome};
 use serde::Serialize;
 use std::{collections::VecDeque, sync::{Mutex, atomic::{AtomicU64, Ordering}}, time::Instant};
 use uuid::Uuid;
@@ -62,10 +63,20 @@ pub enum RewriteOutcome { Validated, Fallback, Failed, Cancelled }
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all="camelCase")]
+pub struct RewriteRequestView {
+    pub(crate) stage:RequestStage, pub start_ms:f64, pub end_ms:Option<f64>,
+    pub duration_ms:Option<f64>, pub remaining_budget_ms:u64,
+    pub(crate) outcome:Option<RequestOutcome>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all="camelCase")]
 pub struct RewriteView {
     pub protocol_version: &'static str, pub configured_budget_ms: u64,
     pub outcome: Option<RewriteOutcome>, pub fallback_reason: Option<RewriteFallbackReason>,
     pub error_code: Option<&'static str>, pub duration_ms: Option<f64>,
+    // At most four requests; no request body, transcript, response or key.
+    pub requests: Vec<RewriteRequestView>,
 }
 
 // Only fixed implementation labels enter rewrite metadata. In particular, a
@@ -168,7 +179,26 @@ impl DiagnosticsRecorder {
                 trace.view.marks.push(Mark{stage:Stage::RewriteStarted,offset_ms:elapsed.as_secs_f64()*1000.0});
             }
             trace.view.rewrite=Some(RewriteView{protocol_version,configured_budget_ms,outcome:None,
-                fallback_reason:None,error_code:None,duration_ms:None});
+                fallback_reason:None,error_code:None,duration_ms:None,requests:Vec::new()});
+        });
+    }
+    pub(crate) fn rewrite_request(&self,handle:Option<&TraceHandle>,event:RequestEvent) {
+        self.update(handle,|trace|{
+            let Some(start)=event.started_at.checked_duration_since(trace.origin).map(|d|d.as_secs_f64()*1000.0) else {return;};
+            let Some(rewrite)=trace.view.rewrite.as_mut() else {return;};
+            // A completion event can recover a dropped start event. A stale or
+            // duplicate completion never reopens a request or a different trace.
+            let index=if let Some(index)=rewrite.requests.iter().position(|r|r.stage==event.stage){index}
+                else if rewrite.requests.len()<4 {
+                    rewrite.requests.push(RewriteRequestView{stage:event.stage,start_ms:start,end_ms:None,duration_ms:None,
+                        remaining_budget_ms:event.remaining_budget_ms,outcome:None});rewrite.requests.len()-1
+                } else {return;};
+            let request=&mut rewrite.requests[index];
+            if request.outcome.is_some(){return;}
+            if let Some(end)=event.finished_at.and_then(|at|at.checked_duration_since(trace.origin)).map(|d|d.as_secs_f64()*1000.0) {
+                if end<request.start_ms{return;}
+                request.end_ms=Some(end);request.duration_ms=Some(end-request.start_ms);request.outcome=event.outcome;
+            }
         });
     }
     pub fn rewrite_finished(&self,handle:Option<&TraceHandle>,outcome:RewriteOutcome,fallback_reason:Option<RewriteFallbackReason>,code:Option<&str>) {
