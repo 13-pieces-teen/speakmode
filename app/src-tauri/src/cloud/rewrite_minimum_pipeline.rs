@@ -97,6 +97,25 @@ pub async fn experiment_fixed(config:&ProviderConfig,secret:&str,mode:&ModeSnaps
     let draft=minimum::parse(content,mode,source,&request)?;
     Ok(execute_from(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),CancellationToken::new(),&endpoint,wait,Some(draft)).await)
 }
+/// Explicit one-request diagnosis of a frozen draft. Never selected by normal
+/// dictation and never returns a replacement or a delivery permission.
+pub async fn explain_review(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,content:&str)->Result<serde_json::Value,CloudError>{
+    let endpoint=super::endpoints(config)?.rewrite;
+    let request=minimum::prepare(config,mode,source,&DictionarySnapshot::default(),false)?;
+    let draft=minimum::parse(content,mode,source,&request)?;
+    let mut request=semantic_review::prepare_minimum(config,mode,source,&draft)?;
+    // Diagnostics include bounded failure evidence; this larger response cap is
+    // never selected by the ordinary five-check production reviewer.
+    request.body["max_tokens"]=serde_json::json!(2048);
+    let system=request.body["messages"][0]["content"].as_str().expect("typed system message");
+    request.body["messages"][0]["content"]=serde_json::json!(format!("{system}\n仅此离线诊断：若拒绝，在 issues 中给出最主要的一处失败依据，包括 facts 失败。sourceQuote 和 draftQuote 必须是各自文本里精确连续的最多80字片段，reason最多100字明确指出哪里变化；不要因要求解释而改变判断，不猜事实。仍返回同样的严格JSON结构。"));
+    let content=super::fluent_pipeline::request_content(super::shared_client()?,config,secret,&endpoint,&request.body,&CancellationToken::new(),Instant::now()+Duration::from_secs(20)).await?;
+    let parsed=semantic_review::parse_minimum(&content,&request,mode,source,&draft);
+    // Explicit lab output may contain private source quotes. Keep it outside
+    // ordinary diagnostics/history, including when shape validation fails.
+    Ok(serde_json::json!({"rawModelContent":content,"parsedReview":parsed.as_ref().ok(),
+        "validationError":parsed.as_ref().err(),"deliveryAuthorized":false}))
+}
 /// Frozen actual 0.2.18 path, never influenced by a future promotion flag.
 pub async fn frozen_018(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,wait:Duration)->Result<RewriteResult,CloudError>{
     let endpoint=super::endpoints(config)?.rewrite;let cancel=CancellationToken::new();let client=super::shared_client()?;

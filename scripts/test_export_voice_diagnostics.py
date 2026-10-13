@@ -54,12 +54,13 @@ class ExportBoundaries(unittest.TestCase):
         self.assertNotIn("PRIVATE_SENTINEL", json.dumps(module.filter_rewrite_requests([raw])))
 
     def test_minimum_edit_protocol_is_known_and_private_review_is_filtered(self):
-        protocol = "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2"
-        clean = module.filter_rewrite(dict(protocolVersion=protocol, configuredBudgetMs=5000,
+        for version in (3, 4):
+            protocol = f"minimum-edit-v{version}+minimum-review-v{version}+residue-hint-v2+local-repair-v2"
+            clean = module.filter_rewrite(dict(protocolVersion=protocol, configuredBudgetMs=5000,
                     outcome="validated", fallbackReason=None, errorCode=None, durationMs=2400,
                     review={"source": "PRIVATE_SENTINEL", "draft": "PRIVATE_SENTINEL"}))
-        self.assertEqual(clean["protocolVersion"], protocol)
-        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+            self.assertEqual(clean["protocolVersion"], protocol)
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
     def test_compact_review_protocol_is_identifiable_without_exporting_review_text(self):
         protocol = "fluent-dictation-v1+semantic-review-compact-v2"
         clean = module.filter_rewrite(dict(protocolVersion=protocol, configuredBudgetMs=5000,

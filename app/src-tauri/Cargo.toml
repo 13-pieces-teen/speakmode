@@ -20,6 +20,8 @@ required-features = ["desktop"]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-autostart"]
+# Lab-only candidate. Normal desktop builds retain the evaluated v3 prompts.
+experimental-english-dictation = []
 
 [build-dependencies]
 tauri-build = { version = "2", optional = true, features = [] }

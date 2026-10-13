@@ -3,6 +3,8 @@
 //! Values retain their unit and local label. Corrections are resolved by the
 //! caller before extraction. Unsupported notation remains outside this guard.
 
+#[path = "rewrite_english_numbers.rs"] mod english_numbers;
+
 #[derive(Debug)]
 pub(super) struct Fact {
     pub(super) key: String,
@@ -67,7 +69,9 @@ const UNITS: &[(&str, &str, u128)] = &[
     ("毫秒", "millisecond", 1), ("ms", "millisecond", 1),
     ("seconds", "millisecond", 1000), ("second", "millisecond", 1000), ("秒", "millisecond", 1000),
     ("minutes", "millisecond", 60_000), ("minute", "millisecond", 60_000), ("分钟", "millisecond", 60_000),
-    ("小时", "millisecond", 3_600_000), ("天", "day", 1), ("个月", "month", 1), ("月", "month", 1), ("年", "year", 1), ("日", "date-day", 1),
+    ("hours", "millisecond", 3_600_000), ("hour", "millisecond", 3_600_000), ("小时", "millisecond", 3_600_000),
+    ("days", "day", 1), ("day", "day", 1), ("天", "day", 1), ("个月", "month", 1), ("月", "month", 1),
+    ("months", "month", 1), ("month", "month", 1), ("years", "year", 1), ("year", "year", 1), ("年", "year", 1), ("日", "date-day", 1),
     ("gib", "gib", 1), ("mib", "mib", 1), ("kib", "kib", 1), ("gb", "gb", 1), ("mb", "mb", 1), ("kb", "kb", 1),
     ("公斤", "kilogram", 1), ("千克", "kilogram", 1), ("kg", "kilogram", 1), ("米", "metre", 1),
     ("人", "person", 1), ("次", "times", 1), ("条", "item", 1), ("项", "item", 1), ("个", "count", 1), ("倍", "multiple", 1),
@@ -181,6 +185,7 @@ fn clock_fact(text: &str, start: usize) -> Option<Fact> {
 pub(super) fn extract(text: &str) -> Vec<Fact> {
     let mut result = Vec::new(); let mut offset = 0;
     while offset < text.len() {
+        if let Some(fact) = english_numbers::extract_at(text, offset) { offset = fact.end; result.push(fact); continue; }
         // These three spellings express the same per-occurrence frequency;
         // the 一/1 is not a standalone assertion that something happens once.
         // Keep it as an explicit fact so deleting 每次 is still detectable.
@@ -214,13 +219,16 @@ pub(super) fn extract(text: &str) -> Vec<Fact> {
         let raw = &text[numeric_start..offset];
         let before = text[..start].trim_end();
         let previous = before.chars().next_back();
+        let adjacent = text[..start].chars().next_back();
         // Source list ordinals are structure, not asserted quantities. Keep
         // real following amounts (第1条预算3500元) available for extraction.
         if previous == Some('第') { continue; }
         let version = raw.matches('.').count() >= 2 || before.ends_with("版本") || before.to_ascii_lowercase().ends_with("version")
             || (previous.is_some_and(|c| c == 'v' || c == 'V') && before[..before.len() - 1].chars().next_back().is_none_or(|c| !c.is_ascii_alphanumeric()));
         // Digits inside product identifiers such as Qwen3.8 are not quantities.
-        if previous.is_some_and(|c| c.is_ascii_alphabetic()) && !version { continue; }
+        // Only an adjacent letter joins an identifier. Trimming the preceding
+        // space made ordinary English such as "budget is 30 dollars" invisible.
+        if adjacent.is_some_and(|c| c.is_ascii_alphabetic()) && !version { continue; }
         if version {
             result.push(Fact { key: format!("version:{raw}"), start, end: offset });
             continue;

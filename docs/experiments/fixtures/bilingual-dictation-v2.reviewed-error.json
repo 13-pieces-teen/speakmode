@@ -1,0 +1,22 @@
+{
+  "elapsedMs": 3297,
+  "scope": "RECORDED_SYNTHETIC_V2_MODEL_ACCEPTANCE_WITH_WRONG_YEAR",
+  "model": "qwen3.8-flash",
+  "caseId": "en-introduction-code-switch-boundaries",
+  "sourceText": "Hello, I am Nora. I am preparing a short introduction. I I work with A I agents，嗯，and retrieval systems. My recent project was about 检索增强生成。Uh, I have two years of experience. My first role focused on evaluation, and my second role involves backend development.\nThe budget is thirty dollars, not thirteen dollars. I have not released it, and I will only publish it if the owner agrees.\nI expect to graduate in twenty thirty.\nTwo. I am still checking whether the project is called Orvel or Orvil. Please keep the phrase \"uh, no\" exactly.",
+  "draftText": "Hello, I am Nora. I am preparing a short introduction. I work with AI agents and retrieval systems. My recent project was about retrieval-augmented generation. I have two years of experience. My first role focused on evaluation, and my second role involves backend development.\nThe budget is thirty dollars, not thirteen dollars. I have not released it, and I will only publish it if the owner agrees.\nI expect to graduate in 2030.\nTwo. I am still checking whether the project is called Orvel or Orvil. Please keep the phrase \"uh, no\" exactly.",
+  "checks": {
+    "cleanup": "pass",
+    "coverage": "pass",
+    "facts": "pass",
+    "intent": "pass",
+    "scope": "pass"
+  },
+  "observedDefect": "2032 became 2030 followed by orphan Two. Model review passed incorrectly.",
+  "decision": "accept",
+  "schemaVersion": 1,
+  "calls": 2,
+  "fixture": "bilingual-dictation-v2.holdout.json",
+  "expectedAdmissionAfterFix": "reject",
+  "fixtureSha256": "596ebf9e1bc6b26745de8ddd491120425b39c3154afc27938e9d1cede7f5b1ec"
+}

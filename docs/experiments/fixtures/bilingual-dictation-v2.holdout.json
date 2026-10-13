@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "scope": "FROZEN_SYNTHETIC_TEXT_HOLDOUT_NOT_AUDIO_OR_HUMAN_ACCEPTANCE",
+  "maximumCalls": 4,
+  "cases": [
+    {
+      "id": "en-introduction-code-switch-boundaries",
+      "category": "English narrative, meaningful Chinese, split year, uncertain names and literal fillers",
+      "baseMode": "auto",
+      "rules": "",
+      "sourceItems": [
+        "Hello, I am Nora. I am preparing a short introduction. I I work with A I agents，嗯，and retrieval systems. My recent project was about 检索增强生成。Uh, I have two years of experience. My first role focused on evaluation, and my second role involves backend development.",
+        "The budget is thirty dollars, not thirteen dollars. I have not released it, and I will only publish it if the owner agrees.",
+        "I expect to graduate in twenty thirty.",
+        "Two. I am still checking whether the project is called Orvel or Orvil. Please keep the phrase \"uh, no\" exactly."
+      ]
+    }
+  ],
+  "expectations": [
+    "Remove outside-literal I I, 嗯, Uh and compact same-letter A I without deleting any project or role information.",
+    "Retain the meaning of 检索增强生成; English retrieval-augmented generation is an unambiguous equivalent in this synthetic reference.",
+    "Preserve both distinct roles and their past versus present tenses, two years, 30 versus not 13 dollars, not released, and owner agreement as a condition.",
+    "Join only the interrupted date 2032, with no new date or graduation guarantee.",
+    "Keep both Orvel or Orvil as uncertain alternatives and preserve the exact quoted uh, no.",
+    "Use natural narrative paragraphs in Auto. This is one frozen text case, not general quality, audio or native delivery acceptance."
+  ]
+}
