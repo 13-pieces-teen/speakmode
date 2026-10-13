@@ -5,6 +5,8 @@ pub use commit_guard::{CommitGuard,CancelDecision};
 pub use db_worker::{DbClient,DbCommand,DbValue,DbSnapshot,DbTicket,DbPriority,DbOptions};
 pub mod store;
 pub mod types;
+pub mod app_writing;
+pub use app_writing::{AppWritingPreferences, AppWritingOverride, AppWritingScene};
 pub use store::{Store, StoreError, StoreResult};
 pub use types::*;
 

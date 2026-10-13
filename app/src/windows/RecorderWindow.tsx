@@ -46,7 +46,8 @@ export function RecorderWindow(){
   // One native-clock diagnostic proxy per attempt. No text, renderer timestamp or retry side effect.
   void desktop.command('session.captionRendered',{sessionId:session?.sessionId??session?.id,expectedGeneration:session?.generation,asrAttemptId,token}).catch(()=>{});
  },[desktop.command,session?.sessionId,session?.id,session?.generation]);
- const phaseLabel:Record<string,string>={idle:'等待开始',starting:'正在启动',recording:'正在录音',finalizingasr:'正在收齐文字',finalizing_asr:'正在收齐文字',rewriting:'正在整理',ready:delivery?.warning?'未自动输入':delivery?.title??'成稿已就绪',failed:'暂时无法继续',incomplete:'识别未完整',cancelled:'已取消',delivering:'正在交付'};
+ const scenePhase=session?.writingScene==='chat'?'聊天整理':session?.writingScene==='document'?'文档整理':session?.writingScene==='technical'?'技术整理':'正在整理';
+ const phaseLabel:Record<string,string>={idle:'等待开始',starting:'正在启动',recording:'正在录音',finalizingasr:'正在收齐文字',finalizing_asr:'正在收齐文字',rewriting:scenePhase,ready:delivery?.warning?'未自动输入':delivery?.title??'成稿已就绪',failed:'暂时无法继续',incomplete:'识别未完整',cancelled:'已取消',delivering:'正在交付'};
  useEffect(()=>{document.documentElement.dataset.surface='recorder';return()=>{delete document.documentElement.dataset.surface;};},[]);
  useEffect(()=>{setMenu(false);setOpenedFromTray(false);setLocalError(null);setBusyIdentity(null);setCopiedIdentity(null);},[identity]);
  useEffect(()=>{if(!canStop)setMenu(false);},[canStop]);

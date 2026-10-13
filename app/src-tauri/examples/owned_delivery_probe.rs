@@ -20,9 +20,35 @@ mod probe {
         GetWindowTextW, IsWindow, SendMessageTimeoutW, SetForegroundWindow,
         SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT};
 
-    const SCENARIOS: [&str; 16] = ["edit", "rich", "readonly", "password", "caret-change",
+    const SCENARIOS: [&str; 20] = ["edit", "rich", "readonly", "password", "caret-change",
         "field-change", "anchor-caret-change", "anchor-field-change", "edit-emoji", "rich-emoji",
-        "edit-long", "rich-long", "edit-cancel", "rich-cancel", "edit-window", "rich-window"];
+        "edit-long", "rich-long", "edit-cancel", "rich-cancel", "edit-window", "rich-window",
+        "edit-chat", "rich-chat", "edit-explicit", "rich-explicit"];
+
+    fn scene_payload(target:&speakmode_lib::platform::delivery::TargetSnapshot,explicit:bool)->Result<String> {
+        use speakmode_lib::{core::*,cloud::rewrite::{RewriteResult,scene::{SceneSnapshot,WritingScene},scene_layout},platform::application};
+        let name=application::name_for_target(target).context("owned process application identity unavailable")?;
+        ensure!(matches!(name.as_str(),"powershell.exe"|"pwsh.exe"),"unexpected owned fixture executable");
+        let mut stale=target.clone();stale.process_created_at+=1;
+        ensure!(application::name_for_target(&stale).is_none(),"stale process lifetime was accepted");
+        let prefs=AppWritingPreferences {enabled:true,overrides:vec![AppWritingOverride {application:name,scene:AppWritingScene::Chat}]};
+        prefs.validate().map_err(anyhow::Error::msg)?;
+        ensure!(prefs.scene_for("powershell.exe")==AppWritingScene::Chat||prefs.scene_for("pwsh.exe")==AppWritingScene::Chat,"explicit local application preference missing");
+        let mode=ModeSnapshot {mode_id:if explicit{"structure"}else{"auto"}.into(),name:"合成验收".into(),
+            base_mode:if explicit{BaseMode::Structure}else{BaseMode::Auto},rules:String::new(),revision:1};
+        let source=SourceRevision {id:"native-source".into(),session_id:"native-scene".into(),asr_attempt_id:"synthetic".into(),generation:1,
+            provider:"synthetic".into(),model:"fixed".into(),adapter_version:"local-scene".into(),complete:true,created_at:"2026-10-13".into(),
+            items:vec![SourceItem{id:"item".into(),provider_item_id:"0".into(),capture_order:0,text:"先确认预算2400元，再安排演示。不同意就不要发送。".into(),is_final:true,start_ms:None,end_ms:None}]};
+        let scene=SceneSnapshot {session_id:source.session_id.clone(),generation:1,target_id:format!("{}:{}:{}",target.hwnd,target.process_id,target.process_created_at),
+            revision:1,scene:WritingScene::Chat,use_nearby_text:false,nearby_text:None};
+        let input="1. 先确认预算2400元，再安排演示。\n2. 不同意就不要发送。";
+        let baseline=RewriteResult {resolved_mode:BaseMode::Structure,blocks:vec![OutputBlock{id:"draft".into(),text:input.into(),source_refs:vec!["item".into()]}]};
+        let candidate=scene_layout::candidate(&mode,&source,&scene,&baseline)?;
+        ensure!(candidate.applied!=explicit,"explicit Mode precedence mismatch");
+        let expected=if explicit{input}else{"先确认预算2400元，再安排演示。\n不同意就不要发送。"};
+        ensure!(candidate.draft.blocks[0].text==expected,"scene presentation changed content");
+        Ok(candidate.draft.blocks[0].text.clone())
+    }
 
     struct Args { fixture_script: PathBuf, scratch_dir: PathBuf, out: PathBuf }
     impl Args {
@@ -193,7 +219,8 @@ mod probe {
         let permit = DeliveryPermit::from_committed_attempt(format!("owned-fixture-{}", fixture.id), 1);
         if kind == "caret-change" { fixture.message(fixture.editor, 0x00B1, WPARAM(0), LPARAM(0))?; }
         if kind == "field-change" { fixture.message(fixture.root, 0x8032, WPARAM(0), LPARAM(0))?; }
-        let text = if variant.is_empty() { "SpeakMode 合成测试。\r\n1. 保留否定。".into() } else { crate::cases::payload(variant) };
+        let text = if matches!(variant,"chat"|"explicit") {scene_payload(&target,variant=="explicit")?}
+            else if variant.is_empty() { "SpeakMode 合成测试。\r\n1. 保留否定。".into() } else { crate::cases::payload(variant) };
         if variant == "cancel" { ensure!(permit.cancel_before_injection(), "prepared attempt cancellation failed"); }
         if variant == "window" {
             *phase = "foregroundReadiness";
@@ -235,7 +262,8 @@ mod probe {
         Ok(json!({"scenario":kind,"passed":true,"receipt":receipt,
             "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation},
             "ownedReadbackConfirmed":!blocked,"unchangedReadbackConfirmed":blocked,
-            "payloadUtf16Units":text.encode_utf16().count(),"repeatPasteRejected":!blocked}))
+            "payloadUtf16Units":text.encode_utf16().count(),"repeatPasteRejected":!blocked,
+            "scenePresentationChecked":matches!(variant,"chat"|"explicit")}))
     }
 
     fn run(args: &Args) -> Result<Value> {

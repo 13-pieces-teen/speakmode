@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod audio_conditioner;
 pub mod delivery;
+pub mod application;
 pub mod hotkeys;
 pub mod typeless_dictionary;
 mod resampler;

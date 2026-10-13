@@ -56,6 +56,8 @@ pub struct Preferences {
     /// Global capture preference, frozen when a recording begins. Old profiles stay bypassed.
     #[serde(default)]
     pub soft_voice_enabled: bool,
+    #[serde(default)]
+    pub app_writing: super::app_writing::AppWritingPreferences,
     pub keep_history: bool,
     pub launch_at_login: bool,
 }
@@ -63,7 +65,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self { version: 1, shortcut: "alt_right".into(), microphone_id: None,
             language: "auto".into(), default_mode_id: "auto".into(),
-            delivery_mode: DeliveryMode::Direct, soft_voice_enabled: false, keep_history: true, launch_at_login: false }
+            delivery_mode: DeliveryMode::Direct, soft_voice_enabled: false, app_writing: Default::default(), keep_history: true, launch_at_login: false }
     }
 }
 

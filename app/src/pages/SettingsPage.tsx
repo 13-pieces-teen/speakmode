@@ -1,3 +1,5 @@
+import { AppWritingSettings } from '../components/AppWritingSettings';
+import { appWritingIsDefault } from '../appWriting';
 import { useRef, useState } from 'react';
 import { Button, Select, Switch } from '@radix-ui/themes';
 import { ArrowRightIcon, CheckIcon, ChevronDownIcon, FileTextIcon, GearIcon, KeyboardIcon, MixerHorizontalIcon, ResetIcon } from '@radix-ui/react-icons';
@@ -94,7 +96,7 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
   }
   // Render errors at the originating row; the shortcut editor still receives its rejecting promise.
   function handle(promise: Promise<void>) { void promise.catch(() => {}); }
-  const isDefault = defaultMode === '自动' && Object.entries(defaultPreferences).every(([key, value]) => key === 'version' || preferences[key as keyof Preferences] === value);
+  const isDefault = defaultMode === '自动' && Object.entries(defaultPreferences).every(([key, value]) => key === 'version' || (key === 'appWriting' ? appWritingIsDefault(preferences.appWriting) : preferences[key as keyof Preferences] === value));
   async function reset() {
     await save('reset', async () => {
       await command('preferences.reset', { expectedVersion: preferences.version });
@@ -161,6 +163,8 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
           </div>
         </SettingRow>
         {isBuiltinMode(defaultMode) && <ModeExample mode={defaultMode} />}
+        <AppWritingSettings key={resetRevision} value={preferences.appWriting} disabled={disabled} onChange={next => update('appWriting', next, '应用表达偏好（下一次口述生效）')} />
+        <SettingFeedback feedback={feedback} target="appWriting" />
         <SettingRow title="成稿交付" description="选择结束口述后如何使用整理结果。下一次口述生效。" htmlFor="delivery-mode" feedback={<SettingFeedback feedback={feedback} target="delivery" />}>
           <div className="settings-delivery-control">
             <Select.Root value={preferences.delivery} disabled={disabled} onValueChange={value => handle(update('delivery', value as DeliveryMode, '成稿交付方式（下一次口述生效）'))}>

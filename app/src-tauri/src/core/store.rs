@@ -169,6 +169,7 @@ impl Store {
     }
     /// Caller completes hook/autostart registration first, then persists these already-applied values.
     pub fn save_preferences(&mut self, mut next: Preferences, expected_version: u64) -> StoreResult<Preferences> {
+        next.app_writing.validate().map_err(invalid)?;
         if !matches!(next.language.as_str(), "auto" | "zh" | "en") { return Err(invalid("unsupported recognition language")); }
         if next.shortcut.is_empty() || next.shortcut.len()>128 || !next.shortcut.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c,'_'|'+'|'-')) { return Err(invalid("invalid canonical shortcut")); }
         self.mode_snapshot(&next.default_mode_id, None)?;
