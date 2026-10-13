@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "corpusId": "mode-guard-challenges-v1",
+  "provenance": "Post-review synthetic challenges independently proposed by a code-review Agent after inspecting the proposed implementation. Fixed before executing this challenge suite. These are adversarial engineering acceptance requirements, not a held-out model-quality benchmark or human user research.",
+  "scope": "Offline production parser only. Preserve number bounds, date identity, quantity dimensions and ambiguous correction ownership. The two malformed speech-boundary cases are stress inputs: retaining their exact source is the conservative control; invented negation attachment should be blocked. Their expectations do not imply the raw speech is fluent or unambiguous.",
+  "cases": [
+    {
+      "id": "quantity-bound",
+      "sourceItems": ["门票只有3个。"],
+      "outputs": [
+        {"id": "preserve-limit", "expectedAccepted": true, "text": "门票仅3个。", "reason": "只有与仅保留同一个有限数量范围。"},
+        {"id": "upper-to-lower-bound", "expectedAccepted": false, "text": "门票至少3个。", "reason": "即使数字3没变，也不能把只有改成至少。"}
+      ]
+    },
+    {
+      "id": "compound-weekday",
+      "sourceItems": ["上个星期二开会。"],
+      "outputs": [
+        {"id": "preserve-day", "expectedAccepted": true, "text": "上个星期二开会。", "reason": "复合时间表达完整保留。"},
+        {"id": "change-day", "expectedAccepted": false, "text": "上个星期三开会。", "reason": "不能仅保护星期中的期/七而漏掉实际周二。"}
+      ]
+    },
+    {
+      "id": "correction-dimension",
+      "sourceItems": ["预算3000元，不对，是3人。"],
+      "outputs": [
+        {"id": "retain-ambiguous-source", "expectedAccepted": true, "text": "预算3000元，不对，是3人。", "reason": "原文量纲不一致，保留歧义原文，不擅自决定被更正事实。"},
+        {"id": "currency-to-people", "expectedAccepted": false, "text": "预算3人。", "reason": "不能将货币数量与人数匹配成明确即时改口并丢掉3000元。"}
+      ]
+    },
+    {
+      "id": "ambiguous-multiple-customers",
+      "sourceItems": ["客户甲周二签约，客户乙周二签约。", "把周二改成周三。"],
+      "outputs": [
+        {"id": "retain-unresolved-target", "expectedAccepted": true, "text": "客户甲周二签约，客户乙周二签约。把周二改成周三。", "reason": "两位客户都有周二，无明确对象时保留未决改口，不替说话者选人。"},
+        {"id": "guess-customer-b", "expectedAccepted": false, "text": "客户甲周二签约，客户乙周三签约。", "reason": "共享客户/签约词不证明更正指向客户乙。"},
+        {"id": "guess-customer-a", "expectedAccepted": false, "text": "客户甲周三签约，客户乙周二签约。", "reason": "也不能擅自把更正归到客户甲。"}
+      ]
+    },
+    {
+      "id": "newline-negation-boundary",
+      "sourceItems": ["演示从九点半开始不是\n", "说九点半签到，签到还是九点。"],
+      "outputs": [
+        {"id": "retain-hard-boundary", "expectedAccepted": true, "text": "演示从九点半开始不是\n说九点半签到，签到还是九点。", "reason": "这是刻意不流畅的边界压力输入；保留显式换行及原文作为保守对照。"},
+        {"id": "invent-joined-negation", "expectedAccepted": false, "text": "演示从九点半开始，不是说九点半签到，签到还是九点。", "reason": "仅凭trim为空不能跨显式换行拼出新的不是说作用域。"}
+      ]
+    },
+    {
+      "id": "punctuation-only-source-item",
+      "sourceItems": ["演示从九点半开始不是", "。", "说九点半签到。"],
+      "outputs": [
+        {"id": "retain-source-period", "expectedAccepted": true, "text": "演示从九点半开始不是。说九点半签到。", "reason": "中间只有句号的ASR item仍是边界，不能被分析层直接丢掉。"},
+        {"id": "cross-source-period", "expectedAccepted": false, "text": "演示从九点半开始，不是说九点半签到。", "reason": "跨掉中间句号把不是附加到后一句，会改变原始分句关系。"}
+      ]
+    }
+  ]
+}

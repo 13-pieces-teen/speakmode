@@ -50,11 +50,17 @@ def bytes_for(terms):
     return len(('常用词汇：'+json.dumps(terms, ensure_ascii=False, separators=(',', ':'))).encode('utf8')) if terms else 0
 
 
+def open_capacity(page):
+    details=page.get_by_role('dialog').locator('.dictionary-capacity-details')
+    if details.get_attribute('open') is None:
+        details.locator('summary').click()
+
+
 def layouts(page, out, name):
     rows=[]
     for width in [720,800,430]:
         page.set_viewport_size({'width':width,'height':900})
-        metrics=page.evaluate('''()=>({viewport:innerWidth,width:document.documentElement.scrollWidth,offscreen:[...document.querySelectorAll('.dictionary-page button,.dictionary-page input,.dictionary-page textarea,.dictionary-capacity meter,.dictionary-capacity-label')].filter(el=>{const b=el.getBoundingClientRect();return b.width>0&&(b.left < -1 || b.right>innerWidth+1);}).map(el=>({text:el.textContent,box:el.getBoundingClientRect().toJSON()}))})''')
+        metrics=page.evaluate('''()=>({viewport:innerWidth,width:document.documentElement.scrollWidth,offscreen:[...document.querySelectorAll('.dictionary-page button,.dictionary-page input,.dictionary-page textarea,.dictionary-capacity meter,.dictionary-capacity-label,[role=dialog] button,[role=dialog] input,[role=dialog] textarea,[role=dialog] summary')].filter(el=>{const b=el.getBoundingClientRect();return b.width>0&&(b.left < -1 || b.right>innerWidth+1);}).map(el=>({text:el.textContent,box:el.getBoundingClientRect().toJSON()}))})''')
         assert metrics['width']<=width+1 and not metrics['offscreen'],metrics
         rows.append(metrics)
     page.screenshot(path=str(out/(name+'-430.png')))
@@ -96,46 +102,47 @@ def main():
                     page.goto(args.url,wait_until='networkidle')
                     page.get_by_role('button',name='词典',exact=True).click()
                     expect(page.get_by_role('heading',name='个人词典',exact=True)).to_be_visible()
-                    expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value',str(bytes_for(terms)))
+                    page.get_by_text('词库说明',exact=True).click()
+                    expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value',str(bytes_for(terms)))
                     qa.write_new(args.out/(name+'-initial-dom.txt'),page.locator('.dictionary-page').inner_text())
                     page.screenshot(path=str(args.out/(name+'-initial.png')))
                     if not args.inspect_only:
                         if name=='add-edit':
-                            page.get_by_role('button',name='添加词条',exact=True).click();page.get_by_role('textbox',name='词条',exact=True).fill('SpeakMode')
+                            page.get_by_role('button',name='新词',exact=True).click();page.get_by_role('textbox',name='词条',exact=True).fill('SpeakMode');open_capacity(page)
                             expect(page.locator('#dictionary-capacity-help')).to_contain_text('草稿容量上限 55 / 4000 字节')
-                            page.get_by_role('button',name='保存词条',exact=True).click()
-                            expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value','55')
-                            page.get_by_role('button',name='编辑词条 SpeakMode',exact=True).click();page.get_by_role('textbox',name='词条',exact=True).fill('SM')
+                            page.get_by_role('button',name='添加词汇',exact=True).click()
+                            expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value','55')
+                            page.get_by_role('button',name='编辑词条 SpeakMode',exact=True).click();page.get_by_role('textbox',name='词条',exact=True).fill('SM');open_capacity(page)
                             expect(page.locator('#dictionary-capacity-help')).to_contain_text('草稿容量上限 48 / 4000 字节')
                             row['layouts']=layouts(page,args.out,name);page.get_by_role('button',name='保存词条',exact=True).click()
-                            expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value','48')
+                            expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value','48')
                             writes=[c for c in qa.command_ledger(page) if c['name']=='dictionary.save'];assert len(writes)==2 and writes[1]['payload']['draft']['id']=='added-4'
                         elif name in ('bulk-equivalent','oversized-import'):
-                            page.get_by_role('button',name='批量添加',exact=True).click()
+                            page.get_by_role('button',name='新词',exact=True).click();page.get_by_role('button',name='批量添加',exact=True).click()
                             draft=['STRASSE','PolyU'] if name=='bulk-equivalent' else ['术'*70+'-'+str(i) for i in range(20)]
-                            field=page.get_by_role('textbox',name='每行一个词条',exact=True);field.fill('\n'.join(draft))
+                            field=page.get_by_role('textbox',name='每行一个词条',exact=True);field.fill('\n'.join(draft));open_capacity(page)
                             expect(page.locator('#dictionary-capacity-help')).to_contain_text(f'草稿容量上限 {bytes_for(terms+draft)} / 4000 字节')
                             expect(page.locator('#dictionary-capacity-help')).to_contain_text('重复词尚未合并')
                             row['layouts']=layouts(page,args.out,name)
-                            submit=page.locator('.dictionary-editor').get_by_role('button',name='添加词条',exact=True);expect(submit).to_be_enabled();submit.click()
+                            submit=page.get_by_role('dialog').get_by_role('button',name='添加词条',exact=True);expect(submit).to_be_enabled();submit.click()
                             if name=='bulk-equivalent':
                                 expect(page.locator('.dictionary-notice')).to_contain_text('已添加 1 个词条，跳过 1 个重复词条')
-                                expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value','34')
+                                expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value','34')
                             else:
-                                expect(page.locator('.dictionary-error')).to_contain_text('合成词库超出容量限制，整批未保存。')
-                                expect(field).to_have_value('\n'.join(draft));expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value','0')
+                                expect(page.get_by_role('dialog').locator('.dictionary-error')).to_contain_text('合成词库超出容量限制，整批未保存。')
+                                expect(field).to_have_value('\n'.join(draft));expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value','0')
                             writes=[c for c in qa.command_ledger(page) if c['name']=='dictionary.import'];assert len(writes)==1 and writes[0]['payload']['terms']==draft
                         elif name=='edit-boundary':
                             page.get_by_role('button',name='编辑词条 '+terms[-1],exact=True).click();field=page.get_by_role('textbox',name='词条',exact=True);field.fill('x'*78+'4é')
                             expect(page.locator('#dictionary-capacity-help')).to_contain_text('可能超出 1 字节');row['layouts']=layouts(page,args.out,name)
-                            page.get_by_role('button',name='保存词条',exact=True).click();expect(page.locator('.dictionary-error')).to_contain_text('整批未保存')
-                            expect(field).to_have_value('x'*78+'4é');expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value','4000')
+                            page.get_by_role('button',name='保存词条',exact=True).click();expect(page.get_by_role('dialog').locator('.dictionary-error')).to_contain_text('整批未保存')
+                            expect(field).to_have_value('x'*78+'4é');expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value','4000')
                             field.fill('Short');expect(page.locator('#dictionary-capacity-help')).to_contain_text('至少剩余 75 字节');page.get_by_role('button',name='保存词条',exact=True).click()
-                            expect(page.get_by_role('meter',name='词库容量')).to_have_attribute('value','3925')
+                            expect(page.get_by_role('meter',name='词库容量',include_hidden=True)).to_have_attribute('value','3925')
                         else:
-                            page.get_by_role('button',name='编辑词条 A',exact=True).click();field=page.get_by_role('textbox',name='词条',exact=True);field.fill('B')
+                            page.get_by_role('button',name='编辑词条 A',exact=True).click();field=page.get_by_role('textbox',name='词条',exact=True);field.fill('B');open_capacity(page)
                             page.evaluate('window.__speakmodeQA.forceDictionaryConflict=true');page.get_by_role('button',name='保存词条',exact=True).click()
-                            expect(page.locator('.dictionary-error')).to_contain_text('草稿仍保留');expect(field).to_have_value('B')
+                            expect(page.get_by_role('dialog').locator('.dictionary-error')).to_contain_text('草稿仍保留');expect(field).to_have_value('B');expect(page.get_by_role('dialog').get_by_text('当前已保存：A',exact=True)).to_be_visible()
                             expect(page.locator('#dictionary-capacity-help')).to_contain_text('草稿容量上限 29 / 4000 字节');row['layouts']=layouts(page,args.out,name)
                             page.get_by_role('button',name='核对后重试',exact=True).click();expect(page.locator('.dictionary-notice')).to_contain_text('词条已更新')
                             writes=[c for c in qa.command_ledger(page) if c['name']=='dictionary.save'];assert [c['payload']['expectedVersion'] for c in writes]==[1,2]

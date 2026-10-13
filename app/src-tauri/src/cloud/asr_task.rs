@@ -95,6 +95,9 @@ pub(super) async fn run_at(config:ProviderConfig,secret:String,language:String,d
     if model.id!="qwen-audio-3.1-asr-flash-streaming" {return Err(CloudError::new("asr_adapter_mismatch","configuration","语音模型与接口版本不匹配"));}
     let task_id=Uuid::new_v4().to_string();let start=run_task(&config,&language,&dictionary,&task_id)?;
     let mut diagnostics=WireDiagnostics::new(Arc::clone(&callback));
+    diagnostics.dictionary(&config, &dictionary,
+        start.pointer("/payload/parameters/vocabulary").and_then(Value::as_object).map_or(0, |v| v.len()),
+        start.pointer("/payload/input/context").and_then(Value::as_array).map_or(0, |v| v.len()))?;
     let connect_deadline=tokio::time::Instant::now()+timeouts.establishment;
     let request=authorized_request(&url,&secret,config.workspace.as_deref())?;
     let mut ws_config=WebSocketConfig::default();ws_config.max_message_size=Some(1024*1024);ws_config.max_frame_size=Some(1024*1024);
@@ -104,6 +107,7 @@ pub(super) async fn run_at(config:ProviderConfig,secret:String,language:String,d
         result=tokio::time::timeout_at(connect_deadline,connect)=>result.map_err(|_|CloudError::new("asr_connect_timeout","asr","语音服务连接超时"))?.map_err(|_|CloudError::new("asr_connect_failed","asr","语音服务连接失败，请检查地域与 Key"))?,
     };
     send_message(&mut socket,Message::Text(start.to_string()),&cancel,connect_deadline.min(tokio::time::Instant::now()+timeouts.send)).await?;
+    diagnostics.dictionary_written();
     let mut assembler=TaskAssembler::default();let mut audio_sequence=AudioSequence::default();
     let mut configured=false;let mut finish_deadline=None;
     loop {

@@ -30,13 +30,16 @@ STAGES = frozenset("""
 intentReceived captureFirstAccepted providerReadyReceived providerSpeechStartedReceived
 firstCaptionReceived captionRenderReceiptProxy stopIntentReceived captureCutoff
 captureDrained finalAsrReceived sourceCheckpointCommitted rewriteStarted
-rewriteValidated readyCommitted deliveryClaim nativeDeliveryReceipt cancelIntent
+rewriteValidated rewriteFallbackSelected readyCommitted deliveryClaim nativeDeliveryReceipt cancelIntent
 processingWorkerReleased asrFinishWritten asrSessionFinishedReceived
 """.split())
 DURATION_FIELDS = (
     "intentToCaptureMs", "intentToFirstCaptionMs", "captionToRenderReceiptProxyMs",
     "stopToFinalAsrMs", "rewriteRoundTripMs", "stopToReadyMs",
     "stopToFinishWrittenMs", "finishWrittenToSessionFinishedMs",
+    # A native receipt includes skipped/failed/unconfirmed dispatch outcomes.
+    # These are elapsed times, never evidence of successful host insertion.
+    "readyToNativeDeliveryReceiptMs", "stopToNativeDeliveryReceiptMs",
 )
 ORIGINS = frozenset(("uiCommand", "hotkeyHook", "asrRetry", "rewriteRetry", "saveRetry"))
 MODE_IDS = frozenset(("auto", "light", "structure"))
@@ -44,6 +47,16 @@ REGIONS = frozenset(("beijing", "singapore"))
 # The current MVP models. Other values are redacted, never copied as arbitrary strings.
 ASR_MODELS = frozenset(("qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2025-10-27", "qwen3-asr-flash-realtime-2026-02-10"))
 REWRITE_MODELS = frozenset(("qwen-flash", "qwen-plus", "qwen3.8-flash", "qwen3.7-plus", "qwen3.7-plus-2026-05-26"))
+REWRITE_PROTOCOLS = frozenset(("mode-contract-v1", "mode-contract-v3", "cleanup-contract-v1", "automatic-dictation-v3", "natural-cleanup-v1", "natural-cleanup-v2", "fluent-dictation-v1+semantic-review-compact-v2", "fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3", "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2"))
+REWRITE_OUTCOMES = frozenset(("validated", "fallback", "failed", "cancelled"))
+REWRITE_FALLBACKS = frozenset(("timeout", "serviceUnavailable", "invalidOutput", "meaningRisk"))
+REWRITE_ERROR_CODES = frozenset("""
+rewrite_timeout rewrite_network network_setup rewrite_service_error authentication_failed rate_limited
+invalid_response invalid_output invalid_local_repair stale_rewrite empty_output response_too_large truncated_output invalid_source_mapping
+incomplete_source_coverage rewrite_meaning_risk rewrite_admission_rejected rewrite_semantic_rejected rewrite_literal_changed protected_terms_missing protected_terms_new_latin protected_terms_marker_unknown protected_terms_marker_invalid protected_terms_limit protected_terms_empty protected_terms_nonce_invalid protected_terms_nonce_collision stale_protected_draft
+cancelled source_incomplete invalid_source invalid_mode
+unsupported_model unsupported_rewrite_model unsupported_provider unsupported_region invalid_config invalid_workspace
+""".split())
 ERROR_CODES = frozenset("""
 ack_timeout asr_closed asr_connect_failed asr_connect_timeout asr_disconnected
 asr_finish_timeout asr_limit asr_receive_failed asr_retry_unavailable asr_send_failed
@@ -53,7 +66,7 @@ capture_unavailable conflicting_final conflicting_order credential_unavailable
 delivery_receipt_save_failed empty_output empty_recording empty_recovery forbidden
 incomplete_source incomplete_source_coverage invalid_asr_event invalid_clock
 invalid_endpoint invalid_final invalid_item_id invalid_key invalid_mode invalid_order
-invalid_output invalid_payload invalid_response invalid_source invalid_source_mapping
+invalid_output invalid_local_repair stale_rewrite invalid_payload invalid_response invalid_source invalid_source_mapping
 invalid_workspace key_required missing_item_id missing_order mode_frozen native_busy
 network_setup no_output no_session notFound processing_busy recording_limit
 response_too_large rewrite_network rewrite_timeout rewrite_unavailable revisionConflict
@@ -63,7 +76,7 @@ stale_session storage_busy storage_protocol storage_unavailable system_cleanup_b
 system_cleanup_failed system_resume_failed system_unavailable unsupported_model
 unsupported_provider unsupported_region invalid_config unauthorized rate_limited
 provider_error rewrite_http rewrite_rejected rewrite_incomplete asr_incomplete
-rewrite_meaning_risk target_higher_integrity
+rewrite_meaning_risk rewrite_admission_rejected rewrite_semantic_rejected rewrite_literal_changed protected_terms_missing protected_terms_new_latin protected_terms_marker_unknown protected_terms_marker_invalid protected_terms_limit protected_terms_empty protected_terms_nonce_invalid protected_terms_nonce_collision stale_protected_draft target_higher_integrity
 stop_anchor_unavailable stop_focus_changed target_not_editable
 target_capability_unsupported target_inspection_timeout
 asr_config_timeout audio_disconnected late_asr_event asr_service_error dictionary_invalid
@@ -180,6 +193,10 @@ def filter_snapshot(raw):
         })
         if schema == 2:
             traces[-1].update(filter_transport(row))
+        # Additive optional metadata: preserve old schema 1/2 receipts without
+        # inventing an outcome, budget or cause when the producer did not report it.
+        if "rewrite" in row:
+            traces[-1]["rewrite"] = filter_rewrite(row["rewrite"])
     return {"schemaVersion": schema, "appVersion": version, "inMemoryOnly": True,
             "timingScope": scope, "droppedEvents": unsigned(raw.get("droppedEvents"), "droppedEvents"),
             "evictedTraces": unsigned(raw.get("evictedTraces"), "evictedTraces"), "traces": traces}
@@ -196,6 +213,22 @@ def metadata_object(value):
     return value
 
 
+def filter_rewrite(value):
+    """Whitelist rewrite decisions independently of the eventual ready/delivery result."""
+    if value is None:
+        return None
+    value = metadata_object(value)
+    budget = unsigned(value.get("configuredBudgetMs"), "configuredBudgetMs")
+    if not 0 < budget <= 120000:
+        raise ExportError("Invalid rewrite budget metadata")
+    return {"protocolVersion": choice(value.get("protocolVersion"), REWRITE_PROTOCOLS),
+            "configuredBudgetMs": budget,
+            "outcome": choice(value.get("outcome"), REWRITE_OUTCOMES),
+            "fallbackReason": choice(value.get("fallbackReason"), REWRITE_FALLBACKS),
+            "errorCode": choice(value.get("errorCode"), REWRITE_ERROR_CODES),
+            "durationMs": elapsed(value.get("durationMs"), "rewrite.durationMs")}
+
+
 def flag(value):
     if type(value) is not bool:
         raise ExportError("Invalid diagnostic boolean")
@@ -207,12 +240,37 @@ def counts(value):
     return {field: unsigned(value.get(field), field) for field in ("frames", "realSamples", "paddingSamples")}
 
 
+def filter_conditioning(value):
+    """Optional audio-quality scalars only; never export sample arrays or free text."""
+    if value is None:
+        return None
+    value = metadata_object(value)
+    profile = choice(value.get("profile"), frozenset(("bypass", "softVoice", "fixedGain6Db")))
+    version = value.get("version")
+    if profile is None or version != "soft-voice-v1":
+        raise ExportError("Invalid conditioning profile metadata")
+    # The algorithm version is a fixed implementation label, not user content.
+    clean = {"profile": profile, "version": version}
+    for field in ("sampleRateHz", "realSamples", "inputClippedSamples", "outputClippedSamples",
+                  "peakLimitedSamples", "nonfiniteSamples", "processingUs"):
+        clean[field] = unsigned(value.get(field), field)
+    if clean["sampleRateHz"] != 16000:
+        raise ExportError("Invalid conditioning sample rate")
+    for field in ("inputRmsDbfs", "outputRmsDbfs", "inputPeakDbfs", "outputPeakDbfs", "meanGainDb", "maxGainDb"):
+        number = value.get(field)
+        if type(number) not in (int, float) or not math.isfinite(number) or not -120 <= number <= 120:
+            raise ExportError("Invalid conditioning level metadata")
+        clean[field] = number
+    return clean
+
+
 def filter_transport(row):
     capture = row.get("capture")
     if capture is not None:
         capture = metadata_object(capture)
         capture = {**{field: unsigned(capture.get(field), field) for field in ("inputSamples", "inputSampleRate", "emittedFrames")},
-                   "complete": flag(capture.get("complete")), "cancelled": flag(capture.get("cancelled"))}
+                   "complete": flag(capture.get("complete")), "cancelled": flag(capture.get("cancelled")),
+                   "conditioning": filter_conditioning(capture.get("conditioning"))}
     bridge = metadata_object(row.get("bridge"))
     clean_bridge = {"observed": counts(bridge.get("observed")), "enqueued": counts(bridge.get("enqueued")),
                    **{field: elapsed(bridge.get(field), field) for field in ("lastFrameEnqueuedMs", "finishEnqueuedMs")}}
@@ -246,6 +304,14 @@ def filter_transport(row):
         "finishExpectedFrames": None if asr.get("finishExpectedFrames") is None else unsigned(asr["finishExpectedFrames"], "finishExpectedFrames"),
         **{field: unsigned(asr.get(field), field) for field in ("pendingItems", "finalItems", "observedEvents")},
         "terminated": flag(asr.get("terminated")), "eventCounts": clean_counts, "eventTail": clean_tail}
+    dictionary = asr.get("dictionary")
+    if dictionary is not None:
+        dictionary = metadata_object(dictionary)
+        clean_asr["dictionary"] = {
+            **{field: unsigned(dictionary.get(field), field) for field in ("version", "entryCount", "vocabularyCount", "contextChunks")},
+            "support": choice(dictionary.get("support"), frozenset(("legacyCorpusUnverified", "vocabularyAndContext", "vocabulary"))),
+            "socketWritten": flag(dictionary.get("socketWritten")),
+            "effectivenessVerified": False}
     return {"capture": capture, "bridge": clean_bridge, "asr": clean_asr}
 
 

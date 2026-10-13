@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "version": "0.2.19",
+  "frontendVersion": "0.4.18",
+  "date": "2026-10-13",
+  "productionProtocol": "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2",
+  "scope": {
+    "provider": "aliyun",
+    "region": "beijing",
+    "model": "qwen3.8-flash",
+    "modes": [
+      "auto",
+      "light",
+      "structure",
+      "compatible custom"
+    ]
+  },
+  "r1": {
+    "completedPairs": 15,
+    "interrupted": 1,
+    "baselineAccepted": 11,
+    "candidateAccepted": 8,
+    "promoted": false
+  },
+  "r2": {
+    "fixedCases": 15,
+    "baselineReused": true,
+    "candidateAccepted": 13,
+    "medianOldMs": 2017,
+    "medianNewMs": 2224,
+    "promoted": false,
+    "manualFailures": [
+      "microphone-check-omission",
+      "light-order",
+      "opinion-marker-removed",
+      "missing-bullets"
+    ]
+  },
+  "r3": {
+    "targetedDevelopmentAccepted": 4,
+    "targetedDevelopmentCount": 4,
+    "newCasesAccepted": 1,
+    "newCaseCount": 2,
+    "timeoutNewCase": 1
+  },
+  "auxiliaryBlindJudge": {
+    "calibrated": false,
+    "usedForPromotion": false
+  },
+  "conservativeCallCap": 118,
+  "conservativeCallsAccounted": 117,
+  "normalRequestRetries": 0,
+  "checks": {
+    "rustPassed": 739,
+    "rustIgnored": 3,
+    "pythonDiagnosticTests": 35,
+    "candidateHelperGroups": 8,
+    "deliveryHelperTests": 20,
+    "typescript": "PASS",
+    "nativeDeletionExactRecordedReplay": "PASS"
+  },
+  "actualNativeVoiceAndDelivery": "NOT_RUN",
+  "qualityParityWithTypeless": "NOT_ESTABLISHED"
+}

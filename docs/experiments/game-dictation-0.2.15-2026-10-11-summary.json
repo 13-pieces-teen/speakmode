@@ -1,0 +1,93 @@
+{
+  "version": "0.2.15",
+  "frontendVersion": "0.4.14",
+  "scope": "FINITE_TEXT_GUARD_FIX_NOT_AUDIO_OR_NATIVE_DELIVERY_ACCEPTANCE",
+  "newCloudRequests": 2,
+  "newCloudRequestCap": 14,
+  "cloudRegenerations": 0,
+  "productionPromptUnchanged": true,
+  "modelUnchanged": true,
+  "budgetUnchanged": true,
+  "currentUserFixedResponses": {
+    "rows": 2,
+    "acceptedBefore": 0,
+    "acceptedAfter": 2,
+    "independentAgentQualityPass": 2,
+    "originalResponseAndLatencyUnchanged": true,
+    "singleItemSourceChecksPassed": 2
+  },
+  "previousRetainedResponses": {
+    "rows": 70,
+    "decisionsChanged": 0,
+    "sourceResponseAndLatencyUnchanged": true
+  },
+  "independentQuantityChallenges": {
+    "total": 48,
+    "beforeMet": 36,
+    "afterMet": 44,
+    "identityControlsPassed": 24,
+    "unresolvedOldCaseIds": [
+      "QR06",
+      "QR12"
+    ],
+    "newRegressions": 0
+  },
+  "tests": {
+    "rustLibraryPassed": 667,
+    "rustLibraryFailed": 0,
+    "rustLibraryIgnored": 3,
+    "rustReplayToolPassed": 2,
+    "pythonReviewPassed": 16,
+    "naturalGuardPassed": 52,
+    "modeRegressionsPassed": 19,
+    "modeRegressionsTotal": 21,
+    "modeAdditionalChallengesPassed": 13,
+    "typescriptPassed": true,
+    "deliveryFeedbackHelperPassed": 20
+  },
+  "currentGuardHashes": {
+    "disfluency": "815dbeea6d255b4495ce6c68b0e01e71b26e3028324e0d6115d5e07406aeb098",
+    "evaluationDisfluency": "808c6951bab6b9d2dc275100970270e5b88654029bd54d78b8d264cd572b8111",
+    "facts": "307206a38fb4d132400e267f542cfbd63f529801764ff451ba39a968e3c70cc8",
+    "integrity": "857993a13f3d5c8435f36bb9bf5a25f73f0a4e6e3acab013743fe2198eab2d7e",
+    "parser": "7cce45cf1a6ea05ad7409f13fc41ac3e93482180e18af03786368e147c8739ff",
+    "quantityRoles": "5c9b289c93b3e0983564decd7248efab4688cf072a2696f49c5cc96b4da24587",
+    "semantics": "068b64f03f4c4c3f526cf6bcba94d185fdd024573abb8609e1e89f8e4bd1da3e"
+  },
+  "release": {
+    "version": "0.2.15",
+    "frontendVersion": "0.4.14",
+    "releaseDate": "2026-10-11",
+    "artifacts": [
+      {
+        "name": "SpeakMode.exe",
+        "bytes": 18523648,
+        "sha256": "75c049f90228814e9676849d1a8cbf74ec60c2106c6f9234e53e3bc27b750f80",
+        "productVersion": "0.2.15",
+        "fileVersion": "0.2.15"
+      },
+      {
+        "name": "SpeakMode_0.2.15_x64-setup.exe",
+        "bytes": 5689677,
+        "sha256": "ab1af7ef6e6efdefe0b2321188158ade0635a23ed362125952a07c3d4c27e7f0",
+        "productVersion": "0.2.15",
+        "fileVersion": "0.2.15"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 190,
+    "thirdPartyFilesVerified": 14,
+    "resourceManifestCopied": true,
+    "launcherSyntaxValid": true,
+    "profile": "existing installed LocalApplicationData/dev.speakmode.desktop",
+    "userProfileWrittenDuringBuild": false,
+    "appLaunched": false,
+    "installerLaunched": false,
+    "actualNativeDelivery": "NOT_RUN",
+    "gitPushed": false
+  },
+  "actualAsrAudio": "NOT_RUN",
+  "actualNativeDelivery": "NOT_RUN",
+  "typelessSameAudioComparison": "NOT_RUN",
+  "userProfileWrites": false
+}

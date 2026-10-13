@@ -1,0 +1,751 @@
+{
+  "release": "0.2.10",
+  "date": "2026-10-10",
+  "decision": "KEEP_EXISTING_MODEL_AND_MODE_CONTRACT; SHIP_NARROW_GUARD_FIXES",
+  "productionCandidatePromoted": false,
+  "userConfigurationWritten": false,
+  "scope": "SYNTHETIC_TEXT_ONLY_NOT_ASR_TYPELESS_AUDIO_OR_NATIVE_DELIVERY",
+  "reviewType": "Independent Agent review; not human listening",
+  "cloudCallCount": 136,
+  "experiments": [
+    {
+      "receipt": "dev-cloud-r1.json",
+      "split": "dev",
+      "calls": 24,
+      "status": "completed",
+      "candidatePromptVersion": "automatic-dictation-v1",
+      "hashes": {
+        "dev-cloud-r1.json": "5a4aad59b5347e1ac229bf64577e28f0d73f08c6837f977da4a3ef8868760d1c",
+        "score-r1.json": "d172d071b57bcb3a8408159305ac330ceb8832cef0583ac1e1c4360e1477cd1a",
+        "review-r1/review-completed.json": "4368280f76a4aa67329a83d15e816df481d6832501f691b69bf51372a1a4de27"
+      },
+      "results": {
+        "baseline": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 8,
+          "accepted": 9,
+          "acceptedAndUsable": 7,
+          "projectedFinalUsable": 7,
+          "projectedSourceFallback": 3,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 1,
+          "usableButRejected": 1,
+          "acceptedCritical": 0,
+          "generatedCritical": 1,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [
+            {
+              "index": 4,
+              "caseId": "D03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 11,
+            "cleanup": 9,
+            "readability": 12,
+            "tone": 11,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 7,
+            "readability": 11,
+            "tone": 12,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 827.5,
+            "p95": 1450.25,
+            "min": 508.0,
+            "max": 1552.0
+          }
+        },
+        "candidate": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 8,
+          "accepted": 7,
+          "acceptedAndUsable": 6,
+          "projectedFinalUsable": 7,
+          "projectedSourceFallback": 5,
+          "projectedSourceFallbackUsable": 1,
+          "guardFalseRejects": 2,
+          "usableButRejected": 2,
+          "acceptedCritical": 1,
+          "generatedCritical": 2,
+          "acceptedCriticalItems": [
+            {
+              "index": 14,
+              "caseId": "D08",
+              "trial": 1,
+              "criticalErrors": [
+                "将这段帮我记进评审笔记这一请求改成这段内容已记入评审笔记，新增未经原文支持的操作完成状态。"
+              ]
+            }
+          ],
+          "guardFalseRejectItems": [
+            {
+              "index": 5,
+              "caseId": "D03",
+              "trial": 1
+            },
+            {
+              "index": 21,
+              "caseId": "P03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 10,
+            "cleanup": 11,
+            "readability": 12,
+            "tone": 9,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 11,
+            "cleanup": 8,
+            "readability": 11,
+            "tone": 11,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 579.5,
+            "p95": 1112.9,
+            "min": 372.0,
+            "max": 1147.0
+          }
+        }
+      }
+    },
+    {
+      "receipt": "dev-cloud-r2-flash.json",
+      "split": "dev",
+      "calls": 24,
+      "status": "completed",
+      "candidatePromptVersion": "automatic-dictation-v2",
+      "hashes": {
+        "dev-cloud-r2-flash.json": "9796de2092ccda29c87b92b7b183fd3069407b6c7ffdaee884470a8e6e27264b",
+        "score-r2.json": "fd2ed6043471f6375d4b2a4b31f8c3a3f58b1b13136370a0a899d01424c48257",
+        "review-r2/review-completed.json": "8f35e9887d2be3842e52f6278253e833cdb1d5510e08d794df652c40621ffa4c"
+      },
+      "results": {
+        "baseline": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 8,
+          "accepted": 10,
+          "acceptedAndUsable": 6,
+          "projectedFinalUsable": 6,
+          "projectedSourceFallback": 2,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 2,
+          "usableButRejected": 2,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [
+            {
+              "index": 4,
+              "caseId": "D03",
+              "trial": 1
+            },
+            {
+              "index": 16,
+              "caseId": "P01",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 8,
+            "readability": 12,
+            "tone": 12,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 6,
+            "readability": 11,
+            "tone": 12,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 765.0,
+            "p95": 1360.2,
+            "min": 586.0,
+            "max": 1380.0
+          }
+        },
+        "candidate": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 9,
+          "accepted": 9,
+          "acceptedAndUsable": 8,
+          "projectedFinalUsable": 8,
+          "projectedSourceFallback": 3,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 1,
+          "usableButRejected": 1,
+          "acceptedCritical": 1,
+          "generatedCritical": 2,
+          "acceptedCriticalItems": [
+            {
+              "index": 1,
+              "caseId": "D01",
+              "trial": 1,
+              "criticalErrors": [
+                "原文要不稍微放大一点？是明确询问对方的试探性建议；输出改为要不稍微放大一点，但别一下改太多。的陈述句，问句功能未明确保留。"
+              ]
+            }
+          ],
+          "guardFalseRejectItems": [
+            {
+              "index": 5,
+              "caseId": "D03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 10,
+            "cleanup": 11,
+            "readability": 12,
+            "tone": 10,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 11,
+            "cleanup": 9,
+            "readability": 11,
+            "tone": 11,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 566.5,
+            "p95": 1241.75,
+            "min": 383.0,
+            "max": 1393.0
+          }
+        }
+      }
+    },
+    {
+      "receipt": "dev-cloud-r3-plus.json",
+      "split": "dev",
+      "calls": 24,
+      "status": "completed",
+      "candidatePromptVersion": "automatic-dictation-v2",
+      "hashes": {
+        "dev-cloud-r3-plus.json": "d2d316c84004f5a900928ac96b20338361bc3dc2054511cef21a7cf0d5967dc1",
+        "score-r3.json": "f79540d48e4d618b1c9f1e3db6fd11b801c23d321b137cdca0878bd2679006c9",
+        "review-r3/review-completed.json": "2aae5eaa8fa060c43bc98054a635f0d502d9b4aef982b6a0bdbdf7b19571a638"
+      },
+      "results": {
+        "baseline": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 7,
+          "accepted": 9,
+          "acceptedAndUsable": 5,
+          "projectedFinalUsable": 5,
+          "projectedSourceFallback": 3,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 2,
+          "usableButRejected": 2,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [
+            {
+              "index": 4,
+              "caseId": "D03",
+              "trial": 1
+            },
+            {
+              "index": 20,
+              "caseId": "P03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 7,
+            "readability": 12,
+            "tone": 12,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 5,
+            "readability": 11,
+            "tone": 12,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 796.0,
+            "p95": 1502.45,
+            "min": 601.0,
+            "max": 1569.0
+          }
+        },
+        "candidate": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 9,
+          "accepted": 10,
+          "acceptedAndUsable": 8,
+          "projectedFinalUsable": 8,
+          "projectedSourceFallback": 2,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 1,
+          "usableButRejected": 1,
+          "acceptedCritical": 2,
+          "generatedCritical": 3,
+          "acceptedCriticalItems": [
+            {
+              "index": 1,
+              "caseId": "D01",
+              "trial": 1,
+              "criticalErrors": [
+                "删掉我觉得，把说话者的主观判断改成按钮有一点小的直接断言，未保留要求中的主观性。"
+              ]
+            },
+            {
+              "index": 14,
+              "caseId": "D08",
+              "trial": 1,
+              "criticalErrors": [
+                "删去两句引文都保留及后面再记一句我的意见，丢失明确的引文保留要求和末段作为说话者个人意见的归属、记录要求。"
+              ]
+            }
+          ],
+          "guardFalseRejectItems": [
+            {
+              "index": 5,
+              "caseId": "D03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 9,
+            "cleanup": 12,
+            "readability": 12,
+            "tone": 9,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 10,
+            "cleanup": 10,
+            "readability": 11,
+            "tone": 10,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 1385.5,
+            "p95": 2830.95,
+            "min": 798.0,
+            "max": 2947.0
+          }
+        }
+      }
+    },
+    {
+      "receipt": "dev-cloud-r4-38flash.json",
+      "split": "dev",
+      "calls": 24,
+      "status": "completed",
+      "candidatePromptVersion": "automatic-dictation-v2",
+      "hashes": {
+        "dev-cloud-r4-38flash.json": "07b317113795750ba3d940209c19ef1ca0ba1bf41404cba8d9cd71fd106c14d1",
+        "score-r4.json": "0965532caeb8e9051a71174787d3e2152bbe504865942bbfa71d2b9dd805baa7",
+        "review-r4/review-completed.json": "ab5e9e7aba6778b0ef58265e8a820c576f05cded56d87db67d9830be74d05b7c"
+      },
+      "results": {
+        "baseline": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 7,
+          "accepted": 9,
+          "acceptedAndUsable": 5,
+          "projectedFinalUsable": 5,
+          "projectedSourceFallback": 3,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 2,
+          "usableButRejected": 2,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [
+            {
+              "index": 4,
+              "caseId": "D03",
+              "trial": 1
+            },
+            {
+              "index": 20,
+              "caseId": "P03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 7,
+            "readability": 12,
+            "tone": 12,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 5,
+            "readability": 11,
+            "tone": 12,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 813.0,
+            "p95": 1346.9,
+            "min": 555.0,
+            "max": 1568.0
+          }
+        },
+        "candidate": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 10,
+          "accepted": 10,
+          "acceptedAndUsable": 9,
+          "projectedFinalUsable": 9,
+          "projectedSourceFallback": 2,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 1,
+          "usableButRejected": 1,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [
+            {
+              "index": 5,
+              "caseId": "D03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 10,
+            "readability": 12,
+            "tone": 12,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 9,
+            "readability": 11,
+            "tone": 12,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 1006.5,
+            "p95": 1993.2,
+            "min": 716.0,
+            "max": 2024.0
+          }
+        }
+      }
+    },
+    {
+      "receipt": "dev-cloud-r5-38flash-v3.json",
+      "split": "dev",
+      "calls": 24,
+      "status": "completed",
+      "candidatePromptVersion": "automatic-dictation-v3",
+      "hashes": {
+        "dev-cloud-r5-38flash-v3.json": "f8e0f35f1b587bea12a627731da78d36e21b081d9f04227e6dff3ed0e1b429fa",
+        "score-r5.json": "be7223b6c7d56da2836c09be4cfeaa820a9b590e29675b4b0d81cd6af61ced01",
+        "review-r5/review-completed.json": "7d71aaee05fa0d2dc000261c152094262de0990e128bc45bd18c79db4c29e828"
+      },
+      "results": {
+        "baseline": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 7,
+          "accepted": 9,
+          "acceptedAndUsable": 5,
+          "projectedFinalUsable": 5,
+          "projectedSourceFallback": 3,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 2,
+          "usableButRejected": 2,
+          "acceptedCritical": 1,
+          "generatedCritical": 2,
+          "acceptedCriticalItems": [
+            {
+              "index": 15,
+              "caseId": "D08",
+              "trial": 1,
+              "criticalErrors": [
+                "把这段帮我记进评审笔记这一请求改成这段内容已记入评审笔记，新增未经原文支持的操作完成状态。"
+              ]
+            }
+          ],
+          "guardFalseRejectItems": [
+            {
+              "index": 16,
+              "caseId": "P01",
+              "trial": 1
+            },
+            {
+              "index": 20,
+              "caseId": "P03",
+              "trial": 1
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 10,
+            "cleanup": 9,
+            "readability": 12,
+            "tone": 11,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 11,
+            "cleanup": 6,
+            "readability": 11,
+            "tone": 11,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 924.5,
+            "p95": 1606.35,
+            "min": 466.0,
+            "max": 1839.0
+          }
+        },
+        "candidate": {
+          "denominator": 12,
+          "generatedExtractable": 12,
+          "generatedCompleteUsable": 9,
+          "accepted": 11,
+          "acceptedAndUsable": 9,
+          "projectedFinalUsable": 9,
+          "projectedSourceFallback": 1,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 0,
+          "usableButRejected": 0,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [],
+          "candidateDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 9,
+            "readability": 12,
+            "tone": 12,
+            "properNames": 12
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 12,
+            "cleanup": 9,
+            "readability": 12,
+            "tone": 12,
+            "properNames": 12
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 12,
+            "p50": 836.5,
+            "p95": 1356.8,
+            "min": 534.0,
+            "max": 1370.0
+          }
+        }
+      }
+    },
+    {
+      "receipt": "holdout-cloud-v3-38flash.json",
+      "split": "holdout",
+      "calls": 16,
+      "status": "completed",
+      "candidatePromptVersion": "automatic-dictation-v3",
+      "hashes": {
+        "holdout-cloud-v3-38flash.json": "a5bf3b969f1f8063591a162cefe96a39102e1b863f872df89c55b3cdae31240f",
+        "score-holdout.json": "749d6070c251641a4fbc7cd3bd6be6e68a7b157d99d33d12249b32e32df0cd89",
+        "review-holdout/review-completed.json": "80d678f5ef6ae25570e4f3757d429f56aa1789baa435bc9ffe0bb2fe3b0efb00"
+      },
+      "results": {
+        "baseline": {
+          "denominator": 8,
+          "generatedExtractable": 8,
+          "generatedCompleteUsable": 7,
+          "accepted": 3,
+          "acceptedAndUsable": 3,
+          "projectedFinalUsable": 3,
+          "projectedSourceFallback": 5,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 4,
+          "usableButRejected": 4,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [
+            {
+              "index": 4,
+              "caseId": "H03",
+              "trial": 1
+            },
+            {
+              "index": 7,
+              "caseId": "H04",
+              "trial": 1
+            },
+            {
+              "index": 13,
+              "caseId": "H03",
+              "trial": 2
+            },
+            {
+              "index": 14,
+              "caseId": "H04",
+              "trial": 2
+            }
+          ],
+          "candidateDimensionPass": {
+            "fidelity": 8,
+            "cleanup": 8,
+            "readability": 8,
+            "tone": 7,
+            "properNames": 8
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 8,
+            "cleanup": 3,
+            "readability": 8,
+            "tone": 8,
+            "properNames": 8
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 8,
+            "p50": 1133.0,
+            "p95": 1408.25,
+            "min": 931.0,
+            "max": 1459.0
+          }
+        },
+        "candidate": {
+          "denominator": 8,
+          "generatedExtractable": 8,
+          "generatedCompleteUsable": 3,
+          "accepted": 6,
+          "acceptedAndUsable": 3,
+          "projectedFinalUsable": 3,
+          "projectedSourceFallback": 2,
+          "projectedSourceFallbackUsable": 0,
+          "guardFalseRejects": 0,
+          "usableButRejected": 0,
+          "acceptedCritical": 0,
+          "generatedCritical": 0,
+          "acceptedCriticalItems": [],
+          "guardFalseRejectItems": [],
+          "candidateDimensionPass": {
+            "fidelity": 8,
+            "cleanup": 3,
+            "readability": 8,
+            "tone": 8,
+            "properNames": 8
+          },
+          "projectedFinalDimensionPass": {
+            "fidelity": 8,
+            "cleanup": 3,
+            "readability": 8,
+            "tone": 8,
+            "properNames": 8
+          },
+          "latencyMs": {
+            "scope": "attempted cloud calls with recorded timing, including failed requests; excludes native paste and ASR",
+            "count": 8,
+            "p50": 1168.5,
+            "p95": 1701.8,
+            "min": 927.0,
+            "max": 1790.0
+          }
+        }
+      }
+    }
+  ],
+  "verification": {
+    "cleanupProbe": "64/64",
+    "modeRegression": "19/21 (same two known limitations)",
+    "modeAdversarial": "13/13",
+    "labRustTests": "11/11",
+    "pythonReviewTests": "9/9",
+    "typeScript": "PASS",
+    "rustLibrary": {
+      "passed": 597,
+      "failed": 0,
+      "ignored": 3,
+      "logSha256": "4fcc2669b4f7b6872274f84a526af2f1e0e2868ae18230b880acc10500f7fea3"
+    },
+    "package": {
+      "status": "PASS",
+      "receipt": {
+        "version": "0.2.10",
+        "frontendVersion": "0.4.9",
+        "releaseDate": "2026-10-11",
+        "artifacts": [
+          {
+            "name": "SpeakMode.exe",
+            "bytes": 18288128,
+            "sha256": "bce99fba258a36c16237d4e7aefdfe234869c24b334825c3d7ebe915c4ba86f7",
+            "productVersion": "0.2.10",
+            "fileVersion": "0.2.10"
+          },
+          {
+            "name": "SpeakMode_0.2.10_x64-setup.exe",
+            "bytes": 5623912,
+            "sha256": "eae2b092a167ceb2fc80cc13fb8358b91c8a396839a3f866478569e9a690e1e7",
+            "productVersion": "0.2.10",
+            "fileVersion": "0.2.10"
+          }
+        ],
+        "selectedBuildInputsUnchanged": true,
+        "selectedBuildInputCount": 174,
+        "thirdPartyFilesVerified": 13,
+        "resourceManifestCopied": true,
+        "launcherSyntaxValid": true,
+        "profile": "existing native-qa-2026-10-04",
+        "modelConfigurationChanged": false,
+        "experimentalProtocolPromoted": false,
+        "appLaunched": false,
+        "installerLaunched": false,
+        "gitPushed": false
+      },
+      "buildLogSha256": "1afeea06ed0182dd82bcf3012711d5237b5433525f539f511c4cf5b0caf65f68"
+    },
+    "nativeSpeech": "NOT_RUN",
+    "typelessAudioComparison": "NOT_RUN",
+    "vite": "PASS_WITH_EXISTING_RADIX_DIRECTIVE_AND_BUNDLE_SIZE_WARNINGS"
+  },
+  "holdoutReviewCaveat": "All five candidate cleanup failures concern retained 啊; this can be meaningful emphasis. Original Agent grades preserved, not a human judgment or proof of model inferiority.",
+  "releaseDate": "2026-10-11"
+}

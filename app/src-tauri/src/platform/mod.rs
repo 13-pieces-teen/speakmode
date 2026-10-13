@@ -1,8 +1,10 @@
 //! Native operations are explicit; importing this module never starts a hook,
 //! opens a microphone, mutates a clipboard, or sends input.
 pub mod audio;
+pub mod audio_conditioner;
 pub mod delivery;
 pub mod hotkeys;
+pub mod typeless_dictionary;
 mod resampler;
 
 /// Stable, content-free failures at the input-target boundary. Native provider

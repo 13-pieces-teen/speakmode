@@ -4,11 +4,16 @@ use crate::platform::audio::{AudioEvent,AudioFrame,CaptureHandle,CaptureSummary,
 use serde::Serialize;
 use std::{sync::atomic::{AtomicBool,Ordering},time::{Duration,Instant}};
 use tokio::sync::{mpsc,oneshot,Notify};
-use super::diagnostics::{Stage,Origin,TraceHandle,BridgeTelemetry,DiagnosticsRecorder};
+use super::diagnostics::{Stage,Origin,TraceHandle,BridgeTelemetry,DiagnosticsRecorder,RewriteOutcome};
 #[path="retry_audio.rs"]
 mod retry_audio;
 #[path="recovery.rs"]
 mod recovery;
+#[path="rewrite_fallback.rs"]
+mod rewrite_fallback;
+use rewrite_fallback::RewriteWaitPolicy;
+#[path="recorder_copy.rs"]
+mod recorder_copy;
 
 fn stop_capture_failure_reason(error: &platform::PlatformError) -> &'static str {
     match error {
@@ -42,6 +47,10 @@ mod tests;
 #[cfg(test)]
 #[path="audio_diagnostics_tests.rs"]
 mod audio_diagnostics_tests;
+
+#[cfg(test)]
+#[path="dictionary_rewrite_tests.rs"]
+mod dictionary_rewrite_tests;
 
 #[cfg(test)]
 #[path="retry_asr_experiment_tests.rs"]
@@ -78,6 +87,8 @@ pub struct LiveSession {
     pub recording_limit_remaining_ms:Option<u64>,pub cancel_pending:bool,
     pub captions:Vec<CaptionItem>,pub capture_ready:bool,pub provider_ready:bool,
     pub caption_render_token:Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub rewrite_fallback:Option<RewriteFallbackReason>,
 }
 #[derive(Clone)]
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
@@ -132,7 +143,7 @@ impl ActiveSession {
         let can_retry_save=released&&problem&&self.pending.is_some();
         let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())&&self.cache_created.is_some_and(|t|t.elapsed()<AUDIO_CACHE_RETENTION);
         let can_retry_rewrite=released&&problem&&self.source.is_some()&&self.pending.is_none();
-        LiveSession{captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
+        LiveSession{rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
     }
     pub(crate) fn adopt_first_history_result(&mut self,detail:&HistoryDetail) {
         if self.id!=detail.session.seed.id||self.generation!=detail.session.seed.generation||self.source.as_ref().is_none_or(|s|s.id!=detail.source.id){return;}
@@ -534,7 +545,7 @@ impl AppHub {
         let (done_tx,done_rx)=oneshot::channel();
         let capture_hub=Arc::clone(&self);let capture_id=id.clone();let capture_cancel=cancel.clone();
         std::thread::spawn(move|| {
-            let result=pump_audio(&capture_hub,&capture_id,generation,prefs.microphone_id.as_deref(),audio_tx,capture_cancel,stop);
+            let result=pump_audio(&capture_hub,&capture_id,generation,prefs.microphone_id.as_deref(),prefs.soft_voice_enabled,audio_tx,capture_cancel,stop);
             // A startup/drain timeout may return before the WASAPI owner drops.
             // Keep admission closed until the actual platform owner releases.
             while !platform::audio::capture_resources_released(){std::thread::sleep(Duration::from_millis(10));}
@@ -593,30 +604,88 @@ impl AppHub {
         self.db_command_workers.fetch_add(1,Ordering::SeqCst);
         tokio::spawn(async move{let _lease=CommandLease(Arc::clone(&hub));let result=hub.db_write(DbCommand::Checkpoint{seed,source},guard,DbPriority::Critical).await;hub.checkpoint_receipt(&id,generation,pending,result)}).await.map_err(|_|ApiError::new("save_interrupted","storage","来源保存未确认，请核对本机记录"))?
     }
+    fn recording_rewrite_dictionary(&self,id:&str,generation:u64)->Option<DictionarySnapshot> {
+        let i=self.inner.lock().unwrap();
+        i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()).map(|s|s.dictionary.clone())
+    }
     async fn finish_rewrite(self:&Arc<Self>,id:String,generation:u64,secret:String) {
+        // Reuse the vocabulary frozen when this recording began, not a live
+        // dictionary that the user may have changed while speaking.
+        let Some(dictionary)=self.recording_rewrite_dictionary(&id,generation)else{return;};
         self.finish_rewrite_with(id,generation,move|config,mode,source,cancel|async move{
-            rewrite::rewrite(&config,&secret,&mode,&source,cancel).await
+            rewrite::rewrite_with_dictionary(&config,&secret,&mode,&source,&dictionary,cancel).await
         }).await;
     }
     // Private completion seam: tests supply a parsed fixture future while using
     // the same checkpoint, cancellation, storage and delivery gates. Production
-    // always uses rewrite(), with its allowlisted endpoint and 20-second bound.
+    // always uses the cloud wrapper, with its allowlisted endpoint and a source-bound wait budget.
     async fn finish_rewrite_with<F>(self:&Arc<Self>,id:String,generation:u64,
         generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken)->F)
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
+        self.finish_rewrite_with_policy(id,generation,generate,None::<RewriteWaitPolicy>,|hub,id,generation| {
+            let hub=Arc::clone(hub);let id=id.to_owned();
+            tokio::task::spawn_blocking(move||hub.initial_delivery(&id,generation));
+        }).await;
+    }
+    // The delivery seam permits real SQLite/coordinator tests without host input or clipboard IO.
+    // None selects production policy from the same frozen snapshot sent to the provider;
+    // tests can inject a fixed budget without changing the production selection path.
+    async fn finish_rewrite_with_policy<F>(self:&Arc<Self>,id:String,generation:u64,
+        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken)->F,
+        policy:impl Into<Option<RewriteWaitPolicy>>,deliver:impl FnOnce(&Arc<Self>,&str,u64))
+        where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
         let (config,mode,source,cancel,reason)={let i=self.inner.lock().unwrap();let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};(s.config.clone(),s.mode.clone(),s.source.clone().unwrap(),s.cancel.clone(),s.reason)};
+        let policy=policy.into().unwrap_or_else(||RewriteWaitPolicy::for_source(reason,&source));
         self.publish_session();
-        self.diagnostics.mark(trace.as_ref(),Stage::RewriteStarted);
-        let generated=generate(config,mode.clone(),source.clone(),cancel).await;
+        self.diagnostics.rewrite_started(trace.as_ref(),rewrite::production_protocol_version(&config,&mode),policy.deadline.as_millis().min(u64::MAX as u128) as u64);
+        let rewrite_cancel=cancel.child_token();
+        let rewrite_deadline=tokio::time::Instant::now()+policy.deadline;
+        let generated=tokio::select! {
+            biased;
+            _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
+            result=tokio::time::timeout_at(rewrite_deadline,generate(config,mode.clone(),source.clone(),rewrite_cancel.clone()))=>match result {
+                Ok(result)=>result,
+                Err(_)=>{rewrite_cancel.cancel();Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))},
+            },
+        };
         // A completed parser/transport response cannot revive a cancelled or
         // replaced session, even if its future returned success after cutoff.
-        if !self.valid_active(&id,generation){return;}
-        let generated=match generated{Ok(v)=>v,Err(e)=>{self.fail(&id,generation,e.into(),true);return;}};
-        self.diagnostics.mark(trace.as_ref(),Stage::RewriteValidated);
-        let output=OutputRevision{id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
+        if !self.valid_active(&id,generation){
+            self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Cancelled,None,Some("cancelled"));
+            return;
+        }
+        // Synchronous decoding/validation can finish without yielding to the
+        // timer. It must not turn an already expired request into a late paste.
+        let generated=if tokio::time::Instant::now()>=rewrite_deadline && !generated.as_ref().err().is_some_and(|error|error.code=="cancelled") {
+            rewrite_cancel.cancel();
+            Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))
+        } else { generated };
+        let (generated,rewrite_fallback)=match generated {
+            Ok(value)=>{
+                self.diagnostics.mark(trace.as_ref(),Stage::RewriteValidated);
+                self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Validated,None,None);
+                (value,None)
+            },
+            Err(error)=>{
+                let fallback=rewrite_fallback::fallback_reason(&error);
+                let eligible=reason==CreationReason::NormalInitial && fallback.is_some() && rewrite::validate_source(&source).is_ok()
+                    && source.session_id==id && source.generation==generation
+                    && self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation
+                        && s.phase==SessionPhase::Rewriting && s.pending.is_none() && s.db_pending==0 && !s.original_delivery_revoked
+                        && s.source.as_ref().is_some_and(|saved|saved==&source));
+                if !eligible {
+                    self.diagnostics.rewrite_finished(trace.as_ref(),if error.code=="cancelled" {RewriteOutcome::Cancelled} else {RewriteOutcome::Failed},None,Some(&error.code));
+                    self.fail(&id,generation,error.into(),true);return;
+                }
+                self.diagnostics.mark(trace.as_ref(),Stage::RewriteFallbackSelected);
+                self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Fallback,fallback,Some(&error.code));
+                (rewrite_fallback::source_fallback(&source),fallback)
+            },
+        };
+        let output=OutputRevision{id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}
-        self.publish_session();self.changed();let hub=Arc::clone(self);tokio::task::spawn_blocking(move||hub.initial_delivery(&id,generation));
+        self.publish_session();self.changed();deliver(self,&id,generation);
     }
     fn prepare_output(&self,id:&str,generation:u64,output:OutputRevision)->Result<(String,Arc<CommitGuard>)> {
         let guard=self.record_guard(id,generation);let mut i=self.inner.lock().unwrap();let s=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&(!s.cancel.is_cancelled()||s.phase==SessionPhase::Ready)).ok_or_else(||ApiError::new("cancelled","session","口述已取消").for_session(id,generation))?;
@@ -826,10 +895,12 @@ impl AppHub {
     }
 }
 
-fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,tx:mpsc::Sender<AsrInput>,cancel:CancellationToken,stop:Arc<AtomicBool>)->Result<(CaptureSummary,Vec<i16>)> {
+fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,soft_voice_enabled:bool,tx:mpsc::Sender<AsrInput>,cancel:CancellationToken,stop:Arc<AtomicBool>)->Result<(CaptureSummary,Vec<i16>)> {
     let trace=hub.trace(id,generation);let mut bridge_peak=0;let mut bridge=BridgeTelemetry::default();
     if cancel.is_cancelled(){return Err(ApiError::new("cancelled","audio","采音开始前已取消"));}
-    let mut capture=CaptureHandle::start(device)?;
+    use platform::audio_conditioner::ConditioningMode;
+    let profile=if soft_voice_enabled {ConditioningMode::SoftVoice} else {ConditioningMode::Bypass};
+    let mut capture=CaptureHandle::start_with_conditioning(device,profile)?;
     let mut cache=Vec::new();let mut stop_started=None;let mut network_closed=false;let mut pending_frame=None;let mut limit_reached=false;
     loop {
         if cancel.is_cancelled(){capture.cancel();hub.diagnostics.mark(trace.as_ref(),Stage::CaptureCutoff);stop_started.get_or_insert(Instant::now());}
@@ -853,6 +924,7 @@ fn pump_audio(hub:&Arc<AppHub>,id:&str,generation:u64,device:Option<&str>,tx:mps
                 Ok(summary)=>{
                     hub.diagnostics.mark(trace.as_ref(),Stage::CaptureDrained);
                     hub.diagnostics.capture(trace.as_ref(),summary.captured_samples,summary.input_sample_rate,summary.emitted_frames,summary.complete,summary.cancelled);
+                    if let Some(metadata)=summary.conditioning.as_ref(){hub.diagnostics.conditioning(trace.as_ref(),metadata);}
                     if limit_reached {return Err(ApiError::new("recording_limit","audio","已到本次录音时长上限。已有字幕可复制；本次不会自动整理或输入，请重新口述剩余内容。"));}
                     let deadline=at+Duration::from_secs(5);
                     if let Some(frame)=pending_frame.take(){if !network_closed&&!cancel.is_cancelled(){send_bounded(&tx,frame,&cancel,deadline,&hub.diagnostics,trace.as_ref(),&mut bridge)?;}}

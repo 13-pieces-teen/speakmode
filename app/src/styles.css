@@ -45,11 +45,11 @@ svg { flex-shrink: 0; }
   --radius-4: 10px;
   --radius-5: 16px;
   color: var(--sm-ink);
-  background: var(--sm-canvas);
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
+.radix-themes[data-is-root-theme='true'] { background: var(--sm-canvas); }
 [data-accent-color='blue'] {
   --accent-9: #316bd6;
   --accent-10: #285fc4;

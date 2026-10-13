@@ -1,0 +1,97 @@
+{
+  "version": "0.2.16",
+  "date": "2026-10-11",
+  "scope": "fixed-text cloud experiments, no fresh audio or native input",
+  "cloudRequests": 43,
+  "automaticRetries": 0,
+  "reviewV1": {
+    "cases": 8,
+    "accepted": 0,
+    "minMs": 3490,
+    "maxMs": 6713,
+    "promoted": false
+  },
+  "reviewV2Development": {
+    "cases": 8,
+    "expectationsMet": 7,
+    "knownMiss": "Unchanged filler-heavy candidate incorrectly accepted as sufficiently cleaned"
+  },
+  "reviewV2Holdout": {
+    "cases": 14,
+    "expectationsMet": 14,
+    "validAccepted": 7,
+    "invalidRejected": 7,
+    "minMs": 659,
+    "maxMs": 1984
+  },
+  "fullFlow": {
+    "cases": 6,
+    "calls": 11,
+    "acceptedWithin5Seconds": 5,
+    "blindUsable": 5,
+    "blindFidelityPass": 6,
+    "blindCleanupPass": 6,
+    "blindLayoutPass": 5,
+    "acceptedMinMs": 1690,
+    "acceptedMaxMs": 2288,
+    "unresolved": "Long resume: fact admission false rejection, insufficient paragraph layout"
+  },
+  "gate": {
+    "region": "beijing",
+    "model": "qwen3.8-flash",
+    "baseMode": "auto",
+    "rules": "empty"
+  },
+  "engineering": {
+    "rustPassed": 691,
+    "rustFailed": 0,
+    "rustIgnored": 3,
+    "exporterTests": 32,
+    "deliveryHelperChecks": 20,
+    "typescript": "passed",
+    "nativeInput": "NOT_RUN",
+    "microphone": "NOT_RUN",
+    "package": "EXE/NSIS built, version/hash verified; not launched"
+  },
+  "evidenceSha256": {
+    "user-raw.private.json": "311174bf470fc5c16f5e897b6f15f58e1e20a74bf26bc6ce82d1ddc4964d23d0",
+    "dev-review.json": "977b43f311f30de31fba79ddcaff460137db0644a12678511780a2f2c106f7cb",
+    "dev-review-v2.json": "ccd06e988113377898ab45568c6a630e5783dcff20fe9e97933269510a39cb09",
+    "holdout-review-v2.json": "ada8ddb977dfc67191d1dba480b3dd7e8650ed67e5f8c38511e87d1b59040ee0",
+    "flow-results.private.json": "d5b64243b28af3be432267ac2234bf5dc68a90fa12e09f2137ebee713dd79559",
+    "blind-flow.private.json": "4ddd54e99034117c8f63dde5a3e56ecb20870d454c6cb237cddfe87ca836415f",
+    "blind-flow-review.private.json": "8bf6aead73900219e97e70f80988a9431b711b7b6c245b12eb1c67f38882fb7a"
+  },
+  "release": {
+    "version": "0.2.16",
+    "frontendVersion": "0.4.15",
+    "releaseDate": "2026-10-11",
+    "artifacts": [
+      {
+        "name": "SpeakMode.exe",
+        "bytes": 18619392,
+        "sha256": "d87b3dbe635f6813a87bb70741d64a4f5840b8c66c2970ee1dcf6268ce874a66",
+        "productVersion": "0.2.16",
+        "fileVersion": "0.2.16"
+      },
+      {
+        "name": "SpeakMode_0.2.16_x64-setup.exe",
+        "bytes": 5721055,
+        "sha256": "e28d0225f9ae061a0085fc90794bfb474ffe7e0a0697409c43c165e423f81a23",
+        "productVersion": "0.2.16",
+        "fileVersion": "0.2.16"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 197,
+    "thirdPartyFilesVerified": 14,
+    "resourceManifestCopied": true,
+    "launcherSyntaxValid": true,
+    "profile": "existing installed LocalApplicationData/dev.speakmode.desktop",
+    "userProfileWrittenDuringBuild": false,
+    "appLaunched": false,
+    "installerLaunched": false,
+    "actualNativeDelivery": "NOT_RUN",
+    "gitPushed": false
+  }
+}

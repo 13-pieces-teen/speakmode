@@ -1,0 +1,124 @@
+{
+  "date": "2026-10-10",
+  "version": "0.2.8",
+  "frontendVersion": "0.4.7",
+  "scope": "offline engineering and synthetic UI; not human recognition quality",
+  "rustLibrary": {
+    "passed": 523,
+    "failed": 0,
+    "ignored": 3
+  },
+  "voiceLabExample": {
+    "passed": 7,
+    "failed": 0
+  },
+  "python": {
+    "quality": 24,
+    "diagnosticExport": 26
+  },
+  "browser": {
+    "viewports": [
+      "1280x800",
+      "800x600"
+    ],
+    "scenariosPerViewport": 9,
+    "errors": 0,
+    "externalRequests": 0,
+    "persistence": "synthetic bridge; SQLite persistence separately covered by Rust"
+  },
+  "syntheticProbe": {
+    "profile": "debug",
+    "checksPassed": true,
+    "signalCount": 6,
+    "arms": 3,
+    "results": [
+      {
+        "signal": "low-voiced-harmonic",
+        "rmsDeltaDb": 11.4603,
+        "inputRmsDbfs": -53.5499,
+        "outputRmsDbfs": -42.0895,
+        "outputPeakDbfs": -34.6802,
+        "outputClippedSamples": 0,
+        "maxChunkProcessingUs": 36,
+        "samples": 48000
+      },
+      {
+        "signal": "normal-voice-surrogate",
+        "rmsDeltaDb": 2.9171,
+        "inputRmsDbfs": -24.0074,
+        "outputRmsDbfs": -21.0903,
+        "outputPeakDbfs": -14.2496,
+        "outputClippedSamples": 0,
+        "maxChunkProcessingUs": 54,
+        "samples": 48000
+      },
+      {
+        "signal": "pure-silence",
+        "rmsDeltaDb": 0.0,
+        "inputRmsDbfs": -120.0,
+        "outputRmsDbfs": -120.0,
+        "outputPeakDbfs": -120.0,
+        "outputClippedSamples": 0,
+        "maxChunkProcessingUs": 32,
+        "samples": 32000
+      },
+      {
+        "signal": "stationary-low-broadband-noise",
+        "rmsDeltaDb": 0.0,
+        "inputRmsDbfs": -67.8665,
+        "outputRmsDbfs": -67.8665,
+        "outputPeakDbfs": -63.0983,
+        "outputClippedSamples": 0,
+        "maxChunkProcessingUs": 38,
+        "samples": 32000
+      },
+      {
+        "signal": "soft-to-loud-jump",
+        "rmsDeltaDb": -0.6201,
+        "inputRmsDbfs": -8.1354,
+        "outputRmsDbfs": -8.7555,
+        "outputPeakDbfs": -1.0,
+        "outputClippedSamples": 0,
+        "maxChunkProcessingUs": 37,
+        "samples": 48000
+      },
+      {
+        "signal": "short-tail",
+        "rmsDeltaDb": 8.6911,
+        "inputRmsDbfs": -55.5604,
+        "outputRmsDbfs": -46.8693,
+        "outputPeakDbfs": -37.2208,
+        "outputClippedSamples": 0,
+        "maxChunkProcessingUs": 32,
+        "samples": 1701
+      }
+    ]
+  },
+  "humanQuietSpeech": "NOT_RUN",
+  "cloudRequests": 0,
+  "microphoneAccessed": false,
+  "appLaunched": false,
+  "installerLaunched": false,
+  "modelOrPromptChanged": false,
+  "evidenceDirectory": "D:\\Codex_Project\\SpeakMode_Dev\\evidence\\soft-voice-0.2.8-2026-10-10",
+  "package": {
+    "exitCode": 0,
+    "directory": "D:\\Codex_Project\\SpeakMode_Dev\\output\\releases\\2026-10-10-soft-voice-0.2.8",
+    "artifacts": [
+      {
+        "name": "SpeakMode.exe",
+        "bytes": 18208768,
+        "sha256": "60b4c38b3223b41e661cad633b32886a08e725e0e1d732b8ac655ba44a45026f"
+      },
+      {
+        "name": "SpeakMode_0.2.8_x64-setup.exe",
+        "bytes": 5605637,
+        "sha256": "4775cd18088f775a934653ead95f187d42d7ee9c9788f678579169849195bd07"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 169,
+    "thirdPartyFilesVerified": 13,
+    "cacheGiB": 5.383
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "status": "FROZEN_TEXT_PROBES_NOT_HUMAN_AUDIO",
+  "sourceType": "original_synthetic_text_except_user_supplied_P01",
+  "baseFixture": "dictation-experience-v1.dev.json",
+  "baseCaseCount": 8,
+  "additionalCaseCount": 4,
+  "dictionaryTerms": ["Typeless", "GitHub", "SpeakMode"],
+  "scope": "Combined candidate prompt, dictionary context and candidate parser versus unchanged baseline request/parser, using the same configured model. This is not a prompt-only causal test or a Typeless audio comparison.",
+  "referencePolicy": "Human semantic review of generated candidate and projected final text is required. Parser acceptance is not semantic success; do not use Typeless output as ground truth.",
+  "cases": [
+    {
+      "id": "P01",
+      "split": "dev",
+      "category": "用户提供的成稿、停顿词、禁止猜测专名",
+      "sourceType": "user_supplied_speakmode_output_without_original_audio",
+      "spokenScript": "你好啊，就是呃刚刚同样的一段话，我现在用这个 typeless 还有这个呃我们的 swing mode 一起用，然后嗯看一下两者它的一个区别。",
+      "mustPreserve": [
+        "问候及比较两款产品的意图",
+        "来源写的是 typeless 和 swing mode；没有音频，不能把后者推断为 SpeakMode",
+        "看一下区别，没有具体比较结论"
+      ],
+      "allowedCleanup": [
+        "删除停顿性的呃、嗯及冗余这个",
+        "将与词典字母拼写完全相同的 typeless 规范为 Typeless",
+        "改善断句和中英文间距；问候不要求唯一标点"
+      ],
+      "mustNotDo": [
+        "把 swing mode 改成 SpeakMode、Speed Mode 或其他名字",
+        "捏造比较结论",
+        "把这个例子当成同音频 ASR 正确率证据"
+      ]
+    },
+    {
+      "id": "P02",
+      "split": "dev",
+      "category": "精确字母匹配的品牌大小写",
+      "spokenScript": "嗯，我把 typeless 和 speakmode 的对比先记在 github 上，啊，等有实际计时以后再补结果，现在还不知道谁更快。",
+      "mustPreserve": [
+        "产品与平台字母分别为 typeless、speakmode、github，可以使用词典标准大小写",
+        "先记对比，实际计时之后才补结果",
+        "当前不知道谁更快"
+      ],
+      "allowedCleanup": [
+        "将精确字母匹配规范为 Typeless、SpeakMode、GitHub",
+        "删除嗯、停顿性啊",
+        "自然断句"
+      ],
+      "mustNotDo": [
+        "声称已经计时或已经得出谁更快",
+        "实际创建 GitHub 内容",
+        "把产品名称相似读音替换当成大小写规范化"
+      ]
+    },
+    {
+      "id": "P03",
+      "split": "dev",
+      "category": "代码标识符大小写不可归一",
+      "spokenScript": "呃，这里有两个不同的字段，userID 里的 ID 都是大写，userId 只有 I 大写、d 小写。旧接口返回 userID，新接口返回 userId，先别把它们合并，也不要直接全转成小写。",
+      "mustPreserve": [
+        "userID 和 userId 是两个不同字段",
+        "userID 中 I 与 D 均大写；userId 中 I 大写且 d 小写",
+        "旧接口对应 userID，新接口对应 userId",
+        "暂不合并，不直接全部转成小写"
+      ],
+      "allowedCleanup": [
+        "删除停顿性的呃",
+        "改善断句和标识符前后间距"
+      ],
+      "mustNotDo": [
+        "统一两个标识符大小写",
+        "交换新旧接口对应字段",
+        "把所有 ID 当成通用缩写批量替换"
+      ]
+    },
+    {
+      "id": "P04",
+      "split": "dev",
+      "category": "有意义应答与逐字引文不机械删除",
+      "spokenScript": "她问我是不是同意，我回答嗯，表示答应了。然后录音里的原话是“呃，我还没决定”，这句要逐字保留，不能因为有呃就删掉。嗯，最后记一下，这两个人的态度不一样。",
+      "mustPreserve": [
+        "我用嗯作肯定回答，表示同意",
+        "原话“呃，我还没决定”要求逐字保留，包括呃",
+        "引文说话者尚未决定，不能被改成同意",
+        "两个人态度不同"
+      ],
+      "allowedCleanup": [
+        "删除最后记一下前作为停顿的嗯",
+        "为肯定应答添加引号以改善可读性",
+        "调整引文外的标点"
+      ],
+      "mustNotDo": [
+        "机械删除所有嗯或呃",
+        "改写逐字引文",
+        "把两个人都写成同意或都未决定"
+      ]
+    }
+  ]
+}

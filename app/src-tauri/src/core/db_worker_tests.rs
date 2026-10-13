@@ -71,7 +71,7 @@ fn source(id: &str) -> SourceRevision {
 fn output(id: &str) -> OutputRevision {
     OutputRevision { id: format!("output-{id}"), session_id: id.into(),
         parent_revision_id: None, base_revision_id: None, source_revision_id: format!("source-{id}"),
-        mode_snapshot: seed(id, StoragePolicy::History).mode_snapshot, resolved_mode: BaseMode::Light,
+        mode_snapshot: seed(id, StoragePolicy::History).mode_snapshot, resolved_mode: BaseMode::Light, rewrite_fallback: None,
         blocks: vec![
             OutputBlock { id: "block-1".into(), text: "会议未确认前，不要订机票。Hello 12 🙂".into(),
                 source_refs: vec![format!("item-{id}-1")] },
@@ -729,4 +729,145 @@ async fn sibling_operation_cancel_does_not_wait_forever_on_another_operations_co
     lock.execute_batch("ROLLBACK;").unwrap();drop(lock);wait(&pending).await.unwrap();
     assert_eq!(first.cancel(),CancelDecision::AlreadyCompleted);assert!(!parent.is_cancelled());
     assert_eq!(usage(&h.db).await.count,1);stop(&h.db).await;
+}
+
+#[tokio::test]
+async fn model_upgrade_bootstrap_snapshot_persists_and_preserves_manual_revert_on_restart() {
+    let file = DbPath::new();
+    let (old, preferences, dictionary, history) = {
+        let mut store = Store::open(&file.0).unwrap();
+        let old = store.save_provider_config(ProviderConfig {
+            region: Some("beijing".into()), workspace: Some("keep-workspace".into()),
+            rewrite_model: "qwen-flash".into(), ..ProviderConfig::default()
+        }, 1).unwrap();
+        let preferences = store.save_preferences(Preferences { language: "en".into(), ..Preferences::default() }, 1).unwrap();
+        let dictionary = store.import_dictionary(vec!["SpeakMode".into(), "项目术语".into()], 1).unwrap();
+        store.checkpoint_source(seed("model-upgrade-history", StoragePolicy::History), source("model-upgrade-history")).unwrap();
+        let history = store.commit_ready(output("model-upgrade-history")).unwrap();
+        (old, preferences, dictionary, history)
+    };
+    let upgraded = ProviderConfig { version: old.version + 1, rewrite_model: "qwen3.8-flash".into(), ..old.clone() };
+    let db = DbClient::open_with_options(&file.0, options()).unwrap();
+    let snapshot = db.snapshot();
+    assert_eq!(snapshot.provider_config, upgraded);
+    assert_eq!(snapshot.preferences, preferences);
+    assert_eq!(snapshot.dictionary, dictionary);
+    assert_eq!(as_detail(invoke(&db, DbCommand::GetResult { session_id: "model-upgrade-history".into() }, None).await.unwrap()), history);
+    assert_eq!(usage(&db).await.count, 1);
+    match invoke(&db, DbCommand::ProviderConfig, None).await.unwrap() {
+        DbValue::ProviderConfig(config) => assert_eq!(config, upgraded),
+        other => panic!("expected provider config, got {other:?}"),
+    }
+    assert!(matches!(invoke(&db, DbCommand::SaveProviderConfig { config: old.clone(), expected_version: old.version }, None).await,
+        Err(StoreError::Conflict { current }) if current == upgraded.version.to_string()));
+    stop(&db).await;
+    let db = DbClient::open_with_options(&file.0, options()).unwrap();
+    assert_eq!(db.snapshot().provider_config, upgraded);
+    let reverted = match invoke(&db, DbCommand::SaveProviderConfig { config: old, expected_version: upgraded.version }, None).await.unwrap() {
+        DbValue::ProviderConfig(config) => config,
+        other => panic!("expected saved provider config, got {other:?}"),
+    };
+    assert_eq!(reverted.version, upgraded.version + 1);
+    assert_eq!(reverted.rewrite_model, "qwen-flash");
+    assert_eq!(db.snapshot().provider_config, reverted);
+    stop(&db).await;
+    let db = DbClient::open_with_options(&file.0, options()).unwrap();
+    assert_eq!(db.snapshot().provider_config, reverted);
+    assert_eq!(db.snapshot().dictionary, dictionary);
+    stop(&db).await;
+    let connection = file.connect();
+    let (version, data): (u64, String) = connection.query_row("SELECT version,data FROM provider_config", [],
+        |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(version, reverted.version);
+    assert_eq!(serde_json::from_str::<ProviderConfig>(&data).unwrap(), reverted);
+    assert_eq!(count(&connection, "app_upgrades"), 1);
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 2);
+}
+
+#[tokio::test]
+async fn model_upgrade_bootstrap_fails_without_exposing_a_partial_upgrade_and_retries_cleanly() {
+    let file = DbPath::new();
+    let old = {
+        let mut store = Store::open(&file.0).unwrap();
+        let old = store.save_provider_config(ProviderConfig {
+            region: Some("beijing".into()), rewrite_model: "qwen-flash".into(), ..ProviderConfig::default()
+        }, 1).unwrap();
+        store.test_connection().execute_batch("CREATE TABLE app_upgrades(key TEXT PRIMARY KEY NOT NULL);
+            CREATE TRIGGER reject_bootstrap_upgrade BEFORE INSERT ON app_upgrades BEGIN SELECT RAISE(ABORT,'test bootstrap failure'); END;").unwrap();
+        old
+    };
+    assert!(matches!(DbClient::open_with_options(&file.0, options()), Err(StoreError::Database(_))));
+    {
+        let store = Store::open(&file.0).unwrap();
+        assert_eq!(store.provider_config().unwrap(), old);
+        assert_eq!(store.test_connection().query_row("SELECT version FROM provider_config", [], |row| row.get::<_, u64>(0)).unwrap(), old.version);
+        assert_eq!(count(store.test_connection(), "app_upgrades"), 0);
+        store.test_connection().execute_batch("DROP TRIGGER reject_bootstrap_upgrade;").unwrap();
+    }
+    let db = DbClient::open_with_options(&file.0, options()).unwrap();
+    assert_eq!(db.snapshot().provider_config, ProviderConfig { version: old.version + 1, rewrite_model: "qwen3.8-flash".into(), ..old });
+    stop(&db).await;
+}
+
+#[tokio::test]
+async fn provider_config_receipt_updates_session_snapshot_even_when_full_refresh_fails() {
+    let h = Harness::new(options());
+    let original = h.db.snapshot().provider_config;
+    let DbValue::ProviderConfig(saved) = invoke(&h.db, DbCommand::SaveProviderConfig {
+        config: ProviderConfig { region: Some("beijing".into()), rewrite_model: "qwen-flash".into(), ..original.clone() },
+        expected_version: original.version,
+    }, None).await.unwrap() else { panic!("expected provider config"); };
+    invoke(&h.db, DbCommand::TestExecuteBatch {
+        sql: "ALTER TABLE preferences RENAME TO unavailable_preferences;".into(),
+    }, None).await.unwrap();
+    assert!(h.db.cache_error().is_some());
+    let before = h.db.snapshot();
+    let selected = ProviderConfig { region: Some("singapore".into()), workspace: Some("selected-workspace".into()),
+        rewrite_model: "qwen3.7-plus".into(), ..saved.clone() };
+    let DbValue::ProviderConfig(receipt) = invoke(&h.db, DbCommand::SaveProviderConfig {
+        config: selected.clone(), expected_version: saved.version,
+    }, None).await.unwrap() else { panic!("expected provider config"); };
+    assert_eq!(receipt, ProviderConfig { version: saved.version + 1, ..selected });
+    let committed = h.db.snapshot();
+    assert!(h.db.cache_error().is_some());
+    assert_eq!(committed.provider_config, receipt);
+    assert_eq!(committed.revision, before.revision + 1);
+    assert_eq!(committed.preferences, before.preferences);
+    assert_eq!(committed.dictionary, before.dictionary);
+    assert_eq!(committed.usage, before.usage);
+    let verify = h.file.connect();
+    let (version, data): (u64, String) = verify.query_row("SELECT version,data FROM provider_config", [],
+        |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    assert_eq!(version, receipt.version);
+    assert_eq!(serde_json::from_str::<ProviderConfig>(&data).unwrap(), receipt);
+
+    // Neither optimistic-concurrency failure nor a SQL write failure may publish a draft.
+    assert!(matches!(invoke(&h.db, DbCommand::SaveProviderConfig {
+        config: saved.clone(), expected_version: saved.version,
+    }, None).await, Err(StoreError::Conflict { current }) if current == receipt.version.to_string()));
+    assert_eq!(h.db.snapshot().provider_config, receipt);
+    assert_eq!(h.db.snapshot().revision, committed.revision);
+    invoke(&h.db, DbCommand::TestExecuteBatch {
+        sql: "CREATE TRIGGER reject_provider_save BEFORE UPDATE ON provider_config BEGIN SELECT RAISE(ABORT,'test save failure'); END;".into(),
+    }, None).await.unwrap();
+    assert!(matches!(invoke(&h.db, DbCommand::SaveProviderConfig {
+        config: saved, expected_version: receipt.version,
+    }, None).await, Err(StoreError::Database(_))));
+    assert_eq!(h.db.snapshot().provider_config, receipt);
+    assert_eq!(h.db.snapshot().revision, committed.revision);
+    match invoke(&h.db, DbCommand::ProviderConfig, None).await.unwrap() {
+        DbValue::ProviderConfig(config) => assert_eq!(config, receipt),
+        other => panic!("expected stored provider config, got {other:?}"),
+    }
+    drop(verify);
+    invoke(&h.db, DbCommand::TestExecuteBatch {
+        sql: "DROP TRIGGER reject_provider_save; ALTER TABLE unavailable_preferences RENAME TO preferences;".into(),
+    }, None).await.unwrap();
+    assert!(h.db.cache_error().is_none());
+    assert_eq!(h.db.snapshot().provider_config, receipt);
+    assert!(h.db.snapshot().revision > committed.revision);
+    stop(&h.db).await;
+    let reopened = DbClient::open_with_options(&h.file.0, options()).unwrap();
+    assert_eq!(reopened.snapshot().provider_config, receipt);
+    stop(&reopened).await;
 }

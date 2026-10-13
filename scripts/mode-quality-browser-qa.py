@@ -58,7 +58,9 @@ EXTRA_BRIDGE = r"""
   return {...metadata,...output(payload.draft.baseMode)};
  }
  q.resolvePreviews=()=>q.pendingPreview.splice(0).forEach(item=>item.resolve(copy(item.value)));
+ q.advanceOutput=()=>{const d=q.fixture.details[0];d.output={...d.output,id:'qa-external-edit',blocks:[{id:'qa-newer',text:'候选生成后的外部改稿。',sourceRefs:d.source.items.map(i=>i.id)}]};d.session.currentOutputId=d.output.id;q.fixture.snapshot.sequence++;q.channel.onmessage({sequence:q.fixture.snapshot.sequence,kind:'history.changed',payload:null});};
  window.__TAURI_INTERNALS__.invoke=async(command,args={})=>{
+  if(command==='subscribe_state'){q.channel=args.channel;return previous(command,args);}
   if(command!=='app_command')return previous(command,args);
   const {name,payload}=args.request;
   if(!['mode.preview','mode.cancelPreview','history.rewrite','history.cancelCandidate','revision.edit'].includes(name))return previous(command,args);
@@ -134,7 +136,6 @@ def generate_candidate(page):
     page.get_by_role("button", name="换种整理", exact=True).click()
     page.get_by_role("button", name="生成候选", exact=True).click()
     expect(page.get_by_role("heading", name="新候选", exact=True)).to_be_visible()
-    page.get_by_role("button", name="对比生成前文本", exact=True).click()
     region = page.get_by_role("region", name="候选改动对照", exact=True)
     expect(region).to_be_visible()
     return region
@@ -331,25 +332,26 @@ def acceptance(browser, args, rows, errors, external):
 
     def candidate_changes(page):
         region = generate_candidate(page)
-        expect(region.locator("mark.history-source-diff").first).to_be_visible()
-        expect(region.locator("mark.history-current-diff").first).to_be_visible()
-        before = region.locator(".history-sentence-line").first.inner_text()
-        page.get_by_role("button", name="手动修改", exact=True).click()
-        page.get_by_role("textbox", name="编辑当前文本", exact=True).fill("这是候选生成后的手动改稿，不应替换对照基线。")
-        page.get_by_role("button", name="保存修改", exact=True).click()
-        expect(page.get_by_role("button", name="采用这个版本", exact=True)).to_be_disabled()
-        expect(page.get_by_role("alert")).to_contain_text("当前版本已改变")
-        assert region.locator(".history-sentence-line").first.inner_text() == before
-        expect(page.locator(".history-current")).to_contain_text("候选生成后的手动改稿")
-        return {"changedCharactersVisible": True, "frozenBaselineAfterManualEdit": True, "staleAdoptionDisabled": True}
+        expect(region.locator("del").first).to_be_visible()
+        expect(region.locator("ins").first).to_be_visible()
+        before = page.evaluate("window.__speakmodeQA.fixture.details[0].output.blocks.map(b=>b.text).join('\\n\\n')")
+        expect(page.get_by_role("button", name="手动修改", exact=True)).to_be_disabled()
+        page.evaluate("window.__speakmodeQA.advanceOutput()")
+        expect(page.get_by_role("button", name="保存这个版本", exact=True)).to_be_disabled()
+        expect(page.locator(".history-candidate")).to_contain_text("当前版本已变化")
+        page.get_by_role("button", name="保留全部原文", exact=True).click()
+        page.get_by_role("button", name="编辑文本", exact=True).click()
+        expect(page.get_by_role("textbox", name="编辑候选文本", exact=True)).to_have_value(before)
+        expect(page.locator(".history-current")).to_contain_text("候选生成后的外部改稿")
+        return {"changedCharactersVisible": True, "frozenBaselineAfterExternalEdit": True, "staleAdoptionDisabled": True}
 
     case("candidate-diff-frozen-baseline", candidate_changes)
 
     def same_candidate(page):
         page.evaluate("window.__speakmodeQA.sameCandidate=true")
         region = generate_candidate(page)
-        expect(region).to_contain_text("两份文本相同")
-        expect(region.locator("mark")).to_have_count(0)
+        expect(page.locator(".candidate-change-count")).to_have_text("与生成前相同")
+        expect(region.locator("del,ins")).to_have_count(0)
         return {"identicalOutputDoesNotPretendDifference": True}
 
     case("candidate-identical-output", same_candidate, 430, 720)
@@ -357,8 +359,8 @@ def acceptance(browser, args, rows, errors, external):
     def long_candidate(page):
         page.evaluate("window.__speakmodeQA.longCandidate=true")
         region = generate_candidate(page)
-        expect(region).to_contain_text("整体标色")
-        expect(region).to_contain_text("不表示每个字都被改动")
+        expect(page.locator(".history-candidate")).to_contain_text("本次按整段对照")
+        expect(region).to_contain_text("长文本候选。")
         return {"boundedDiffFallbackExplained": True}
 
     case("candidate-long-diff-fallback", long_candidate)

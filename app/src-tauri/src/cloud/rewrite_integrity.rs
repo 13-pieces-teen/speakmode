@@ -11,6 +11,30 @@ use std::collections::HashSet;
 
 #[path = "rewrite_facts.rs"]
 mod facts;
+#[path = "rewrite_semantics.rs"]
+mod semantics;
+#[path = "rewrite_disfluency.rs"]
+mod disfluency;
+#[path = "rewrite_quantity_roles.rs"]
+mod quantity_roles;
+#[path = "rewrite_review_admission.rs"]
+mod review_admission;
+use semantics::{analysis_spans as effective_spans, Span};
+
+/// Experimental precheck only; success still requires independent semantic review.
+pub(super) fn review_admission(source: &SourceRevision, blocks: &[OutputBlock]) -> Result<(), CloudError> {
+    review_admission::validate(source, blocks)
+}
+
+/// Offline experiment evidence only. Never called by acceptance or delivery.
+pub(super) fn admission_evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> serde_json::Value {
+    review_admission::evidence(source, blocks)
+}
+
+/// Known dimensions that an experimental reviewer may not mark not-applicable.
+pub(super) fn review_required_evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> (bool, bool) {
+    review_admission::required_evidence(source, blocks)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Kind {
@@ -25,11 +49,24 @@ enum Kind {
     NegativeFact,
     NegativeStatus,
     Negative,
+    AbilityQuestion,
+    PolarQuestion,
+    QuantityOnly,
 }
 
 // Longest matching phrase wins. Do not treat a syllable inside a longer
 // qualifier (e.g. 不 in 不确定) as an independent negation.
 const PHRASES: &[(&str, Kind)] = &[
+    ("是不是能够", Kind::AbilityQuestion), ("是不是可以", Kind::AbilityQuestion), ("是不是能", Kind::AbilityQuestion),
+    ("能不能", Kind::AbilityQuestion), ("能否", Kind::AbilityQuestion),
+    ("是否能够", Kind::AbilityQuestion), ("是否可以", Kind::AbilityQuestion), ("是否能", Kind::AbilityQuestion),
+    ("可不可以", Kind::AbilityQuestion),
+    // Consume the complete polar question marker: 没有 inside 有没有 and
+    // 不是 inside 是不是 are alternatives being asked about, not assertions.
+    // The longer ability questions above still win; 是否没有 retains the
+    // independent 没有 anchor after the question marker.
+    ("有没有", Kind::PolarQuestion), ("是不是", Kind::PolarQuestion), ("是否", Kind::PolarQuestion),
+    ("先不", Kind::Prohibition),
     ("今天", Kind::Time(0)), ("今日", Kind::Time(0)),
     ("明天", Kind::Time(1)), ("明日", Kind::Time(1)),
     ("昨天", Kind::Time(2)), ("昨日", Kind::Time(2)),
@@ -71,57 +108,18 @@ const PHRASES: &[(&str, Kind)] = &[
 const NON_ANCHORS: &[&str] = &[
     "不仅", "不但", "不错", "不少", "不妨", "不如", "不止", "不得不", "不约而同", "不久", "不管", "无论",
     "特别", "分别", "个别", "别的", "别人", "别处", "别名", "没错", "没关系", "没事儿", "not only",
+    // These complete lexical words contain 别 without expressing prohibition.
+    // Skip only the word itself: adjacent 别/不要/不 remain independent anchors.
+    "区别", "差别",
 ];
 const CORRECTIONS: &[&str] = &["不对", "说错了", "我说错了", "更正一下", "更正为", "改口", "准确地说"];
 const FILLERS: &[&str] = &["嗯", "呃", "啊", "那个", "这个", "就是说", "就是", "然后", "我说"];
 
 #[derive(Debug)]
-struct Span<'a> { source_id: &'a str, text: String }
-#[derive(Debug)]
 struct Anchor<'a> { text: &'a str, kind: Kind, start: usize, end: usize }
 
 fn is_separator(c: char) -> bool {
     matches!(c, '，' | ',' | '。' | '.' | '！' | '!' | '？' | '?' | '；' | ';' | '\n' | '\r')
-}
-
-fn effective_spans(source: &SourceRevision) -> Vec<Span<'_>> {
-    let mut spans: Vec<Span<'_>> = Vec::new();
-    for item in &source.items {
-        for raw in facts::clauses(&item.text) {
-            // Only explicit single-target replacements retract part of a clause.
-            // Unrelated locations, conditions and qualifiers remain protected.
-            if let Some((old, replacement)) = partial_correction(raw) {
-                for span in spans.iter_mut().rev() {
-                    if let Some((start, end)) = correction_target(&span.text, old) {
-                        span.text.replace_range(start..end, replacement);
-                        break;
-                    }
-                }
-                spans.push(Span { source_id: &item.id, text: replacement.to_owned() });
-                continue;
-            }
-            // Explicit repairs retract the immediately preceding spoken clause,
-            // including across ASR item boundaries. Never infer corrections from
-            // a contrast such as "不是五千元" or silently delete the old item ID.
-            if let Some(marker) = CORRECTIONS.iter().filter(|marker| raw.starts_with(**marker)).max_by_key(|marker| marker.len()) {
-                while spans.last().is_some_and(|span| FILLERS.contains(&span.text.trim())) { spans.pop(); }
-                spans.pop();
-                let remainder = raw[marker.len()..].trim();
-                if !remainder.is_empty() { spans.push(Span { source_id: &item.id, text: remainder.to_owned() }); }
-            } else {
-                spans.push(Span { source_id: &item.id, text: raw.to_owned() });
-            }
-        }
-    }
-    spans
-}
-
-fn correction_target(text: &str, old: &str) -> Option<(usize, usize)> {
-    if let Some(expected) = anchors(old).first() {
-        return anchors(text).into_iter().rev().find(|anchor| anchor.kind == expected.kind).map(|anchor| (anchor.start, anchor.end));
-    }
-    let expected = facts::extract(old).into_iter().next()?;
-    facts::extract(text).into_iter().rev().find(|fact| fact.key == expected.key).map(|fact| (fact.start, fact.end))
 }
 
 fn partial_correction(raw: &str) -> Option<(&str, &str)> {
@@ -149,6 +147,16 @@ fn anchors(text: &str) -> Vec<Anchor<'_>> {
     let mut offset = 0;
     while offset < text.len() {
         let remainder = &text[offset..];
+        // A week and its day are one date: consuming 下周 first used to hide
+        // 周二, making a Tuesday-to-Wednesday correction invisible.
+        if let Some((length, kind)) = semantics::compound_weekday(remainder) {
+            found.push(Anchor { text: &text[offset..offset + length], kind, start: offset, end: offset + length });
+            offset += length; continue;
+        }
+        if let Some(length) = semantics::quantitative_only(remainder) {
+            found.push(Anchor { text: &text[offset..offset + length], kind: Kind::QuantityOnly, start: offset, end: offset + length });
+            offset += length; continue;
+        }
         let protected = PHRASES.iter().filter(|entry| phrase_at(text, offset, entry.0)).max_by_key(|entry| entry.0.len());
         let neutral = NON_ANCHORS.iter().filter(|phrase| phrase_at(text, offset, phrase)).max_by_key(|phrase| phrase.len());
         if neutral.is_some_and(|phrase| protected.is_none_or(|(candidate, _)| phrase.len() >= candidate.len())) {
@@ -201,7 +209,7 @@ fn scope_text(text: &str) -> String {
     result.push_str(&gap);
     // Remove qualifiers themselves before comparing local subjects/actions. A
     // qualifier on an unrelated bullet cannot satisfy the check by itself.
-    for (from, to) in [("发送", "发"), ("发出", "发"), ("移除", "删除"), ("检测", "检查"), ("对比", "比较"), ("使用", "用"), ("试一下", "试用")] { result = result.replace(from, to); }
+    for (from, to) in [("发送", "发"), ("发出", "发"), ("移除", "删除"), ("检测", "检查"), ("对比", "比较"), ("使用", "用"), ("试一下", "试用"), ("更改", "改"), ("删减", "减少")] { result = result.replace(from, to); }
     // Actual quantities were canonicalized before this scope-only cleanup;
     // remaining 千万/十足 are the finite prose expressions skipped by extract.
     for filler in ["千万", "十足", "首先", "然后", "但是", "不过", "我们", "你们", "他们", "同样", "这个", "那个", "就是说", "就是", "已经", "暂时", "具体", "确认", "确定", "需要", "进行", "可以", "请", "先", "再", "还", "也", "是", "的", "了"] { result = result.replace(filler, " "); }
@@ -283,6 +291,53 @@ fn scope_matches(source: &(HashSet<String>, HashSet<String>), candidate: &(HashS
     chinese.intersection(&output_chinese).count() >= needed
 }
 
+fn numeric_scope_matches(
+    source_text: &str,
+    source: &(HashSet<String>, HashSet<String>),
+    candidate_text: &str,
+    candidate: &(HashSet<String>, HashSet<String>),
+) -> bool {
+    // Chinese single-letter party labels do not survive a bigram intersection:
+    // 甲减少 and 乙减少 share 减少, but are different numeric owners. Keep this
+    // bounded label/action construction distinct even after harmless synonyms.
+    let owner = |text:&str| {
+        let text=text.trim();let first=text.chars().next()?;
+        if !"甲乙丙丁戊己庚辛壬癸".contains(first) {return None;}
+        let tail=text[first.len_utf8()..].trim_start();
+        ["减少","删减","增加","保留","需要","分配","获得","支付"].iter().any(|verb|tail.starts_with(verb)).then_some(first)
+    };
+    if let Some(expected)=owner(source_text) {if owner(candidate_text)!=Some(expected) {return false;}}
+    if scope_matches(source, candidate) { return true; }
+    // Removing pauses before generating bigrams can reduce the match threshold
+    // and accidentally exchange two numeric owners. Keep that existing path
+    // untouched; the fallback compares the complete normalized local scopes.
+    // Values, units and numeric negation are still checked by both callers.
+    exact_numeric_scope_matches(source_text, candidate_text)
+}
+
+fn exact_numeric_scope_matches(source: &str, candidate: &str) -> bool {
+    let normalized = |text: &str| {
+        let text = text.replace(['嗯', '呃', '啊'], "");
+        let mut text = text.trim_end().to_owned();
+        // A repeated neutral pronoun after an explicit collective possessor is
+        // a bounded spoken repair, not a new owner. Apply only at the end of
+        // the numeric prefix and require 的: do not touch an ordinary 他/她/它,
+        // another named possessor, or a continuation such as 它的确不同.
+        'collective: for owner in ["二者", "两者", "双方"] {
+            for pronoun in ["它", "它们"] {
+                let suffix = format!("{owner}{pronoun}的");
+                if let Some(prefix) = text.strip_suffix(&suffix) {
+                    text = format!("{prefix}{owner}的");
+                    break 'collective;
+                }
+            }
+        }
+        scope_text(&text).split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let source = normalized(source);
+    !source.is_empty() && source == normalized(candidate)
+}
+
 fn scoped_candidates(text: &str) -> Vec<String> {
     let mut candidates = Vec::new(); let mut header = String::new();
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
@@ -332,6 +387,11 @@ fn number_is_negative(text: &str, numeric: &[facts::Fact], index: usize) -> bool
     anchors(facts::local_label(text, numeric, index)).iter().any(|anchor| matches!(anchor.kind, Kind::Negative | Kind::NegativeFact | Kind::NegativeStatus | Kind::Prohibition))
 }
 
+fn question_action<'a>(text: &'a str, anchor: &Anchor<'_>) -> Option<&'a str> {
+    let rest = text[anchor.end..].trim_start();
+    ["提交", "上传", "下载", "删除", "打开", "关闭", "保存"].iter().find_map(|verb| rest.starts_with(verb).then(|| &rest[..verb.len()]))
+}
+
 pub(super) fn validate_meaning(source: &SourceRevision, blocks: &[OutputBlock]) -> Result<(), CloudError> {
     // Source completeness and strict citation coverage are checked by the caller
     // before this guard. References here are never modified or guessed.
@@ -340,34 +400,66 @@ pub(super) fn validate_meaning(source: &SourceRevision, blocks: &[OutputBlock]) 
     let candidates = blocks.iter().map(|block| (block, scoped_candidates(&block.text).into_iter().map(|clause| {
         let kinds = anchors(&clause).into_iter().map(|anchor| anchor.kind).collect::<HashSet<_>>();
         let numeric = facts::extract(&clause);
-        let numeric_scopes = numeric.iter().enumerate().map(|(index, fact)| (fact.key.clone(), fingerprints(&facts::local_scope(&clause, &numeric, index)), number_is_negative(&clause, &numeric, index))).collect::<Vec<_>>();
+        let numeric_scopes = numeric.iter().enumerate().map(|(index, fact)| {
+            let scope = facts::local_scope(&clause, &numeric, index);
+            (fact.key.clone(), fingerprints(&scope), scope, number_is_negative(&clause, &numeric, index))
+        }).collect::<Vec<_>>();
         let english_negatives = anchors(&clause).into_iter().filter(|anchor| anchor.text.is_ascii() && anchor.kind == Kind::Negative)
             .map(|anchor| fingerprints(english_negative_scope(&clause, &anchor))).collect::<Vec<_>>();
-        (kinds, fingerprints(&clause), numeric_scopes, english_negatives)
+        let question_actions = anchors(&clause).iter().filter(|anchor| anchor.kind == Kind::AbilityQuestion)
+            .filter_map(|anchor| question_action(&clause, anchor).map(str::to_owned)).collect::<Vec<_>>();
+        (kinds, fingerprints(&clause), numeric_scopes, english_negatives, question_actions)
     }).collect::<Vec<_>>())).collect::<Vec<_>>();
     let spans = effective_spans(source);
-    for span in &spans {
+    let omittable_counts=disfluency::omittable_counts(source,&spans,blocks);
+    if spans.iter().any(|span| span.unresolved_correction) {
+        // The caller has already validated complete source mapping. Keeping the
+        // exact dictated ambiguity is safe only when each block also contains
+        // exactly its cited items; whole-output equality could conceal shifted
+        // source boundaries and break local restore. Do not normalize anything.
+        let mut source_index = 0;
+        let exact = blocks.iter().all(|block| {
+            let mut original = String::new();
+            for reference in &block.source_refs {
+                let Some(item) = source.items.get(source_index) else { return false; };
+                if item.id != *reference { return false; }
+                original.push_str(&item.text); source_index += 1;
+            }
+            original == block.text
+        }) && source_index == source.items.len();
+        // Only this unresolved-correction branch may use identity preservation;
+        // broken cross-item negation still undergoes the normal scope checks.
+        if exact { return Ok(()); }
+        return Err(CloudError::new("rewrite_meaning_risk", "rewrite", "识别稿中的更正对象尚不明确，请核对识别稿后重新整理"));
+    }
+    let quantity_roles=quantity_roles::validate(source,&spans,blocks,&omittable_counts)?;
+    for (span_index,span) in spans.iter().enumerate() {
         let protected = anchors(&span.text);
         let scope = fingerprints(&span.text);
         let english_negative_count = protected.iter().filter(|anchor| anchor.text.is_ascii() && anchor.kind == Kind::Negative).count();
         for anchor in protected {
             let negative_scope = (anchor.text.is_ascii() && anchor.kind == Kind::Negative).then(|| fingerprints(english_negative_scope(&span.text, &anchor)));
-            let retained = candidates.iter().filter(|(block, _)| block.source_refs.iter().any(|id| id == span.source_id)).flat_map(|(_, clauses)| clauses).any(|(kinds, candidate_scope, _, english_negatives)| {
+            let action = (anchor.kind == Kind::AbilityQuestion).then(|| question_action(&span.text, &anchor)).flatten();
+            let retained = candidates.iter().filter(|(block, _)| span.is_cited_by(block)).flat_map(|(_, clauses)| clauses).any(|(kinds, candidate_scope, _, english_negatives, question_actions)| {
                 kinds.iter().any(|candidate| same_kind(anchor.kind, *candidate)) && scope_matches(&scope, candidate_scope)
                     && negative_scope.as_ref().is_none_or(|expected| english_negatives.len() == english_negative_count && english_negatives.iter().any(|candidate| scope_matches(expected, candidate)))
+                    && action.is_none_or(|expected| question_actions.iter().any(|candidate| candidate == expected))
             });
             if !retained { return Err(CloudError::new("rewrite_meaning_risk", "rewrite", "整理结果可能遗漏时间、条件或否定等限定，请核对识别稿或重新整理")); }
         }
         let numeric = facts::extract(&span.text);
         for (index, fact) in numeric.iter().enumerate() {
-            let scope = fingerprints(&facts::local_scope(&span.text, &numeric, index));
+            if omittable_counts.contains(&(span_index,fact.start)) || quantity_roles.source.contains(&(span_index,fact.start)) {continue;}
+            let scope_text = facts::local_scope(&span.text, &numeric, index);
+            let scope = fingerprints(&scope_text);
             let negative = number_is_negative(&span.text, &numeric, index);
-            let retained = candidates.iter().filter(|(block, _)| block.source_refs.iter().any(|id| id == span.source_id)).flat_map(|(_, clauses)| clauses).flat_map(|(_, _, numbers, _)| numbers)
-                .any(|(key, candidate_scope, candidate_negative)| *key == fact.key && negative == *candidate_negative && scope_matches(&scope, candidate_scope));
+            let retained = candidates.iter().filter(|(block, _)| span.is_cited_by(block)).flat_map(|(_, clauses)| clauses).flat_map(|(_, _, numbers, _, _)| numbers)
+                .any(|(key, candidate_scope, candidate_text, candidate_negative)| *key == fact.key && negative == *candidate_negative
+                    && numeric_scope_matches(&scope_text, &scope, candidate_text, candidate_scope));
             if !retained { return Err(CloudError::new("rewrite_meaning_risk", "rewrite", "整理结果可能改变数值、单位或版本，请核对识别稿或重新整理")); }
         }
     }
-    validate_added_facts(&spans, blocks)
+    validate_added_facts(&spans, blocks, &quantity_roles)
 }
 
 // The forward check above cannot detect "budget 3500, tax 500" when only the
@@ -396,23 +488,26 @@ fn adjacent_equivalence(text: &str, numeric: &[facts::Fact], index: usize) -> bo
     text[current.end..].trim_start().starts_with(if opening == '（' { '）' } else { ')' })
 }
 
-fn validate_added_facts(spans: &[Span<'_>], blocks: &[OutputBlock]) -> Result<(), CloudError> {
+fn validate_added_facts(spans: &[Span<'_>], blocks: &[OutputBlock], roles:&quantity_roles::Receipts) -> Result<(), CloudError> {
     let source_facts = spans.iter().flat_map(|span| {
         let numeric = facts::extract(&span.text);
-        numeric.iter().enumerate().filter(|(_, fact)| addition_checked_key(&fact.key)).map(|(index, fact)|
-            (span.source_id, fact.key.clone(), fingerprints(&facts::local_scope(&span.text, &numeric, index)), number_is_negative(&span.text, &numeric, index)))
+        numeric.iter().enumerate().filter(|(_, fact)| addition_checked_key(&fact.key)).map(|(index, fact)| {
+            let scope = facts::local_scope(&span.text, &numeric, index);
+            (span, fact.key.clone(), fingerprints(&scope), scope, number_is_negative(&span.text, &numeric, index))
+        })
             .collect::<Vec<_>>()
     }).collect::<Vec<_>>();
-    for block in blocks {
-        for clause in scoped_candidates(&block.text) {
+    for (block_index,block) in blocks.iter().enumerate() {
+        for (clause_index,clause) in scoped_candidates(&block.text).iter().enumerate() {
             let numeric = facts::extract(&clause);
             let mut directly_supported = vec![false; numeric.len()];
             for (index, fact) in numeric.iter().enumerate().filter(|(_, fact)| addition_checked_key(&fact.key)) {
-                let scope = fingerprints(&facts::local_scope(&clause, &numeric, index));
+                let scope_text = facts::local_scope(&clause, &numeric, index);
+                let scope = fingerprints(&scope_text);
                 let negative = number_is_negative(&clause, &numeric, index);
-                let supported = source_facts.iter().any(|(source_id, key, source_scope, source_negative)|
-                    block.source_refs.iter().any(|id| id == source_id) && *key == fact.key
-                        && *source_negative == negative && scope_matches(source_scope, &scope));
+                let supported = roles.output.contains(&(block_index,clause_index,fact.start)) || source_facts.iter().any(|(span, key, source_scope, source_text, source_negative)|
+                    span.is_cited_by(block) && *key == fact.key
+                        && *source_negative == negative && numeric_scope_matches(source_text, source_scope, &scope_text, &scope));
                 directly_supported[index] = supported;
                 if !supported && !(index > 0 && directly_supported[index - 1] && adjacent_equivalence(&clause, &numeric, index)) {
                     return Err(CloudError::new("rewrite_meaning_risk", "rewrite", "整理结果可能新增数值、单位或版本，请核对识别稿或重新整理"));
@@ -426,6 +521,22 @@ fn validate_added_facts(spans: &[Span<'_>], blocks: &[OutputBlock]) -> Result<()
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "rewrite_semantics_tests.rs"]
+mod semantics_tests;
+
+#[cfg(test)]
+#[path = "rewrite_lexical_tests.rs"]
+mod lexical_tests;
+
+#[cfg(test)]
+#[path = "rewrite_quantity_roles_tests.rs"]
+mod quantity_roles_tests;
+
+#[cfg(test)]
+#[path = "rewrite_grammar_tests.rs"]
+mod grammar_tests;
 
 #[cfg(test)]
 mod tests {
@@ -631,6 +742,103 @@ mod tests {
         assert!(accepted(&["第一条检查麦克风。"], "第1条检查麦克风。"));
         assert!(accepted(&["第1条检查麦克风。"], "第一条检查麦克风。"));
         assert!(accepted(&["第一条检查麦克风。"], "首先检查麦克风。"));
+    }
+    #[test]
+    fn degree_adverb_cleanup_does_not_disable_real_ten_measurements() {
+        for (input, cleaned) in [
+            ("这个体验十分自然。", "这个体验很自然。"),
+            ("这个问题十分清楚。", "这个问题很清楚。"),
+            ("录音十分流畅。", "录音很流畅。"),
+        ] {
+            assert!(facts::extract(input).is_empty(), "degree adverb: {input}");
+            assert!(accepted(&[input], cleaned), "cleanup: {input}");
+        }
+        for (input, changed) in [
+            ("耗时十分。", "耗时五分。"),
+            ("耗时十分钟。", "耗时五分钟。"),
+            ("评分十分。", "评分九分。"),
+            ("十点十分结束。", "十点五分结束。"),
+            ("十分之一会失败。", "五分之一会失败。"),
+            ("延迟十毫秒。", "延迟五毫秒。"),
+            ("体验十分自然，预算十元。", "体验很自然，预算五元。"),
+        ] {
+            assert!(!facts::extract(input).is_empty(), "measurement retained: {input}");
+            assert!(!accepted(&[input], changed), "must reject quantity change: {input}");
+        }
+        assert!(!facts::extract("耗时十分自然结束。").is_empty());
+        assert!(!facts::extract("评分十分清楚标注。").is_empty());
+        assert!(accepted(&["耗时十分钟。"], "耗时600秒。"));
+    }
+    #[test]
+    fn bounded_indefinite_articles_can_be_removed_but_not_real_counts() {
+        for (input, cleaned) in [
+            ("这是一个这样的功能。", "这是这样的功能。"),
+            ("我们希望有一个更好的体验。", "我们希望体验更好。"),
+            ("提供一个很好的体验。", "提供很好的体验。"),
+            ("新界面为同学带来一个比较自然的体验。", "新界面为同学带来比较自然的体验。"),
+            ("团队期待有一个更流畅的体验。", "团队期待体验更流畅。"),
+        ] {
+            assert!(facts::extract(input).is_empty(), "indefinite article: {input}");
+            assert!(accepted(&[input], cleaned), "cleanup: {input}");
+        }
+        for (input, changed) in [
+            ("新增一个功能。", "新增功能。"),
+            ("需要一个这样的功能。", "需要这样的功能。"),
+            ("仅一个这样的功能。", "仅这样的功能。"),
+            ("每次提供一个更好的体验。", "每次提供更好的体验。"),
+            ("至少有一个这样的功能。", "有这样的功能。"),
+            ("实际是一个这样的功能。", "实际是这样的功能。"),
+            ("总数是一个这样的功能。", "总数是这样的功能。"),
+            ("恰好是一个这样的功能。", "恰好是这样的功能。"),
+            ("这是一个这样的功能就够了。", "这是这样的功能就够了。"),
+            ("这是1个这样的功能。", "这是这样的功能。"),
+        ] {
+            assert!(!facts::extract(input).is_empty(), "asserted count retained: {input}");
+            assert!(!accepted(&[input], changed), "must reject count omission: {input}");
+        }
+        assert!(!accepted(&["这是一个这样的功能。"], "这是两个这样的功能。"));
+        assert!(!accepted(&["我们希望有一个更好的体验。"], "我们希望有两个更好的体验。"));
+        assert!(!accepted(&["这不是一个这样的功能。"], "这是这样的功能。"));
+        assert!(accepted(&["我们在录音后。", "希望有一个更顺畅的体验。"], "我们希望录音后体验更顺畅。"));
+        assert!(!accepted(&["我们在录音后。", "实际需要一个新功能。"], "我们在录音后实际需要新功能。"));
+    }
+    #[test]
+    fn explicit_clock_fields_survive_without_becoming_decimals_or_prose() {
+        for spelling in ["十点十分结束。", "10点10分结束。", "10:10结束。"] {
+            assert_eq!(facts::extract(spelling)[0].key, "clock:10:10");
+            assert!(accepted(&["十点十分结束。"], spelling));
+        }
+        for changed in ["十点五分结束。", "九点十分结束。", "10:11结束。", "结束。"] {
+            assert!(!accepted(&["十点十分结束。"], changed), "clock change: {changed}");
+        }
+        assert_eq!(facts::extract("耗时十点五分钟。")[0].key, "millisecond:630000");
+        assert!(accepted(&["耗时十点五分钟。"], "耗时630秒。"));
+        assert!(!accepted(&["耗时十点五分钟。"], "耗时10:05。"));
+        for prose in ["第一点十分自然。", "这一点十分清楚。", "这个点十分重要。"] {
+            assert!(facts::extract(prose).is_empty(), "prose is not a clock: {prose}");
+        }
+    }
+    #[test]
+    fn feature_classifiers_are_equivalent_without_erasing_values_or_dimensions() {
+        for (input, equivalent) in [
+            ("增加一个功能。", "增加一项功能。"),
+            ("增加一项功能。", "增加一个功能。"),
+            ("增加三个功能。", "增加3项功能。"),
+        ] {
+            assert!(accepted(&[input], equivalent), "equivalent classifier: {input}");
+        }
+        for (input, changed) in [
+            ("增加一个功能。", "增加两项功能。"),
+            ("增加一项功能。", "增加两个功能。"),
+            ("增加一项功能。", "增加功能。"),
+            ("仅一个功能就足够。", "一个功能就足够。"),
+            ("不是增加一个功能。", "增加一项功能。"),
+            ("每次发送一个请求。", "每次发送两个请求。"),
+            ("添加一个功能。", "添加一次功能。"),
+            ("增加一项功能。", "增加一条功能。"),
+        ] {
+            assert!(!accepted(&[input], changed), "must retain quantity/dimension: {input}");
+        }
     }
     #[test]
     fn numeric_boundaries_nested_large_units_are_exact() {

@@ -104,6 +104,7 @@ pub struct AsrWireEvent {
 }
 #[derive(Debug,Clone,Default)]
 pub struct AsrTelemetry {
+    pub dictionary: Option<DictionaryTelemetry>,
     pub dequeued:AudioCounts,pub socket_written:AudioCounts,
     pub last_frame_written_at:Option<Instant>,pub finish_dequeued_at:Option<Instant>,
     pub finish_expected_frames:Option<u64>,pub finish_written_at:Option<Instant>,
@@ -123,6 +124,7 @@ pub struct AsrEventView {
 #[derive(Debug,Clone,Default,Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct AsrTelemetryView {
+    pub dictionary: Option<DictionaryTelemetry>,
     pub dequeued:AudioCounts,pub socket_written:AudioCounts,pub last_frame_written_ms:Option<f64>,
     pub finish_dequeued_ms:Option<f64>,pub finish_expected_frames:Option<u64>,pub finish_written_ms:Option<f64>,
     pub session_finished_received_ms:Option<f64>,pub pending_items:usize,pub final_items:usize,
@@ -131,7 +133,7 @@ pub struct AsrTelemetryView {
 impl AsrTelemetry {
     pub fn relative_to(&self,origin:Instant)->AsrTelemetryView {
         let offset=|at:Instant|at.checked_duration_since(origin).map(|time|time.as_secs_f64()*1000.0);
-        AsrTelemetryView{dequeued:self.dequeued,socket_written:self.socket_written,
+        AsrTelemetryView{dictionary:self.dictionary.clone(),dequeued:self.dequeued,socket_written:self.socket_written,
             last_frame_written_ms:self.last_frame_written_at.and_then(offset),finish_dequeued_ms:self.finish_dequeued_at.and_then(offset),
             finish_expected_frames:self.finish_expected_frames,finish_written_ms:self.finish_written_at.and_then(offset),
             session_finished_received_ms:self.session_finished_received_at.and_then(offset),pending_items:self.pending_items,final_items:self.final_items,
@@ -144,7 +146,23 @@ impl AsrTelemetry {
     }
 }
 pub(super) struct WireDiagnostics { pub(super) metadata:AsrTelemetry, callback:Arc<dyn Fn(AsrProgress)+Send+Sync> }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct DictionaryTelemetry {
+    pub version: u64, pub entry_count: usize, pub vocabulary_count: usize, pub context_chunks: usize,
+    pub support: super::models::DictionarySupport, pub socket_written: bool, pub effectiveness_verified: bool,
+}
 impl WireDiagnostics {
+    pub(super) fn dictionary(&mut self, config:&ProviderConfig, dictionary:&DictionarySnapshot, vocabulary_count:usize, context_chunks:usize) -> Result<(),CloudError> {
+        self.metadata.dictionary = Some(DictionaryTelemetry { version:dictionary.version, entry_count:dictionary.entries.len(),
+            vocabulary_count, context_chunks, support:super::models::validate_asr_adapter(config)?.dictionary_support,
+            socket_written:false, effectiveness_verified:false });
+        self.publish(); Ok(())
+    }
+    pub(super) fn dictionary_written(&mut self) {
+        if let Some(value) = &mut self.metadata.dictionary { value.socket_written = true; }
+        self.publish();
+    }
     pub(super) fn new(callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Self { Self{metadata:AsrTelemetry::default(),callback} }
     pub(super) fn publish(&self) { (self.callback)(AsrProgress::Diagnostics(self.metadata.clone())); }
     fn event(&mut self,kind:AsrEventKind,value:Option<&Value>,assembler:&Assembler) {
@@ -331,6 +349,7 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, dictionar
     super::models::validate_recognition(&config,&language)?;
     let mut diagnostics=WireDiagnostics::new(Arc::clone(&callback));
     let update=session_update(&language,&dictionary)?;
+    diagnostics.dictionary(&config, &dictionary, 0, usize::from(!dictionary.entries.is_empty()))?;
     let connect_deadline=tokio::time::Instant::now()+timeouts.establishment;
     let request=authorized_request(&url,&secret,config.workspace.as_deref())?;
     let mut ws_config=WebSocketConfig::default();
@@ -341,6 +360,7 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, dictionar
         r=tokio::time::timeout_at(connect_deadline,connect)=>r.map_err(|_|CloudError::new("asr_connect_timeout","asr","语音服务连接超时"))?.map_err(|_|CloudError::new("asr_connect_failed","asr","语音服务连接失败，请检查地域与 Key"))?,
     };
     send_message(&mut socket,Message::Text(update.to_string()),&cancel,connect_deadline.min(tokio::time::Instant::now()+timeouts.send)).await?;
+    diagnostics.dictionary_written();
     let mut assembler=Assembler::default();
     let mut audio_sequence=AudioSequence::default();
     let mut configured=false;

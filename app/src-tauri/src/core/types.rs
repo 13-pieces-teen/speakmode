@@ -53,6 +53,9 @@ pub struct Preferences {
     pub language: String,
     pub default_mode_id: String,
     pub delivery_mode: DeliveryMode,
+    /// Global capture preference, frozen when a recording begins. Old profiles stay bypassed.
+    #[serde(default)]
+    pub soft_voice_enabled: bool,
     pub keep_history: bool,
     pub launch_at_login: bool,
 }
@@ -60,7 +63,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self { version: 1, shortcut: "alt_right".into(), microphone_id: None,
             language: "auto".into(), default_mode_id: "auto".into(),
-            delivery_mode: DeliveryMode::Direct, keep_history: true, launch_at_login: false }
+            delivery_mode: DeliveryMode::Direct, soft_voice_enabled: false, keep_history: true, launch_at_login: false }
     }
 }
 
@@ -79,7 +82,7 @@ pub struct ProviderConfig {
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self { version: 1, provider: "aliyun".into(), region: None, workspace: None,
-            asr_model: "qwen3-asr-flash-realtime".into(), rewrite_model: "qwen-flash".into(),
+            asr_model: "qwen3-asr-flash-realtime".into(), rewrite_model: "qwen3.8-flash".into(),
             adapter_version: "qwen-realtime-v1".into() }
     }
 }
@@ -195,6 +198,11 @@ pub enum RevisionKind { Initial, UseSource, Adopt, Edit, Restore, Undo }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CreationReason { NormalInitial, Retry, UseSource, History, Preview }
+/// A complete ASR source was delivered when the optional cloud rewrite was unavailable.
+/// This is not a successful Mode rewrite or an external application's paste receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RewriteFallbackReason { Timeout, ServiceUnavailable, InvalidOutput, MeaningRisk }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutputRevision {
@@ -205,6 +213,8 @@ pub struct OutputRevision {
     pub source_revision_id: String,
     pub mode_snapshot: ModeSnapshot,
     pub resolved_mode: BaseMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_fallback: Option<RewriteFallbackReason>,
     pub blocks: Vec<OutputBlock>,
     pub kind: RevisionKind,
     pub creation_reason: CreationReason,
@@ -212,6 +222,12 @@ pub struct OutputRevision {
 }
 impl OutputRevision {
     pub fn text(&self) -> String { self.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n\n") }
+    /// A deliberate edit is no longer the unchanged source fallback. Retain its selected Mode.
+    pub fn clear_rewrite_fallback(&mut self) {
+        if self.rewrite_fallback.take().is_some() && self.mode_snapshot.base_mode != BaseMode::Auto {
+            self.resolved_mode = self.mode_snapshot.base_mode;
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,6 +269,8 @@ pub struct HistorySummary {
     pub mode_id: String,
     pub mode_name: String,
     pub resolved_mode: Option<BaseMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_fallback: Option<RewriteFallbackReason>,
     pub current_revision_id: Option<String>,
     pub source_revision_id: String,
     pub status: StoredSessionStatus,

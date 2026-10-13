@@ -9,6 +9,7 @@ mod probe {
     use serde_json::{Value, json};
     use speakmode_lib::platform::delivery::{capture_target, capture_foreground_anchor,
         capture_target_for_anchor, dispatch_once, DeliveryPermit};
+    use speakmode_lib::platform::{PlatformError, TargetCaptureFailure};
     use std::{fs::{self, OpenOptions}, io::Write, path::{Path, PathBuf},
         process::{Child, Command}, thread, time::{Duration, Instant}};
     use std::os::windows::process::CommandExt;
@@ -162,21 +163,21 @@ mod probe {
             let result = capture_target_for_anchor(&anchor);
             if matches!(kind, "anchor-caret-change" | "anchor-field-change") {
                 let error = result.err().context("changed asynchronous stop target was accepted")?;
-                ensure!(error.to_string().contains("stop target changed"), "unexpected stop-target rejection");
+                ensure!(matches!(error, PlatformError::TargetCapture(TargetCaptureFailure::StopFocusChanged)), "unexpected stop-target rejection: {error}");
                 ensure!(fixture.read_owned_text()? == "alpha | omega", "rejected anchor changed owned text");
                 return Ok(json!({"scenario":kind,"passed":true,"clipboardChanged":false,
-                    "inputEvents":0,"asyncTargetChangeRejected":true,
+                    "inputEvents":0,"asyncTargetChangeRejected":true,"reasonCode":"stopFocusChanged",
                     "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation}}));
             }
             result
         };
         if matches!(kind, "readonly" | "password") {
-            let error = target.err().context("protected native target was accepted")?.to_string();
-            ensure!(error.contains(if kind == "readonly" { "read-only" } else { "password" }),
-                "unexpected protected-target rejection");
+            let error = target.err().context("protected native target was accepted")?;
+            ensure!(matches!(error, PlatformError::TargetCapture(TargetCaptureFailure::TargetNotEditable)),
+                "unexpected protected-target rejection: {error}");
             if kind == "readonly" { ensure!(fixture.read_owned_text()? == "alpha | omega", "read-only fixture changed"); }
             // Password contents are never read, even in this synthetic fixture.
-            return Ok(json!({"scenario":kind,"passed":true,"clipboardChanged":false,"inputEvents":0,
+            return Ok(json!({"scenario":kind,"passed":true,"clipboardChanged":false,"inputEvents":0,"reasonCode":"targetNotEditable",
                 "foregroundHandoff":{"probeGrantedChild":child_permission,"childGrantedProbe":metadata["parentForegroundPermissionGranted"],"parentActivationAccepted":parent_activation}}));
         }
         let target = target.context("owned editable target capture")?;

@@ -220,7 +220,7 @@ async fn locking_after_a_later_ready_result_releases_both_audio_slots_without_er
     let source=source_fixture(&id,generation);
     let output={let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();
         let output=OutputRevision{id:"ready-output".into(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,
-            source_revision_id:source.id.clone(),mode_snapshot:s.mode.clone(),resolved_mode:BaseMode::Light,
+            source_revision_id:source.id.clone(),mode_snapshot:s.mode.clone(),resolved_mode:BaseMode::Light,rewrite_fallback:None,
             blocks:vec![OutputBlock{id:"ready-block".into(),text:"不要删除测试文件。".into(),source_refs:vec!["source-item".into()]}],
             kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:now()};
         s.source=Some(source.clone());s.output=Some(output.clone());s.phase=SessionPhase::Ready;output};
@@ -241,7 +241,7 @@ fn late_capture_cannot_refill_cancelled_audio_when_database_cleanup_failed() {
     {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();
         s.cancel.cancel();s.error=Some(ApiError::new("cancel_cleanup_failed","storage","synthetic cleanup failure"));}
     let summary=CaptureSummary{complete:true,cancelled:false,captured_samples:1600,input_sample_rate:16000,
-        emitted_frames:1,first_samples_received:true,error:None};
+        emitted_frames:1,first_samples_received:true,error:None,conditioning:None};
     h.accept_capture_cache("cancelled-cleanup",7,&summary,vec![1;1600],Instant::now());
     let inner=h.inner.lock().unwrap();let s=inner.active.as_ref().unwrap();
     assert!(s.cache.is_none(),"a late capture result must not restore audio after cancellation, even if DB cleanup failed");

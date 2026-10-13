@@ -56,7 +56,7 @@ pub fn catalog() -> ModelCatalog {
         ("qwen3-asr-flash-realtime", "Qwen3 实时（当前默认）", AsrProtocol::QwenRealtime, DictionarySupport::LegacyCorpusUnverified, false),
         ("qwen3-asr-flash-realtime-2025-10-27", "Qwen3 实时 · 2025-10-27", AsrProtocol::QwenRealtime, DictionarySupport::LegacyCorpusUnverified, false),
         ("qwen3-asr-flash-realtime-2026-02-10", "Qwen3 实时 · 2026-02-10（待评测）", AsrProtocol::QwenRealtime, DictionarySupport::LegacyCorpusUnverified, false),
-        ("qwen-audio-3.1-asr-flash-streaming", "Qwen Audio 3.1（热词增强 · 待评测）", AsrProtocol::TaskStreaming, DictionarySupport::VocabularyAndContext, true),
+        ("qwen-audio-3.1-asr-flash-streaming", "Qwen Audio 3.1（热词增强 · 可选）", AsrProtocol::TaskStreaming, DictionarySupport::VocabularyAndContext, true),
         ("qwen-audio-3.0-asr-flash-streaming", "Qwen Audio 3.0（尚未接入）", AsrProtocol::TaskStreaming, DictionarySupport::VocabularyAndContext, true),
         ("fun-asr-realtime", "Fun-ASR 实时（尚未接入）", AsrProtocol::TaskStreaming, DictionarySupport::Vocabulary, true),
         ("qwen-audio-3.1-asr-flash", "Qwen Audio 3.1 文件识别（尚未接入）", AsrProtocol::FileTranscription, DictionarySupport::VocabularyAndContext, true),
@@ -69,11 +69,11 @@ pub fn catalog() -> ModelCatalog {
             timestamps, recognition_languages: LANGUAGES, product_audio_limit_seconds: 600 }
     }).collect();
     let rewrite = [
-        ("qwen-flash", "Qwen Flash（当前默认）", false),
-        ("qwen-plus", "Qwen Plus（待评测）", false),
-        ("qwen3.8-flash", "Qwen 3.8 Flash（待评测）", true),
-        ("qwen3.7-plus", "Qwen 3.7 Plus（待评测）", true),
-        ("qwen3.7-plus-2026-05-26", "Qwen 3.7 Plus · 2026-05-26（待评测）", true),
+        ("qwen3.8-flash", "Qwen 3.8 Flash（默认）", true),
+        ("qwen-flash", "Qwen Flash", false),
+        ("qwen-plus", "Qwen Plus", false),
+        ("qwen3.7-plus", "Qwen 3.7 Plus", true),
+        ("qwen3.7-plus-2026-05-26", "Qwen 3.7 Plus · 2026-05-26", true),
     ].into_iter().map(|(id,label,json_schema)|RewriteModel { id,label,implemented:true,json_schema }).collect();
     ModelCatalog { asr, rewrite }
 }

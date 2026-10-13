@@ -72,6 +72,18 @@
       "path": "source-archives/selectors-0.38.0.crate",
       "sha256": "8adfa1c298912827b8a28b223b3b874357397ae706e6190acd9bf28cee99114d",
       "bytes": 69601
+    },
+    {
+      "path": "supplements/chromium-superfasthash-LICENSE.txt",
+      "sha256": "c84acd2b557e4532ecb9da3aa0a613be252ac123ebaffb0184b4e5c7a7fc62af",
+      "bytes": 1721
+    }
+  ],
+  "supplements": [
+    {
+      "addedIn": "0.2.12",
+      "path": "supplements/chromium-superfasthash-LICENSE.txt",
+      "scope": "Chromium-compatible PersistentHash Rust adaptation; original dependency inputs above remain a historical snapshot."
     }
   ]
 }

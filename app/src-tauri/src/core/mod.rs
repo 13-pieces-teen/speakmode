@@ -13,3 +13,6 @@ mod tests;
 
 #[cfg(test)]
 mod db_worker_tests;
+
+#[cfg(test)]
+mod model_upgrade_tests;

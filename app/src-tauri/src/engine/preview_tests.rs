@@ -60,7 +60,7 @@ async fn historical_preview_keeps_real_source_ids_segments_and_timestamps() {
     assert_eq!(loaded.kind,"history");assert_eq!(loaded.revision,before.source);
     h.validate_preview_source(&loaded).await.unwrap();
     let mode=preview_options(&preview_payload("unused")).unwrap().1.unwrap();
-    let wire=preview_response("preview-history",&loaded,PreviewOutputs::Single(result_for(&mode,&loaded.revision)));
+    let wire=preview_response("preview-history",&loaded,PreviewOutputs::Single(result_for(&mode,&loaded.revision)),rewrite::REWRITE_PROMPT_VERSION);
     assert_eq!(wire["sourceKind"],"history");assert_eq!(wire["sourceItemCount"],2);assert_eq!(wire["sourceRevisionId"],before.source.id);
     assert_eq!(wire["promptVersion"],rewrite::REWRITE_PROMPT_VERSION);assert_eq!(wire["blocks"][0]["sourceRefs"],json!(["item-real-segments-0","item-real-segments-1"]));
     assert_eq!(h.db.get_result("real-segments").unwrap().output,before.output,"trial never adopts an output");
@@ -116,7 +116,7 @@ async fn builtin_comparison_runs_two_sequential_calls_on_identical_source() {
     }).await.unwrap();
     let calls=calls.lock().unwrap();assert_eq!(calls.len(),2);assert_eq!(calls[0].0.base_mode,BaseMode::Light);assert_eq!(calls[1].0.base_mode,BaseMode::Structure);
     assert_eq!(calls[0].1,original);assert_eq!(calls[1].1,original);
-    let wire=preview_response("compare-run",&PreviewSource{kind:"history",revision:source},result);
+    let wire=preview_response("compare-run",&PreviewSource{kind:"history",revision:source},result,rewrite::REWRITE_PROMPT_VERSION);
     assert_eq!(wire["comparison"]["light"]["resolvedMode"],"light");assert_eq!(wire["comparison"]["structure"]["resolvedMode"],"structure");
     assert_eq!(wire["sourceItemCount"],2);assert_eq!(wire["sourceRevisionId"],"source-comparison");assert!(wire.get("blocks").is_none(),"there is no implicitly selected comparison output");
 }

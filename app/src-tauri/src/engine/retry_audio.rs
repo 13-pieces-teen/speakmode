@@ -1,5 +1,6 @@
 //! Cached audio uses the same wall-clock cadence as a live 16 kHz capture.
 //! Waiting starts after configuration ACK; backpressure never earns catch-up credit.
+//! Cached PCM already includes the session's audio conditioning. Never process it again.
 use super::*;
 
 pub(super) async fn replay(cache:Vec<i16>,tx:mpsc::Sender<AsrInput>,cancel:CancellationToken,
@@ -51,6 +52,22 @@ mod tests {
         assert!(matches!(rx.recv().await,Some(AsrInput::Frame{sequence:1,..})));let sent=Instant::now();
         assert!(matches!(rx.recv().await,Some(AsrInput::Frame{sequence:2,..})));assert!(sent.elapsed()>=Duration::from_millis(100));
         assert!(matches!(rx.recv().await,Some(AsrInput::Frame{sequence:3,..})));assert!(matches!(rx.recv().await,Some(AsrInput::Finish{next_sequence:4})));task.await.unwrap();
+    }
+    #[tokio::test]
+    async fn soft_voice_cache_is_replayed_once_without_reapplying_gain(){
+        use crate::platform::audio_conditioner::{AudioConditioner,ConditioningMode};
+        let mut audio:Vec<f32>=(0..1777).map(|i|(i as f32*0.071).sin()*0.01).collect();
+        AudioConditioner::new(ConditioningMode::SoftVoice).process(&mut audio);
+        let cache:Vec<i16>=audio.iter().map(|v|(v*32768.0).round().clamp(-32768.0,32767.0) as i16).collect();
+        let(mut rx,_,ready,notify,task)=spawn(cache.clone(),4);
+        ready.store(true,Ordering::Release);notify.notify_waiters();let mut received=Vec::new();
+        while let Some(input)=rx.recv().await {
+            match input {
+                AsrInput::Frame{pcm16,padding_samples,..}=>received.extend_from_slice(&pcm16[..pcm16.len()-padding_samples]),
+                AsrInput::Finish{next_sequence}=>{assert_eq!(next_sequence,2);break;}
+            }
+        }
+        task.await.unwrap();assert_eq!(received,cache);
     }
     #[tokio::test]
     async fn cancellation_releases_ack_timer_and_full_queue_without_finish(){

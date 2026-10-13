@@ -2,10 +2,18 @@
 //! Fixtures install already-finished capture states; no Key lookup, cloud call,
 //! microphone capture, native clipboard mutation, or native input occurs here.
 use super::*;
+#[path="candidate_review_tests.rs"]
+mod candidate_review;
 use std::sync::Barrier;
 
 #[path="preview_tests.rs"]
 mod preview_tests;
+#[path="rewrite_fallback_tests.rs"]
+mod rewrite_fallback_tests;
+#[path="recorder_copy_tests.rs"]
+mod recorder_copy_tests;
+#[path="typeless_import_tests.rs"]
+mod typeless_import_tests;
 
 
 trait TestDb {
@@ -104,7 +112,7 @@ fn output(hub: &AppHub, id: &str) -> OutputRevision {
         id: format!("output-{id}"), session_id: id.into(), parent_revision_id: None, base_revision_id: None,
         source_revision_id: format!("source-{id}"),
         mode_snapshot: hub.inner.lock().unwrap().active.as_ref().unwrap().mode.clone(),
-        resolved_mode: BaseMode::Structure,
+        resolved_mode: BaseMode::Structure, rewrite_fallback: None,
         blocks: vec![OutputBlock { id: "block-0".into(), text: "会议未确认前，不要订机票；先保留行程。".into(),
             source_refs: vec![format!("item-{id}-0"), format!("item-{id}-1")] }],
         kind: RevisionKind::Initial, creation_reason: CreationReason::NormalInitial,
@@ -390,9 +398,9 @@ fn range_rewrite_checkpoint(h:&AppHub) {
     h.checkpoint("s",7,range_rewrite_source()).unwrap();
 }
 async fn finish_parsed_fixture(h:&Arc<AppHub>,content:String) {
-    h.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel|async move{
+    h.finish_rewrite_with_policy("s".into(),7,move|_config,mode,source,_cancel|async move{
         rewrite::parse_model_output(&content,&mode,&source)
-    }).await;
+    },RewriteWaitPolicy::default(),|hub,_,_|{hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
 }
 fn assert_range_rewrite_rejected(h:&AppHub,expected_code:&str) {
     let live=view(h);assert_eq!(live.state,SessionPhase::Failed);
@@ -420,22 +428,27 @@ async fn parsed_complete_ranges_commit_stable_source_refs_without_changing_sourc
 }
 
 #[tokio::test]
-async fn parsed_missing_time_qualifier_keeps_checkpoint_and_never_readies_or_claims_input() {
+async fn parsed_missing_time_qualifier_delivers_complete_source_instead_of_rejected_output() {
     let h=hub();range_rewrite_checkpoint(&h);let seen=events(&h);
     {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
     finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
-    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
-    assert_eq!(h.diagnostics.snapshot().unwrap().traces[0].error_code.as_deref(),Some("rewrite_meaning_risk"));
-    assert!(seen.lock().unwrap().iter().any(|event|event.kind=="session"&&event.payload["state"]=="failed"&&event.payload["errorCode"]=="rewrite_meaning_risk"));
-    h.initial_delivery_with("s",7,|_|panic!("rejected output must not validate a target"),|_,_,_,_|panic!("rejected output must not inject text"));
-    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+    assert_eq!(view(&h).state,SessionPhase::Ready);
+    assert_eq!(view(&h).rewrite_fallback,Some(RewriteFallbackReason::MeaningRisk));
+    assert!(view(&h).error.is_none());
+    let output=h.db.get_result("s").unwrap().output.unwrap();assert_eq!(output.text(),range_rewrite_source().text());
+    assert_eq!(output.blocks[0].source_refs,["item-s-0","item-s-1"]);
+    assert_eq!(usage_count(&h),1);
+    let trace=h.diagnostics.snapshot().unwrap();assert!(trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteFallbackSelected));
+    assert!(!trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteValidated));
+    assert!(!seen.lock().unwrap().iter().any(|event|event.kind=="session"&&event.payload["state"]=="failed"));
 }
 
 #[tokio::test]
-async fn parsed_range_gap_keeps_checkpoint_and_never_readies_or_counts_usage() {
+async fn parsed_range_gap_uses_complete_source_and_counts_one_completed_dictation() {
     let h=hub();range_rewrite_checkpoint(&h);
     finish_parsed_fixture(&h,range_rewrite_content(true,false)).await;
-    assert_range_rewrite_rejected(&h,"incomplete_source_coverage");
+    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_fallback,Some(RewriteFallbackReason::InvalidOutput));
+    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),range_rewrite_source().text());assert_eq!(usage_count(&h),1);
 }
 
 #[tokio::test]
@@ -452,7 +465,7 @@ async fn cancellation_rejects_late_successfully_parsed_range_output_before_commi
         }).await;
     });
     parsed_rx.await.unwrap();h.cancel_session_async(&identity("s")).await.unwrap();
-    release_tx.send(()).unwrap();job.await.unwrap();
+    let _=release_tx.send(());job.await.unwrap();
     let live=view(&h);assert_eq!(live.state,SessionPhase::Cancelled);assert!(!live.can_copy_recovery);
     assert!(h.db.get_result("s").is_err());assert_eq!(usage_count(&h),0);
     assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
@@ -460,9 +473,9 @@ async fn cancellation_rejects_late_successfully_parsed_range_output_before_commi
 }
 
 #[tokio::test]
-async fn rejected_range_output_never_falls_back_or_reinputs_after_explicit_source_adoption() {
+async fn rejected_retry_output_never_falls_back_or_reinputs_after_explicit_source_adoption() {
     let h=hub();range_rewrite_checkpoint(&h);
-    {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
+    {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.reason=CreationReason::Retry;active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
     finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
     assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
     h.initial_delivery_with("s",7,|_|panic!("failure cannot enter input"),|_,_,_,_|panic!("failure cannot fall back to source input"));
@@ -858,7 +871,7 @@ fn candidate(hub: &AppHub, id: &str, run: &str) -> CancellationToken {
     generated.blocks[0].text = "候选：会议未确认前，不要订机票；先保留行程。".into();
     let token = CancellationToken::new();
     hub.inner.lock().unwrap().candidate = Some(CandidateSlot { key: id.into(), run: run.into(), cancel: token.clone(),
-        base: format!("output-{id}"), result: Some(generated),adopting:None }); token
+        base: format!("output-{id}"), result: Some(HistoryCandidate{revision:generated,review_issues:vec![]}),adopting:None }); token
 }
 
 #[tokio::test]
@@ -1225,7 +1238,7 @@ fn source_only_candidate(h:&AppHub,id:&str,run:&str){
     let mut value=output(h,id);value.id=run.into();value.mode_snapshot=h.db.mode_snapshot("light",None).unwrap();
     value.resolved_mode=BaseMode::Light;value.kind=RevisionKind::Adopt;value.creation_reason=CreationReason::History;
     value.base_revision_id=None;value.parent_revision_id=None;
-    h.inner.lock().unwrap().candidate=Some(CandidateSlot{key:id.into(),run:run.into(),base:String::new(),cancel:CancellationToken::new(),result:Some(value),adopting:None});
+    h.inner.lock().unwrap().candidate=Some(CandidateSlot{key:id.into(),run:run.into(),base:String::new(),cancel:CancellationToken::new(),result:Some(HistoryCandidate{revision:value,review_issues:vec![]}),adopting:None});
 }
 fn first_adopt_payload(id:&str,run:&str)->Value{json!({"sessionId":id,"expectedCurrentRevisionId":"","candidateId":run,"requestId":Uuid::new_v4().to_string()})}
 
@@ -1440,7 +1453,7 @@ fn capture_cancel_revokes_its_preferences_commit_guard_before_native_off_wait() 
 async fn committed_first_adoption_receipt_after_delete_keeps_usage_without_reviving_active_body() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");source_only_candidate(&h,"s","late-receipt");
     let output=h.inner.lock().unwrap().candidate.as_ref().unwrap().result.clone().unwrap();
-    let detail=db_detail(h.db_write(DbCommand::Adopt{session_id:"s".into(),expected_current_revision_id:String::new(),candidate:output},h.record_guard("s",7).operation(),DbPriority::Normal).await.unwrap()).unwrap();
+    let detail=db_detail(h.db_write(DbCommand::Adopt{session_id:"s".into(),expected_current_revision_id:String::new(),candidate:output.revision},h.record_guard("s",7).operation(),DbPriority::Normal).await.unwrap()).unwrap();
     // Delay only the engine's receipt application, using an actually committed
     // result from the production actor. A newer delete completes first.
     command(&h,"history.delete",json!({"sessionId":"s","requestId":"delete-before-receipt"})).await.unwrap();

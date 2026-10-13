@@ -29,10 +29,6 @@
 .history-panel-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
 .history-panel-actions .rt-Button { margin: 0; }
 .history-candidate { padding: 18px; margin-top: 20px; border: 1px solid #cfdef1; border-radius: 10px; background: #f7faff; }
-.candidate-review { min-width: 0; margin-top: 12px; }
-.candidate-review > .record-text { margin-top: 14px; }
-.candidate-review .history-sentence-line { background: var(--sm-paper, white); border: 1px solid var(--sm-line); }
-.candidate-review > .rt-Button { margin: 0; }
 .history-section-topline, .history-sentence-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .history-candidate-warning { font-size: 12px; line-height: 21px; color: #597390; border-left: 2px solid #b7cce8; margin: 18px 0 0; padding-left: 12px; }
 .history-detail .history-compare-toggle.rt-Button { display: flex; width: 100%; min-height: 44px; margin-top: 22px; padding: 12px 14px; gap: 9px; border: 1px solid var(--sm-line); border-radius: 8px; background: var(--sm-mist); color: var(--sm-muted); text-align: left; }

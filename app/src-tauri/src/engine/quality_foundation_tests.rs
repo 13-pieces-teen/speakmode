@@ -32,7 +32,7 @@ fn main_snapshot_exposes_compatibility_but_does_not_advertise_future_adapters_as
 
 fn failed_summary(error:&str)->CaptureSummary {
     CaptureSummary{complete:false,cancelled:false,captured_samples:48000,input_sample_rate:48000,
-        emitted_frames:10,first_samples_received:true,error:Some(error.into())}
+        emitted_frames:10,first_samples_received:true,error:Some(error.into()),conditioning:None}
 }
 
 #[test]

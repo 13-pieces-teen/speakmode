@@ -1,5 +1,5 @@
 use super::{CloudError, endpoints};
-use crate::core::{BaseMode, ModeSnapshot, OutputBlock, ProviderConfig, SourceRevision};
+use crate::core::{BaseMode, DictionarySnapshot, ModeSnapshot, OutputBlock, ProviderConfig, SourceRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::HashSet, sync::OnceLock, time::Duration};
@@ -29,12 +29,44 @@ struct LegacyBlock { text: String, source_refs: Vec<String> }
 mod integrity;
 #[path="rewrite_baseline.rs"]
 mod baseline;
+#[path="rewrite_cleanup.rs"]
+mod cleanup;
+#[path="rewrite_auto.rs"]
+mod automatic;
+#[path="rewrite_natural.rs"]
+mod natural;
+#[path="rewrite_terms.rs"]
+mod terms;
+#[path="rewrite_semantic_review.rs"]
+pub mod semantic_review;
+#[path="rewrite_fluent.rs"]
+mod fluent;
+#[path="rewrite_long.rs"]
+mod long;
+#[path="rewrite_protected_terms.rs"]
+mod protected_terms;
+#[path="rewrite_literals.rs"]
+mod literals;
+#[path="rewrite_fluent_pipeline.rs"]
+mod fluent_pipeline;
+#[path="rewrite_manual_candidate.rs"]
+mod manual_candidate;
+#[path="rewrite_minimum.rs"]
+pub mod minimum;
+#[path="rewrite_local_repair.rs"]
+pub mod local_repair;
+#[path="rewrite_minimum_pipeline.rs"]
+pub mod minimum_pipeline;
+pub use manual_candidate::{ManualCandidate, ManualReviewIssue, rewrite_manual_candidate};
 
 // Identifies the task contract independently of the selected provider/model.
 // Keep it in experiment receipts so prompt changes are not confused with a
 // model upgrade. A version is evidence of configuration, not measured quality.
 pub const REWRITE_PROMPT_VERSION: &str = "mode-contract-v1";
 pub const EXPERIMENTAL_REWRITE_PROMPT_VERSION: &str = "mode-contract-v3";
+pub const CLEANUP_REWRITE_PROMPT_VERSION: &str = "cleanup-contract-v1";
+pub const AUTOMATIC_REWRITE_PROMPT_VERSION: &str = "automatic-dictation-v3";
+pub const NATURAL_REWRITE_PROMPT_VERSION: &str = "natural-cleanup-v2";
 
 // Research candidate only. Two paired synthetic experiments did not establish
 // the intended Mode distinctions without content loss. Normal dictation,
@@ -95,7 +127,216 @@ fn mode_task(mode: BaseMode) -> String {
 }
 
 pub fn request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision) -> Result<Value, CloudError> {
+    production_request_body(config, mode, source, &DictionarySnapshot::default())
+}
+
+// 0.2.10 holdout did not improve complete usable deliveries (3/8 in both arms)
+// and candidate cleanup regressed. Keep the candidate in the explicit lab;
+// model selection alone must not enable it. See automatic-dictation-0.2.10 report.
+pub const AUTOMATIC_PROTOCOL_PROMOTED: bool = false;
+/// 0.2.17 adds local literal protection and guarded longer dictation. Limited
+/// to the tested provider/model/default task; a reviewer verdict is not proof.
+pub const FLUENT_PIPELINE_VERSION: &str = "fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3";
+// Limited 0.2.19 rollout for the evaluated model/region, across all layouts.
+// See the report: acceptance is not fidelity proof; repair remains guarded and
+// no general speed/Typeless parity or real-voice claim follows from this gate.
+pub const MINIMUM_PROTOCOL_PROMOTED: bool = true;
+pub const MINIMUM_PIPELINE_VERSION: &str = "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2";
+fn uses_minimum_contract(config: &ProviderConfig, _mode: &ModeSnapshot) -> bool {
+    MINIMUM_PROTOCOL_PROMOTED && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing")
+}
+fn uses_fluent_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
+    config.rewrite_model == "qwen3.8-flash" && config.region.as_deref() == Some("beijing")
+        && mode.base_mode == BaseMode::Auto && mode.rules.trim().is_empty()
+}
+fn uses_automatic_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
+    AUTOMATIC_PROTOCOL_PROMOTED && config.rewrite_model == "qwen3.8-flash"
+        && config.region.as_deref() == Some("beijing")
+        && mode.base_mode == BaseMode::Auto && mode.rules.trim().is_empty()
+}
+/// Report the actual selected production protocol, independently of provider
+/// model naming. Diagnostics must not infer protocol from a model preference.
+pub fn production_protocol_version(config: &ProviderConfig, mode: &ModeSnapshot) -> &'static str {
+    if uses_minimum_contract(config,mode) { MINIMUM_PIPELINE_VERSION }
+    else if uses_fluent_contract(config, mode) { FLUENT_PIPELINE_VERSION }
+    else if uses_automatic_contract(config, mode) { AUTOMATIC_REWRITE_PROMPT_VERSION } else { REWRITE_PROMPT_VERSION }
+}
+pub fn manual_protocol_version(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision)->&'static str {
+    if uses_minimum_contract(config,mode){minimum::VERSION}
+    else if uses_fluent_contract(config,mode){if uses_guarded_long(source){LONG_REWRITE_PROMPT_VERSION}else{FLUENT_REWRITE_PROMPT_VERSION}}
+    else{REWRITE_PROMPT_VERSION}
+}
+fn production_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot) -> Result<Value, CloudError> {
+    if uses_minimum_contract(config,mode) { minimum::prepare(config,mode,source,dictionary,true).map(|r|r.body) }
+    else if uses_fluent_contract(config,mode) {
+        if uses_guarded_long(source) { prepare_guarded_long(config,mode,source,dictionary).map(|r| r.body) }
+        else { fluent_request_body(config,mode,source,dictionary) }
+    }
+    else if uses_automatic_contract(config,mode) { automatic_request_body(config,mode,source,dictionary) }
+    else { baseline_request_body(config,mode,source) }
+}
+
+/// Frozen production baseline remains callable after future, evidence-backed
+/// promotions, so experiments do not silently compare a candidate with itself.
+pub fn baseline_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision) -> Result<Value, CloudError> {
     request_body_with_system(config, mode, source, baseline::system(mode.base_mode))
+}
+
+/// Explicit whole-document candidate, independently selectable until paired
+/// evaluation is complete. The source remains immutable; glossary entries are
+/// bounded spelling hints, never replacements or additional factual context.
+pub fn automatic_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot) -> Result<Value, CloudError> {
+    if mode.base_mode != BaseMode::Auto || !mode.rules.trim().is_empty() {
+        return Err(CloudError::new("invalid_mode", "rewrite", "自动整理协议仅用于默认自动方式"));
+    }
+    let mut body = request_body_with_system(config, mode, source, automatic::system())?;
+    let data = json!({
+        "items": source.items.iter().enumerate().map(|(index,item)|json!({"index":index,"text":item.text})).collect::<Vec<_>>(),
+        "canonicalTerms": terms::matching_terms(source,dictionary),
+        "preservationHints": integrity::preservation_hints(source),
+    });
+    body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("dictation data serialize"));
+    Ok(body)
+}
+
+pub fn parse_automatic_output(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
+    automatic::parse(content,mode,source)
+}
+
+/// Explicit experiment only. It cannot be selected by a model preference or
+/// silently replace an existing production/diagnostic protocol.
+pub fn natural_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot) -> Result<Value, CloudError> {
+    if mode.base_mode != BaseMode::Auto || !mode.rules.trim().is_empty() {
+        return Err(CloudError::new("invalid_mode", "rewrite", "自然微整理协议仅用于默认自动方式"));
+    }
+    let mut body = request_body_with_system(config, mode, source, natural::system())?;
+    let data = json!({
+        "sourceText": source.text(),
+        "canonicalTerms": terms::matching_terms(source, dictionary),
+        "preservationHints": integrity::preservation_hints(source),
+    });
+    body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("dictation data serialize"));
+    Ok(body)
+}
+
+pub fn parse_natural_output(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
+    natural::parse(content, mode, source)
+}
+
+/// Experimental draft decoding, not a fidelity verdict or delivery decision.
+pub fn parse_natural_draft(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
+    natural::parse_shape(content, mode, source)
+}
+
+pub const FLUENT_REWRITE_PROMPT_VERSION:&str = fluent::VERSION;
+/// Frozen fluent generation used by the gated production path and explicit labs.
+pub fn fluent_request_body(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot)->Result<Value,CloudError> {
+    if mode.base_mode!=BaseMode::Auto || !mode.rules.trim().is_empty() {
+        return Err(CloudError::new("invalid_mode","rewrite","流畅整理协议仅用于默认自动方式"));
+    }
+    let mut body=request_body_with_system(config,mode,source,fluent::system())?;
+    body["messages"][1]["content"]=json!(serde_json::to_string(&json!({"sourceText":source.text(),
+        "canonicalTerms":terms::matching_terms(source,dictionary)})).expect("dictation serialization"));
+    Ok(body)
+}
+pub fn parse_fluent_draft(content:&str,mode:&ModeSnapshot,source:&SourceRevision)->Result<RewriteResult,CloudError> {
+    fluent::parse_draft(content,mode,source)
+}
+pub fn validate_draft_meaning(source:&SourceRevision,draft:&RewriteResult)->Result<(),CloudError> {
+    integrity::validate_meaning(source,&draft.blocks)
+}
+pub fn review_admission(source:&SourceRevision,draft:&RewriteResult)->Result<(),CloudError> {
+    literals::validate(&source.text(), &draft.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n"))?;
+    integrity::review_admission(source,&draft.blocks)
+}
+
+/// Private, offline lab evidence only. Never put extracted dictated values in runtime diagnostics.
+pub fn admission_evidence(source: &SourceRevision, draft: &RewriteResult) -> Value {
+    integrity::admission_evidence(source, &draft.blocks)
+}
+
+pub const LONG_REWRITE_PROMPT_VERSION: &str = long::VERSION;
+/// Explicit long-document experiment. Not selected by production or preferences.
+pub fn long_request_body(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot)->Result<Value,CloudError> {
+    let mut body = fluent_request_body(config, mode, source, dictionary)?;
+    body["messages"][0]["content"] = json!(long::system());
+    Ok(body)
+}
+
+/// Private mapping stays local to this immutable generation request.
+pub struct ProtectedLongRequest {
+    pub body: Value,
+    terms: protected_terms::ProtectedTerms,
+    source_hash: String,
+    mode_hash: String,
+}
+
+fn protected_fingerprint(value: &impl Serialize) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(serde_json::to_vec(value).expect("immutable input serializes")))
+}
+
+/// Experimental only: do not infer uncertain technical names during cleanup.
+pub fn prepare_protected_long(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot)->Result<ProtectedLongRequest,CloudError> {
+    prepare_protected_long_variant(config, mode, source, dictionary, false)
+}
+
+pub fn prepare_protected_long_compact(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot)->Result<ProtectedLongRequest,CloudError> {
+    prepare_protected_long_variant(config, mode, source, dictionary, true)
+}
+
+/// Guarded production long dictation uses protected literals and source-bound spelling.
+pub fn prepare_guarded_long(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot)->Result<ProtectedLongRequest,CloudError> {
+    let mut body = long_request_body(config, mode, source, dictionary)?;
+    let input = terms::canonicalize(&source.text(), dictionary);
+    let terms = protected_terms::ProtectedTerms::new_guarded(&input)?;
+    body["messages"][0]["content"] = json!(format!("{}\n协议附加版本：protected-long-v3\n特殊括号标记是不可改动的原始专名、逐字引语或代码。所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。不在标记外输出英文字母。标记内的语气词是原话，不能去掉；它们会由本地逐字恢复后再核对。", long::system()));
+    body["messages"][1]["content"] = json!(serde_json::to_string(&json!({"sourceText":terms.masked_source()})).expect("masked data serializes"));
+    Ok(ProtectedLongRequest { body, terms, source_hash: protected_fingerprint(source), mode_hash: protected_fingerprint(mode) })
+}
+
+pub fn uses_guarded_long(source: &SourceRevision) -> bool {
+    let text = source.text(); let count = text.chars().count();
+    let han = text.chars().filter(|c| matches!(*c, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{20000}'..='\u{323af}')).count();
+    // A predominantly English sentence must remain editable prose, rather than
+    // becoming one opaque Latin term. It uses fluent generation plus local literals.
+    count > 400 && han * 2 > count
+}
+
+pub fn initial_wait_ms(source: &SourceRevision) -> u64 {
+    match source.text().chars().count() { 0..=400 => 5000, 401..=800 => 8000, _ => 20000 }
+}
+
+pub fn normalize_draft_dictionary(source:&SourceRevision, dictionary:&DictionarySnapshot, draft:&mut RewriteResult) {
+    let matched = terms::matching_terms(source,dictionary);
+    let supported = DictionarySnapshot { version:dictionary.version, entries:dictionary.entries.iter()
+        .filter(|entry| matched.iter().any(|term| term == &entry.term)).cloned().collect() };
+    for block in &mut draft.blocks { block.text = terms::canonicalize(&block.text,&supported); }
+}
+
+fn prepare_protected_long_variant(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot, compact:bool)->Result<ProtectedLongRequest,CloudError> {
+    let mut body = long_request_body(config, mode, source, dictionary)?;
+    let terms = if compact { protected_terms::ProtectedTerms::new_compact(&source.text())? } else { protected_terms::ProtectedTerms::new(&source.text())? };
+    let version = if compact { "protected-long-v2" } else { "protected-long-v1" };
+    let system = format!("{}\n协议附加版本：{version}\n源文中的特殊括号标记代表不可改动的原始专名或字母串。不要猜测它们是什么。所有不同标记必须逐字至少保留一次，重复同一标记可以随无意义重复合并。标记不代表内容相同或角色相同，必须留在原来的对象、动作与限定关系里。不要在标记外输出任何英文字母，不新增英文缩写，不改变标记内部字符；JSON字段名及resolvedMode的值仍按原协议。这些标记在本地还原后再核对全文。", long::system());
+    body["messages"][0]["content"] = json!(system);
+    body["messages"][1]["content"] = json!(serde_json::to_string(&json!({"sourceText":terms.masked_source()})).expect("masked data serializes"));
+    Ok(ProtectedLongRequest { body, terms, source_hash: protected_fingerprint(source), mode_hash: protected_fingerprint(mode) })
+}
+
+pub fn parse_protected_long(content:&str, mode:&ModeSnapshot, source:&SourceRevision, request:&ProtectedLongRequest)->Result<RewriteResult,CloudError> {
+    if request.source_hash != protected_fingerprint(source) || request.mode_hash != protected_fingerprint(mode) {
+        return Err(CloudError::new("stale_protected_draft", "rewrite", "专名保护来源已变化"));
+    }
+    let mut draft = parse_fluent_draft(content, mode, source)?;
+    draft.blocks[0].text = request.terms.restore_checked(&draft.blocks[0].text)?;
+    Ok(draft)
+}
+
+/// Explicit, one-call micro-cleanup candidate. No preference or automatic
+/// fallback selects it until a separately recorded quality decision is made.
+pub fn cleanup_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision) -> Result<Value, CloudError> {
+    request_body_with_system(config, mode, source, cleanup::system(mode.base_mode))
 }
 
 /// Explicit research-only builder. No production flow, preference or fallback
@@ -134,6 +375,15 @@ mod span_tests;
 mod quality_tests;
 
 pub fn parse_model_output(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
+    let draft = parse_model_draft(content, mode, source)?;
+    literals::validate(&source.text(), &draft.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n"))?;
+    integrity::validate_meaning(source, &draft.blocks)?;
+    Ok(draft)
+}
+
+// A structurally valid draft is not an automatic-delivery verdict. Only the
+// explicitly requested history editor may expose it for human correction.
+fn parse_model_draft(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
     validate_source(source)?;
     if content.trim().is_empty(){return Err(CloudError::new("empty_output","rewrite","整理响应为空"));}
     if content.len()>1024*1024 {return Err(CloudError::new("response_too_large","rewrite","整理响应超过容量限制"));}
@@ -178,13 +428,16 @@ pub fn parse_model_output(content: &str, mode: &ModeSnapshot, source: &SourceRev
     if allowed.iter().any(|id| !covered.contains(*id)) {
         return Err(CloudError::new("incomplete_source_coverage", "rewrite", "整理结果未覆盖全部识别来源，请重试整理或使用识别稿"));
     }
-    integrity::validate_meaning(source, &blocks)?;
     Ok(RewriteResult {resolved_mode:decoded.resolved_mode, blocks})
 }
 
 pub async fn rewrite(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, cancel: CancellationToken) -> Result<RewriteResult, CloudError> {
+    rewrite_with_dictionary(config,secret,mode,source,&DictionarySnapshot::default(),cancel).await
+}
+
+pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken) -> Result<RewriteResult, CloudError> {
     let endpoint = endpoints(config)?.rewrite;
-    rewrite_at(config,secret,mode,source,cancel,&endpoint,Duration::from_secs(20)).await
+    rewrite_with_client_dictionary(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,Duration::from_secs(20)).await
 }
 
 pub(crate) fn validate_source(source:&SourceRevision)->Result<(),CloudError> {
@@ -216,12 +469,24 @@ fn shared_client() -> Result<&'static reqwest::Client, CloudError> {
 }
 
 // Private test transport seam. Production rewrite() always constructs its allowlisted endpoint.
+#[cfg(test)]
 async fn rewrite_at(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,cancel:CancellationToken,endpoint:&str,timeout:Duration)->Result<RewriteResult,CloudError> {
     rewrite_with_client(shared_client()?,config,secret,mode,source,cancel,endpoint,timeout).await
 }
 
+#[cfg(test)]
 async fn rewrite_with_client(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,cancel:CancellationToken,endpoint:&str,timeout:Duration)->Result<RewriteResult,CloudError> {
-    let body = request_body(config, mode, source)?;
+    rewrite_with_client_dictionary(client,config,secret,mode,source,&DictionarySnapshot::default(),cancel,endpoint,timeout).await
+}
+
+async fn rewrite_with_client_dictionary(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,timeout:Duration)->Result<RewriteResult,CloudError> {
+    if uses_minimum_contract(config,mode) {
+        return minimum_pipeline::run(client,config,secret,mode,source,dictionary,cancel,endpoint,timeout).await;
+    }
+    if uses_fluent_contract(config,mode) {
+        return fluent_pipeline::run(client,config,secret,mode,source,dictionary,cancel,endpoint,timeout).await;
+    }
+    let body = production_request_body(config, mode, source, dictionary)?;
     let job = async {
         let mut request=client.post(endpoint).timeout(timeout).bearer_auth(secret).json(&body);
         if let Some(workspace)=config.workspace.as_deref().filter(|workspace|!workspace.is_empty()) {request=request.header("X-DashScope-WorkSpace",workspace);}
@@ -243,7 +508,8 @@ async fn rewrite_with_client(client:&reqwest::Client,config:&ProviderConfig,secr
             return Err(CloudError::new("truncated_output", "rewrite", "整理响应未完整结束，识别稿仍保留"));
         }
         let content = data.pointer("/choices/0/message/content").and_then(Value::as_str).ok_or_else(|| CloudError::new("empty_output", "rewrite", "整理响应为空"))?;
-        parse_model_output(content, mode, source)
+        if uses_automatic_contract(config,mode) { parse_automatic_output(content,mode,source) }
+        else { parse_model_output(content, mode, source) }
     };
     let result=tokio::select! { biased;
         _ = cancel.cancelled() => Err(CloudError::new("cancelled", "rewrite", "已取消整理")),

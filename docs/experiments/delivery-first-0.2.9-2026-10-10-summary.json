@@ -1,0 +1,207 @@
+{
+  "date": "2026-10-10",
+  "version": "0.2.9",
+  "frontendVersion": "0.4.8",
+  "scope": "Engineering, synthetic UI, owned native editors, and synthetic-text cloud requests; not human speech acceptance",
+  "rustLibrary": {
+    "passed": 547,
+    "failed": 0,
+    "ignored": 3
+  },
+  "cleanupGuardProbe": {
+    "passed": 64,
+    "total": 64,
+    "previousMatchedSubset": {
+      "before": 27,
+      "after": 32,
+      "total": 32
+    }
+  },
+  "frontend": {
+    "typescript": "PASS",
+    "vite": "PASS",
+    "feedbackHelper": 15,
+    "deliveryBrowser": 12,
+    "modeBrowser": 17
+  },
+  "tools": {
+    "cleanupLabExample": 5,
+    "cleanupQualityPython": 7,
+    "diagnosticExportPython": 27
+  },
+  "ownedNative": {
+    "editRichEdit": {
+      "passed": 8,
+      "total": 8
+    },
+    "edge": {
+      "passed": 9,
+      "total": 9
+    },
+    "input": "Known synthetic text only; product outcome remains Unconfirmed"
+  },
+  "cloud": {
+    "requests": 216,
+    "retries": 0,
+    "data": "Frozen synthetic text only",
+    "review": "Independent Agent with arm hidden; not human review",
+    "combinations": {
+      "flashOriginalPrompt": {
+        "planned": 72,
+        "generatedTaskPass": 35,
+        "acceptedTaskPass": 25,
+        "parserAccepted": 52,
+        "contentFidelityPass": 57,
+        "cleanupPass": 56,
+        "criticalErrorsInGenerated": 6,
+        "criticalErrorsInAccepted": 2,
+        "cloudP50Ms": 630.5,
+        "cloudP95Ms": 951,
+        "modeAcceptedTaskPass": {
+          "light": 10,
+          "structure": 8,
+          "auto": 7
+        },
+        "generatedByBudgetMs": {
+          "2000": 35,
+          "3000": 35,
+          "5000": 35
+        },
+        "acceptedByBudgetMs": {
+          "2000": 25,
+          "3000": 25,
+          "5000": 25
+        }
+      },
+      "flashCleanupPrompt": {
+        "planned": 72,
+        "generatedTaskPass": 39,
+        "acceptedTaskPass": 29,
+        "parserAccepted": 51,
+        "contentFidelityPass": 52,
+        "cleanupPass": 65,
+        "criticalErrorsInGenerated": 6,
+        "criticalErrorsInAccepted": 1,
+        "tokenUsage": {
+          "promptTokens": 61212,
+          "completionTokens": 3421,
+          "totalTokens": 64633
+        },
+        "rowsWithReportedTokenUsage": 72,
+        "cloudP50Ms": 612.0,
+        "cloudP95Ms": 826,
+        "cloudResponsesByBudgetMs": {
+          "2000": 72,
+          "3000": 72,
+          "5000": 72
+        },
+        "modeAcceptedTaskPass": {
+          "light": 13,
+          "structure": 5,
+          "auto": 11
+        },
+        "generatedByBudgetMs": {
+          "2000": 39,
+          "3000": 39,
+          "5000": 39
+        },
+        "acceptedByBudgetMs": {
+          "2000": 29,
+          "3000": 29,
+          "5000": 29
+        }
+      },
+      "plusCleanupPrompt": {
+        "planned": 72,
+        "generatedTaskPass": 40,
+        "acceptedTaskPass": 30,
+        "parserAccepted": 53,
+        "contentFidelityPass": 57,
+        "cleanupPass": 63,
+        "criticalErrorsInGenerated": 4,
+        "criticalErrorsInAccepted": 0,
+        "tokenUsage": {
+          "promptTokens": 61212,
+          "completionTokens": 3084,
+          "totalTokens": 64296
+        },
+        "rowsWithReportedTokenUsage": 72,
+        "cloudP50Ms": 1273.0,
+        "cloudP95Ms": 1968,
+        "cloudResponsesByBudgetMs": {
+          "2000": 70,
+          "3000": 72,
+          "5000": 72
+        },
+        "modeAcceptedTaskPass": {
+          "light": 13,
+          "structure": 7,
+          "auto": 10
+        },
+        "generatedByBudgetMs": {
+          "2000": 40,
+          "3000": 40,
+          "5000": 40
+        },
+        "acceptedByBudgetMs": {
+          "2000": 30,
+          "3000": 30,
+          "5000": 30
+        }
+      }
+    },
+    "comparisonBoundary": "Plus arm added after first results on same corpus, separate time; not new holdout or randomized timing",
+    "productionPrompt": "mode-contract-v1",
+    "promptChanged": false,
+    "configurationWritten": false,
+    "decision": "Retain existing default; micro-cleanup quality goal not met"
+  },
+  "waitingPolicy": {
+    "normalInitialMax800UnicodeCharsMs": 5000,
+    "longOrExplicitRetryMs": 20000,
+    "scope": "Rewrite stage only, not stop-to-paste"
+  },
+  "package": {
+    "version": "0.2.9",
+    "frontendVersion": "0.4.8",
+    "artifacts": [
+      {
+        "fileVersion": "0.2.9",
+        "sha256": "2d42348eff06bf12d44607e4ebf4161a7cb9b99a023339dacd46a7984fb8144b",
+        "name": "SpeakMode.exe",
+        "bytes": 18261504,
+        "productVersion": "0.2.9"
+      },
+      {
+        "fileVersion": "0.2.9",
+        "sha256": "f105e1cd3fbe6625d6ed22439fb8ee76470dd8da940661013368c1b53a289fc8",
+        "name": "SpeakMode_0.2.9_x64-setup.exe",
+        "bytes": 5617176,
+        "productVersion": "0.2.9"
+      }
+    ],
+    "selectedBuildInputsUnchanged": true,
+    "selectedBuildInputCount": 172,
+    "thirdPartyFilesVerified": 13,
+    "resourceManifestCopied": true,
+    "launcherSyntaxValid": true,
+    "profile": "existing native-qa-2026-10-04",
+    "appLaunched": false,
+    "installerLaunched": false,
+    "gitPushed": false
+  },
+  "cacheGiB": 5.888,
+  "microphoneAccessed": false,
+  "userHistoryAccessed": false,
+  "humanSpeech": "NOT_RUN",
+  "installerAcceptance": "NOT_RUN",
+  "evidenceDirectory": "D:\\Codex_Project\\SpeakMode_Dev\\output\\validation\\delivery-first-0.2.9",
+  "evidenceHashes": {
+    "cleanup-cloud-r1.json": "45b2af93329ac5da4ab3cc24611bc965ae9202dcbb355404c6a540bbebae3d1c",
+    "cleanup-parser-replay-r1.json": "6cbc9875607cf2e2b9ec860802d990e414bac44ee81e0fd51aac96e3fc19fae4",
+    "cleanup-model-score-r2.json": "31c1a2be5e6d2c653d1d89494399fd73197abe638b6f3210b59b991f83ee766f",
+    "qwen-plus-r2.json": "7a7d5e479e80a81bd8166cf7094b3c6869d6d449c841b2de8e5de8e48a39cda8",
+    "native-delivery-r2.json": "993d5977c1baa11778c9be498060d0bbaf76b35ec98525438f013f1a7ed78161",
+    "native-browser-delivery.json": "16746c6d5f3ac5ef1c24ebb1a25de8053f068ac0a97c22d0f3eb50c6c84d4f0b"
+  }
+}

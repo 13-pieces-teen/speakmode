@@ -3938,11 +3938,12 @@ dependencies = [
 
 [[package]]
 name = "speakmode"
-version = "0.2.4"
+version = "0.2.19"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "brotli",
  "chrono",
  "cpal",
  "crossbeam-channel",

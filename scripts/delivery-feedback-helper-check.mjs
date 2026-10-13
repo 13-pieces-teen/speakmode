@@ -9,7 +9,7 @@ await mkdir(out,{recursive:true});
 const source=await readFile(root+'/app/src/services/deliveryFeedback.ts','utf8');
 await writeFile(out+'/delivery-feedback-check.mjs',ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);
 const {deliveryFeedback}=await import(pathToFileURL(out+'/delivery-feedback-check.mjs'));
-const tests=[],session=(state,deliveryState,deliveryFailureReason)=>({sessionId:'synthetic-result',generation:1,state,deliveryState,deliveryFailureReason});
+const tests=[],session=(state,deliveryState,deliveryFailureReason)=>({sessionId:'synthetic-result',generation:1,state,deliveryState,deliveryFailureReason,workerReleased:true});
 const test=async(name,run)=>{try{await run();tests.push({name,status:'PASS'});}catch(error){tests.push({name,status:'FAIL',error:String(error)});}};
 await test('Ready without receipt is not reported as pasted or failed',()=>{
  assert.equal(deliveryFeedback(null),null);
@@ -45,6 +45,11 @@ await test('Native dispatch allows viewing without copying or claiming insertion
  const feedback=deliveryFeedback(session('ready','unconfirmed'));
  assert.equal(feedback.title,'输入已派发');assert(!feedback.warning&&!feedback.canCopyOutput&&feedback.canViewOutput);assert(feedback.message.includes('不会自动重复输入'));
  assert(!/已粘贴|已成功输入|目标已收到|已插入/.test(feedback.title+feedback.message));
+});
+await test('Partial input dispatch remains an actionable exception without implying a successful paste',()=>{
+ const feedback=deliveryFeedback(session('ready','unconfirmed','partialInputUnconfirmed'));
+ assert(feedback.warning&&feedback.canCopyOutput&&feedback.canViewOutput);
+ assert(feedback.message.includes('先核对')&&!/已粘贴|已成功输入|目标已收到|已插入/.test(feedback.title+feedback.message));
 });
 await test('Prepared and dispatched stages do not invite competing clipboard copy or result navigation',()=>{
  for(const state of ['prepared','dispatched']){
@@ -99,29 +104,98 @@ const recorderOutput=ts.transpileModule(recorderSource,{compilerOptions:{target:
 await writeFile(out+'/recorder-check.mjs',`import {element,fragment} from ${JSON.stringify(pathToFileURL(stubsPath).href)};\n`+recorderOutput);
 const {RecorderWindow}=await import(pathToFileURL(out+'/recorder-check.mjs'));
 const {setDesktop}=await import(pathToFileURL(stubsPath));
-const viewButtons=(tree)=>{
+const copyButtons=(tree)=>{
  const found=[];
- const visit=node=>{if(Array.isArray(node))return node.forEach(visit);if(!node||typeof node!=='object')return;if(node.type==='button'&&node.props.children==='查看成稿')found.push(node);visit(node.props?.children);};
+ const visit=node=>{if(Array.isArray(node))return node.forEach(visit);if(!node||typeof node!=='object')return;if(node.type==='button'&&['复制文本','复制已识别文字'].includes(node.props.children))found.push(node);visit(node.props?.children);};
  visit(tree);return found;
 };
-const renderRecorder=(deliveryState,{available=true,reject=false}={})=>{
+const renderRecorder=(deliveryState,{available=true,reject=false,extra={}}={})=>{
  const calls=[];
- setDesktop({available,session:session('ready',deliveryState),modes:[],recorderModeRequest:null,error:'',command:async(name,payload)=>{calls.push({name,payload});if(reject)throw new Error('synthetic navigation failure');}});
- return {buttons:viewButtons(RecorderWindow()),calls};
+ setDesktop({available,session:{...session('ready',deliveryState),...extra},modes:[],recorderModeRequest:null,error:'',command:async(name,payload)=>{calls.push({name,payload});if(reject)throw new Error('synthetic navigation failure');}});
+ return {buttons:copyButtons(RecorderWindow()),calls};
 };
-await test('Unconfirmed recorder action opens the main panel once without clipboard or delivery commands',async()=>{
- const {buttons,calls}=renderRecorder('unconfirmed');assert.equal(buttons.length,1);assert.equal(buttons[0].props.disabled,false);
- buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
- assert.deepEqual(calls,[{name:'app.showMain',payload:{sessionId:'synthetic-result',expectedGeneration:1}}]);
+await test('Unconfirmed recorder never asks to open main or repeats delivery',()=>{
+ const {buttons,calls}=renderRecorder('unconfirmed');assert.equal(buttons.length,0);assert.equal(calls.length,0);
 });
-await test('Prepared and dispatched recorder feedback exposes no result button; preserved failures still allow viewing',()=>{
+await test('Unsent result offers inline copy without navigating or retrying paste',async()=>{
+ for(const state of ['skipped','failed']){
+  const {buttons,calls}=renderRecorder(state);assert.equal(buttons.length,1);assert.equal(buttons[0].props.disabled,false);
+  buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[{name:'result.copy',payload:{sessionId:'synthetic-result',expectedGeneration:1}}]);
+ }
+});
+await test('Pending dispatch exposes no competing copy and browser copy is disabled',()=>{
  for(const state of ['prepared','dispatched'])assert.equal(renderRecorder(state).buttons.length,0);
- for(const state of ['skipped','failed'])assert.equal(renderRecorder(state).buttons.length,1);
+ assert.equal(renderRecorder('skipped',{available:false}).buttons[0].props.disabled,true);
+ assert.equal(renderRecorder('skipped',{extra:{workerReleased:false}}).buttons[0].props.disabled,true);
 });
-await test('Browser recorder view action is disabled and failed navigation never retries input',async()=>{
- assert.equal(renderRecorder('unconfirmed',{available:false}).buttons[0].props.disabled,true);
- const {buttons,calls}=renderRecorder('unconfirmed',{reject:true});buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
- assert.equal(calls.length,1);assert.equal(calls[0].name,'app.showMain');
+await test('Copy failure never opens a panel or retries input',async()=>{
+ const {buttons,calls}=renderRecorder('skipped',{reject:true});buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls.length,1);assert.equal(calls[0].name,'result.copy');
 });
-const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Presentation logic and actual recorder button handler with synthetic hooks and command spies. No DOM, native acceptance, automatic paste, microphone, provider, or user data.',sourceSha256:createHash('sha256').update(source).digest('hex'),recorderSourceSha256:createHash('sha256').update(recorderSource).digest('hex'),tests};
+await test('Incomplete ASR can copy recovery directly without claiming a complete result',async()=>{
+ const {buttons,calls}=renderRecorder(null,{extra:{state:'incomplete',error:'识别未完整',canCopyRecovery:true,recoverableContentId:'synthetic-result'}});
+ assert.equal(buttons.length,1);assert.equal(buttons[0].props.children,'复制已识别文字');
+ buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls,[{name:'recoverable.copy',payload:{sessionId:'synthetic-result',expectedGeneration:1,recoverableContentId:'synthetic-result'}}]);
+});
+await test('Fallback is disclosed independently of actual native delivery outcome',()=>{
+ for(const reason of ['timeout','serviceUnavailable','invalidOutput','meaningRisk']){
+  for(const state of ['prepared','unconfirmed','skipped']){
+   const feedback=deliveryFeedback({...session('ready',state),rewriteFallback:reason});
+   assert(feedback.message.startsWith('已使用识别稿。'));assert(!/已成功输入|已粘贴/.test(feedback.message));
+  }
+ }
+});
+
+// Render the actual main-window recovery component using the same synthetic
+// hooks. Quiet completion is a presentation choice, never a native retry.
+const recoverySource=await readFile(root+'/app/src/components/SessionRecovery.tsx','utf8');
+const recoveryOutput=ts.transpileModule(recoverySource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,jsx:ts.JsxEmit.React,jsxFactory:'element',jsxFragmentFactory:'fragment'},transformers:{before:[replaceImports]}}).outputText;
+await writeFile(out+'/session-recovery-check.mjs',`import {element,fragment} from ${JSON.stringify(pathToFileURL(stubsPath).href)};\n`+recoveryOutput);
+const {SessionRecovery}=await import(pathToFileURL(out+'/session-recovery-check.mjs'));
+const nodes=(tree,predicate)=>{
+ const found=[];
+ const visit=node=>{if(Array.isArray(node))return node.forEach(visit);if(!node||typeof node!=='object')return;if(predicate(node))found.push(node);visit(node.props?.children);};
+ visit(tree);return found;
+};
+const renderRecovery=(live)=>{
+ const calls=[],opened=[];
+ setDesktop({session:live,command:async(name,payload)=>calls.push({name,payload}),refresh:async()=>calls.push({name:'state.snapshot'})});
+ return {tree:SessionRecovery({onOpen:id=>opened.push(id)}),calls,opened};
+};
+await test('Main window stays quiet after normal delivery without clearing results, navigating, or retrying',()=>{
+ for(const state of [undefined,'prepared','dispatched','unconfirmed','confirmed']){
+  for(const extra of [{},{rewriteFallback:'timeout'}]){
+   const {tree,calls,opened}=renderRecovery({...session('ready',state,state==='unconfirmed'?'inputDispatchedUnconfirmed':undefined),...extra});
+   assert.equal(tree,null);assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);
+  }
+ }
+});
+await test('Failed or partial delivery retains explicit copy and history actions without automatic side effects',async()=>{
+ for(const [state,reason] of [['skipped','targetUnavailableAtStop'],['failed','nativeDispatchFailed'],['unconfirmed','partialInputUnconfirmed']]){
+  const {tree,calls,opened}=renderRecovery(session('ready',state,reason));
+  assert(tree);assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);
+  const copy=nodes(tree,node=>node.type==='button'&&node.props.children==='复制成稿');
+  const view=nodes(tree,node=>node.type==='button'&&node.props.children==='查看成稿');
+  assert.equal(copy.length,1);assert.equal(view.length,1);
+  copy[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls.map(call=>call.name),['result.copy','state.snapshot']);
+  assert.deepEqual(opened,[]);
+  view[0].props.onClick();assert.deepEqual(opened,['synthetic-result']);
+ }
+});
+await test('Main window preserves recording controls and recoverable recognition failures',()=>{
+ for(const state of ['starting','recording','finalizingAsr','rewriting','failed','incomplete']){
+  const {tree,calls,opened}=renderRecovery({...session(state),error:state==='failed'?'合成识别失败':undefined,canCopyRecovery:true});
+  assert(tree,`${state} should remain actionable`);assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);
+  if(['failed','incomplete'].includes(state))assert.equal(nodes(tree,node=>node.type==='button'&&node.props.children==='复制已有文字').length,1);
+ }
+});
+await test('A real saved-result error remains visible even when the dispatch receipt is unconfirmed',()=>{
+ const message='本机输入回执未保存；不会再次自动输入，请核对目标后手动复制';
+ const {tree,calls}=renderRecovery({...session('ready','unconfirmed','inputDispatchedUnconfirmed'),error:message});
+ assert(tree);assert.equal(nodes(tree,node=>node.type==='p'&&node.props.children===message).length,1);assert.deepEqual(calls,[]);
+});
+const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Presentation logic and actual recorder/main-window recovery render and handlers with synthetic hooks and command spies. No DOM, native acceptance, automatic paste, microphone, provider, or user data.',sourceSha256:createHash('sha256').update(source).digest('hex'),recorderSourceSha256:createHash('sha256').update(recorderSource).digest('hex'),sessionRecoverySourceSha256:createHash('sha256').update(recoverySource).digest('hex'),tests};
 await writeFile(out+'/helper-receipt.json',JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt,null,2));process.exitCode=receipt.status==='PASS'?0:1;

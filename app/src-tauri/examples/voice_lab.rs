@@ -11,6 +11,7 @@ use speakmode_lib::{
     core::{BaseMode, DictionaryEntry, DictionarySnapshot, ModeSnapshot, ProviderConfig,
         SourceRevision, DICTIONARY_MAX_CONTEXT_BYTES, DICTIONARY_MAX_ENTRIES,
         DICTIONARY_MAX_TERM_CHARS},
+    platform::{audio::quantize, audio_conditioner::{AudioConditioner, ConditioningMode}},
 };
 use std::{collections::{HashMap, HashSet}, fs::{self, File, OpenOptions}, io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf}, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
@@ -35,6 +36,19 @@ struct RunSpec {
     dictionary_terms: Vec<String>, language: String, base_modes: Vec<BaseMode>,
     #[serde(default)] asr_model: Option<String>,
     #[serde(default)] rewrite_model: Option<String>,
+    #[serde(default)] conditioning_profile: ConditioningProfile,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum ConditioningProfile { #[default] Bypass, SoftVoice, FixedGain6Db }
+impl ConditioningProfile {
+    fn mode(self) -> ConditioningMode {
+        match self {
+            Self::Bypass => ConditioningMode::Bypass,
+            Self::SoftVoice => ConditioningMode::SoftVoice,
+            Self::FixedGain6Db => ConditioningMode::FixedGain6Db,
+        }
+    }
 }
 struct Fixture { pcm: Arc<Vec<i16>>, sha256: String }
 struct PreparedRun { spec: RunSpec, fixture: Arc<Fixture>, dictionary: DictionarySnapshot }
@@ -176,18 +190,34 @@ struct Progress {
     sent_frames: u64, sent_real_samples: u64, padded_tail_samples: u64,
     /// Production client-write/event metadata; existing sent_* fields count queue admission only.
     wire: Option<cloud::asr::AsrTelemetryView>,
+    /// Aggregate only: no PCM, frame contents, or additional fixture text.
+    conditioning: Option<Value>,
 }
 fn ms(start: Instant) -> u64 { start.elapsed().as_millis().try_into().unwrap_or(u64::MAX) }
+fn condition_frame(chunk: &[i16], profile: ConditioningProfile, conditioner: &mut AudioConditioner) -> Vec<i16> {
+    // Measure/process real samples only. Zero padding must not drive the gain controller.
+    let mut samples = chunk.iter().map(|sample| f32::from(*sample) / 32768.0).collect::<Vec<_>>();
+    conditioner.process(&mut samples);
+    let mut frame = if profile == ConditioningProfile::Bypass {
+        // Never requantize the baseline: even an identity float roundtrip could change PCM.
+        chunk.to_vec()
+    } else { samples.into_iter().map(quantize).collect() };
+    frame.resize(FRAME_SAMPLES, 0);
+    frame
+}
 async fn feed(pcm: Arc<Vec<i16>>, tx: mpsc::Sender<AsrInput>, configured: Arc<AtomicBool>, notify: Arc<Notify>,
-    progress: Arc<Mutex<Progress>>, started: Instant) -> Result<(), CloudError> {
+    progress: Arc<Mutex<Progress>>, started: Instant, profile: ConditioningProfile) -> Result<(), CloudError> {
     while !configured.load(Ordering::Acquire) { notify.notified().await; }
     progress.lock().unwrap().feed_started_ms = Some(ms(started));
+    // A fresh controller per request; every arm reads the immutable original fixture once.
+    let mut conditioner = AudioConditioner::new(profile.mode());
     let mut sequence = 0u64;
     for chunk in pcm.chunks(FRAME_SAMPLES) {
         // At least the real audio duration elapses between sends. No catch-up burst or acceleration.
         tokio::time::sleep(Duration::from_secs_f64(chunk.len() as f64 / 16_000.0)).await;
         let padding = FRAME_SAMPLES - chunk.len();
-        let mut frame = chunk.to_vec(); frame.resize(FRAME_SAMPLES, 0);
+        let frame = condition_frame(chunk, profile, &mut conditioner);
+        progress.lock().unwrap().conditioning = Some(serde_json::to_value(conditioner.summary()).expect("conditioning serializes"));
         let enqueue = Instant::now();
         tx.send(AsrInput::Frame { sequence, pcm16: frame, padding_samples: padding }).await
             .map_err(|_| lab_error("experiment_audio_closed", "ASR 已结束，固定音频发送停止"))?;
@@ -237,7 +267,7 @@ async fn recognize(run: &PreparedRun, config: &ProviderConfig, secret: &str) -> 
         let (items, ()) = tokio::try_join!(
             cloud::asr::run(config.clone(), secret.to_owned(), run.spec.language.clone(), run.dictionary.clone(),
                 attempt.clone(), rx, cancel.clone(), callback),
-            feed(run.fixture.pcm.clone(), tx, configured, notify, progress.clone(), started)
+            feed(run.fixture.pcm.clone(), tx, configured, notify, progress.clone(), started, run.spec.conditioning_profile)
         )?;
         Ok::<_, CloudError>(items)
     };
@@ -249,7 +279,8 @@ async fn recognize(run: &PreparedRun, config: &ProviderConfig, secret: &str) -> 
     let mut row = json!({"kind":"asr", "runId":run.spec.run_id, "fixtureId":run.spec.fixture_id,
         "fixtureSha256":run.fixture.sha256, "audioSamples":run.fixture.pcm.len(),
         "audioDurationMs":run.fixture.pcm.len() as u64 * 1000 / 16_000, "dictionaryTerms":run.spec.dictionary_terms,
-        "language":run.spec.language, "elapsedMs":ended_ms, "automaticRetries":0 });
+        "language":run.spec.language, "conditioningProfile":run.spec.conditioning_profile,
+        "elapsedMs":ended_ms, "automaticRetries":0 });
     let metrics = progress.lock().unwrap();
     row["progress"] = serde_json::to_value(&*metrics).expect("progress serializes");
     row["finishEnqueuedToAsrEndMs"] = metrics.finish_enqueued_ms.map(|time| ended_ms.saturating_sub(time)).map_or(Value::Null, |time| json!(time));
@@ -326,12 +357,13 @@ async fn execute(manifest: PreparedManifest, config: ProviderConfig, out: &Path)
         "preregisteredRuns":manifest.runs.iter().zip(&configurations).map(|(run, selected)|json!({"runId":run.spec.run_id,"fixtureId":run.spec.fixture_id,
             "fixtureSha256":run.fixture.sha256,"audioSamples":run.fixture.pcm.len(),"dictionaryTerms":run.spec.dictionary_terms,
             "configuration":config_metadata(selected),
-            "language":run.spec.language,"baseModes":run.spec.base_modes})).collect::<Vec<_>>(),
+            "language":run.spec.language,"baseModes":run.spec.base_modes,"conditioningProfile":run.spec.conditioning_profile})).collect::<Vec<_>>(),
         "totalPreregisteredAudioSamples":manifest.total_samples,"maximumAsrRuns":18,"maximumRewriteCalls":36,
         "sampleFormat":"PCM16 mono 16000Hz","automaticRetries":0,"status":"running","results":[],
         "timingNotes":["Audio is fed after Configured at no faster than its real duration; Tokio scheduling and backpressure may add delay.",
             "finishEnqueuedToAsrEndMs measures enqueueing Finish into the bounded provider queue to production ASR completion, not its network send timestamp.",
             "This exercise does not measure microphone capture, UI rendering, hotkey behavior, or cross-app insertion.",
+            "Conditioning runs once on the original PCM16 fixture before padding; it cannot recover information lost before recording. Bypass preserves fixture PCM exactly.",
             "passed means the production request and its response contract succeeded; semantic and recognition accuracy must be scored separately."] });
     evidence.append(&json!({"kind":"header","metadata":receipt}))?; evidence.checkpoint(&receipt)?;
     let mut halted = None::<Value>; let mut consecutive_transport = 0u32;
@@ -410,6 +442,36 @@ async fn main() {
 mod tests {
     use super::*;
     #[test]
+    fn conditioning_profiles_are_explicit_and_existing_manifests_remain_bypass() {
+        let mut value = json!({"runId":"condition-01","fixtureId":"same-audio",
+            "wavPath":"D:/synthetic.wav","dictionaryTerms":[],"language":"auto","baseModes":[]});
+        assert_eq!(serde_json::from_value::<RunSpec>(value.clone()).unwrap().conditioning_profile, ConditioningProfile::Bypass);
+        for (name, expected) in [("bypass", ConditioningProfile::Bypass), ("softVoice", ConditioningProfile::SoftVoice),
+            ("fixedGain6Db", ConditioningProfile::FixedGain6Db)] {
+            value["conditioningProfile"] = json!(name);
+            assert_eq!(serde_json::from_value::<RunSpec>(value.clone()).unwrap().conditioning_profile, expected);
+        }
+        value["conditioningProfile"] = json!("unknown");
+        assert!(serde_json::from_value::<RunSpec>(value).is_err());
+    }
+    #[test]
+    fn baseline_keeps_all_pcm16_values_exact_and_candidates_do_not_mutate_fixtures() {
+        let fixture = (i16::MIN..=i16::MAX).collect::<Vec<_>>();
+        let original = fixture.clone();
+        let mut baseline = AudioConditioner::new(ConditioningMode::Bypass);
+        for chunk in fixture.chunks(FRAME_SAMPLES) {
+            let frame = condition_frame(chunk, ConditioningProfile::Bypass, &mut baseline);
+            assert_eq!(&frame[..chunk.len()], chunk);
+            assert!(frame[chunk.len()..].iter().all(|sample| *sample == 0));
+        }
+        let mut candidate = AudioConditioner::new(ConditioningMode::FixedGain6Db);
+        let frame = condition_frame(&[512; 101], ConditioningProfile::FixedGain6Db, &mut candidate);
+        assert!(frame[..101].iter().any(|sample| *sample > 512));
+        assert!(frame[101..].iter().all(|sample| *sample == 0));
+        assert_eq!(candidate.summary().real_samples, 101, "padding must not enter the conditioner");
+        assert_eq!(fixture, original);
+    }
+    #[test]
     fn per_run_models_keep_scope_and_default_configuration_frozen() {
         let mut base = ProviderConfig::default();
         base.region=Some("beijing".into()); base.workspace=Some("owned-lab".into());
@@ -464,7 +526,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let configured = Arc::new(AtomicBool::new(false)); let notify = Arc::new(Notify::new());
         let progress = Arc::new(Mutex::new(Progress::default()));
-        let feeder = tokio::spawn(feed(pcm.clone(), tx, configured.clone(), notify.clone(), progress.clone(), Instant::now()));
+        let feeder = tokio::spawn(feed(pcm.clone(), tx, configured.clone(), notify.clone(), progress.clone(), Instant::now(), ConditioningProfile::Bypass));
         tokio::task::yield_now().await;
         assert!(rx.try_recv().is_err());
         configured.store(true, Ordering::Release); notify.notify_one();
@@ -479,5 +541,6 @@ mod tests {
         assert!(matches!(rx.recv().await.unwrap(), AsrInput::Finish { next_sequence: 2 }));
         feeder.await.unwrap().unwrap();
         let metrics = progress.lock().unwrap(); assert_eq!(metrics.sent_real_samples, 1701); assert_eq!(metrics.sent_frames, 2);
+        assert_eq!(metrics.conditioning.as_ref().unwrap()["realSamples"], json!(1701));
     }
 }

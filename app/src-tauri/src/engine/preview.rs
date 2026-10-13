@@ -119,8 +119,8 @@ fn preview_output_value(result:rewrite::RewriteResult)->Value {
     json!({"resolvedMode":result.resolved_mode,"text":result.blocks.iter().map(|b|b.text.as_str()).collect::<Vec<_>>().join("\n\n"),"blocks":result.blocks})
 }
 
-fn preview_response(key:&str,source:&PreviewSource,result:PreviewOutputs)->Value {
-    let mut value=json!({"id":key,"runId":key,"sourceKind":source.kind,"sourceItemCount":source.revision.items.len(),"sourceRevisionId":source.revision.id,"promptVersion":rewrite::REWRITE_PROMPT_VERSION});
+fn preview_response(key:&str,source:&PreviewSource,result:PreviewOutputs,protocol:&str)->Value {
+    let mut value=json!({"id":key,"runId":key,"sourceKind":source.kind,"sourceItemCount":source.revision.items.len(),"sourceRevisionId":source.revision.id,"promptVersion":protocol});
     match result {
         PreviewOutputs::Single(result)=>value.as_object_mut().unwrap().extend(preview_output_value(result).as_object().unwrap().clone()),
         PreviewOutputs::Comparison{light,structure}=>value["comparison"]=json!({"light":preview_output_value(light),"structure":preview_output_value(structure)}),

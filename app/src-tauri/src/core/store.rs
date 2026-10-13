@@ -259,6 +259,30 @@ impl Store {
     pub fn provider_config(&self) -> StoreResult<ProviderConfig> {
         decode(self.connection.query_row("SELECT data FROM provider_config WHERE singleton=1", [], |r| r.get(0))?)
     }
+    /// Product upgrades run only during application bootstrap, never when a tool opens Store.
+    /// Keep this additive table on schema v2 so an older application can still open the profile.
+    pub(crate) fn apply_app_upgrades(&mut self) -> StoreResult<()> {
+        const UPGRADE: &str = "rewrite-model-0.2.11";
+        let tx = CheckedTransaction {
+            tx: Some(self.connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?),
+            health: self.health.clone(),
+        };
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS app_upgrades (key TEXT PRIMARY KEY NOT NULL);")?;
+        let applied = tx.query_row("SELECT 1 FROM app_upgrades WHERE key=?1", [UPGRADE], |_| Ok(())).optional()?.is_some();
+        if !applied {
+            let (version, data): (u64, String) = tx.query_row("SELECT version,data FROM provider_config WHERE singleton=1", [], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let mut config: ProviderConfig = decode(data)?;
+            if config.version != version { return Err(StoreError::Serialization("provider configuration version does not match its row".into())); }
+            if config.provider == "aliyun" && config.region.as_deref() == Some("beijing") && config.rewrite_model == "qwen-flash" {
+                config.rewrite_model = "qwen3.8-flash".into();
+                config.version = version.checked_add(1).ok_or_else(|| invalid("version overflow"))?;
+                tx.execute("UPDATE provider_config SET version=?1,data=?2 WHERE singleton=1", params![i64_checked(config.version)?, json(&config)?])?;
+            }
+            // Mark skipped profiles too: future user choices must not become upgrade candidates.
+            tx.execute("INSERT INTO app_upgrades(key) VALUES(?1)", [UPGRADE])?;
+        }
+        tx.commit()
+    }
     pub fn save_provider_config(&mut self, mut config: ProviderConfig, expected_version: u64) -> StoreResult<ProviderConfig> {
         if config.provider != "aliyun" || !matches!(config.region.as_deref(), None | Some("beijing") | Some("singapore")) { return Err(invalid("unsupported provider or region")); }
         for value in [&config.asr_model, &config.rewrite_model, &config.adapter_version] { valid_id(value)?; }
@@ -414,7 +438,7 @@ impl Store {
         if detail.output.is_some() {return Err(StoreError::AlreadyCompleted);}
         let mode=detail.session.seed.mode_snapshot;
         let resolved=if mode.base_mode==BaseMode::Auto {BaseMode::Light} else {mode.base_mode};
-        let output=OutputRevision{id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,
+        let output=OutputRevision{id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None,
             blocks:detail.source.items.into_iter().map(|item|OutputBlock{id:id(),text:item.text,source_refs:vec![item.id]}).collect(),kind:RevisionKind::UseSource,creation_reason:CreationReason::UseSource,created_at:created_at.into()};
         self.commit_ready(output)
     }
@@ -501,6 +525,7 @@ impl Store {
     pub fn edit_output(&mut self, session_id:&str, expected_current_revision_id:&str, blocks:Vec<OutputBlock>, created_at:&str) -> StoreResult<HistoryDetail> {
         let mut output=self.current_for_edit(session_id,expected_current_revision_id)?;
         output.id=id(); output.blocks=blocks; output.kind=RevisionKind::Edit; output.creation_reason=CreationReason::History; output.created_at=created_at.into();
+        output.clear_rewrite_fallback();
         self.commit_revision(session_id,expected_current_revision_id,output,false)
     }
     pub fn restore_output(&mut self, session_id:&str, expected_current_revision_id:&str, patch:RestorePatch, created_at:&str) -> StoreResult<HistoryDetail> {
@@ -519,6 +544,7 @@ impl Store {
         block.text.replace_range(start..end,&fragments.join("\n"));
         for source_ref in refs { if !block.source_refs.contains(&source_ref) {block.source_refs.push(source_ref);} }
         output.id=id(); output.kind=RevisionKind::Restore; output.creation_reason=CreationReason::History; output.created_at=created_at.into();
+        output.clear_rewrite_fallback();
         self.commit_revision(session_id,expected_current_revision_id,output,false)
     }
     /// The explicit correction and optional dictionary append share one guarded
@@ -533,6 +559,7 @@ impl Store {
         if patch.expected_text==term {return Err(invalid("correction_unchanged"));}
         block.text.replace_range(start..end,&term);
         output.id=id();output.kind=RevisionKind::Edit;output.creation_reason=CreationReason::History;output.created_at=created_at.into();
+        output.clear_rewrite_fallback();
         let mut status=CorrectionDictionaryStatus::NotRequested;
         let dictionary=if let Some(expected)=expected_dictionary_version {
             let mut next=self.checked_dictionary(expected)?;
@@ -719,7 +746,8 @@ fn validate_source(seed:&SessionSeed,source:&SourceRevision) -> StoreResult<()> 
 pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreResult<()> {
     valid_id(&output.id)?;
     if !source.complete || output.source_revision_id!=source.id || output.session_id!=source.session_id || output.blocks.is_empty() || output.resolved_mode==BaseMode::Auto {return Err(invalid("output must bind a complete source and resolved base Mode"));}
-    if output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
+    if output.rewrite_fallback.is_none() && output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
+    if output.rewrite_fallback.is_some() && (output.resolved_mode!=BaseMode::Light || !matches!(output.kind,RevisionKind::Initial|RevisionKind::Undo)) {return Err(invalid("source fallback must be an initial result or an explicit undo"));}
     let final_ids:HashSet<&str>=source.items.iter().filter(|i|i.is_final).map(|i|i.id.as_str()).collect();
     let mut blocks=HashSet::new();
     for block in &output.blocks {
@@ -728,6 +756,9 @@ pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreRe
         let mut refs=HashSet::new();
         for source_ref in &block.source_refs {if !final_ids.contains(source_ref.as_str()) || !refs.insert(source_ref) {return Err(invalid("source reference is not a unique Final item of this revision"));}}
         if matches!(output.kind,RevisionKind::Initial|RevisionKind::UseSource|RevisionKind::Adopt) && block.source_refs.is_empty() {return Err(invalid("generated blocks need source references"));}
+    }
+    if output.rewrite_fallback.is_some() {
+        if output.blocks.len()!=1 || output.blocks[0].text!=source.text() || output.blocks[0].source_refs!=source.items.iter().map(|item|item.id.clone()).collect::<Vec<_>>() {return Err(invalid("rewrite fallback must preserve the complete source and its ordered references"));}
     }
     if output.kind==RevisionKind::UseSource {
         if output.blocks.len()!=source.items.len() || output.blocks.iter().zip(&source.items).any(|(block,item)|block.text!=item.text||block.source_refs!=[item.id.clone()]) {return Err(invalid("useSource must adopt unchanged items in capture order"));}
@@ -755,5 +786,5 @@ fn summary(detail:&HistoryDetail) -> HistorySummary {
     let title=text.lines().find(|line|!line.trim().is_empty()).unwrap_or("").chars().take(40).collect();
     let preview=text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
     let mode=detail.output.as_ref().map(|o|&o.mode_snapshot).unwrap_or(&detail.session.seed.mode_snapshot);
-    HistorySummary {session_id:detail.session.seed.id.clone(),title,preview,ended_at:detail.session.seed.ended_at.clone(),end_local_date:detail.session.seed.end_local_date.clone(),mode_id:mode.mode_id.clone(),mode_name:mode.name.clone(),resolved_mode:detail.output.as_ref().map(|o|o.resolved_mode),current_revision_id:detail.session.current_output_id.clone(),source_revision_id:detail.session.current_source_id.clone(),status:detail.session.status,source_char_count:source_character_count(&detail.source.text()),capture_duration_ms:detail.session.seed.capture_duration_ms}
+    HistorySummary {session_id:detail.session.seed.id.clone(),title,preview,ended_at:detail.session.seed.ended_at.clone(),end_local_date:detail.session.seed.end_local_date.clone(),mode_id:mode.mode_id.clone(),mode_name:mode.name.clone(),resolved_mode:detail.output.as_ref().map(|o|o.resolved_mode),rewrite_fallback:detail.output.as_ref().and_then(|o|o.rewrite_fallback),current_revision_id:detail.session.current_output_id.clone(),source_revision_id:detail.session.current_source_id.clone(),status:detail.session.status,source_char_count:source_character_count(&detail.source.text()),capture_duration_ms:detail.session.seed.capture_duration_ms}
 }
