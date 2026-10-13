@@ -44,7 +44,7 @@ async fn production_short_rewrite_budget_falls_back_at_five_seconds_without_seco
     let began=tokio::time::Instant::now();
     // Exercise the production wrapper (no injected deadline). The target is absent,
     // so delivery records a skip without touching host input or the clipboard.
-    h.finish_rewrite_with("s".into(),7,move|_,_,frozen,cancel|async move {
+    h.finish_rewrite_with("s".into(),7,move|_,_,frozen,cancel,_execution|async move {
         invoked.fetch_add(1,Ordering::SeqCst);*slot.lock().unwrap()=Some(cancel);
         tokio::time::sleep(Duration::from_secs(6)).await;
         returned.fetch_add(1,Ordering::SeqCst);
@@ -64,7 +64,7 @@ async fn production_short_rewrite_budget_falls_back_at_five_seconds_without_seco
 }
 
 async fn fail_rewrite(h:&Arc<AppHub>,code:&'static str) {
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,_|async move {
+    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,_,_execution|async move {
         Err(CloudError::new(code,"rewrite","synthetic failure"))
     },RewriteWaitPolicy::default(),|hub,_,_| {
         hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;
@@ -106,7 +106,7 @@ async fn rewrite_failures_deliver_source_exactly_once_and_never_open_main() {
 async fn rewrite_deadline_drops_late_candidate_and_cancels_only_its_child() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
     let captured=Arc::new(Mutex::new(None));let slot=captured.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,cancel|async move {
+    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,cancel,_execution|async move {
         *slot.lock().unwrap()=Some(cancel);
         std::future::pending::<std::result::Result<rewrite::RewriteResult,CloudError>>().await
     },RewriteWaitPolicy{deadline:Duration::from_millis(10)},|hub,_,_|hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
@@ -121,7 +121,7 @@ async fn rewrite_deadline_drops_late_candidate_and_cancels_only_its_child() {
 async fn synchronous_validation_finishing_after_deadline_cannot_commit_its_candidate() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
     let captured=Arc::new(Mutex::new(None));let slot=captured.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,frozen,cancel|async move {
+    h.finish_rewrite_with_policy("s".into(),7,move|_,_,frozen,cancel,_execution|async move {
         *slot.lock().unwrap()=Some(cancel);
         // Simulates synchronous JSON/semantic checking: no yield to Tokio's timer.
         std::thread::sleep(Duration::from_millis(30));
@@ -140,7 +140,7 @@ async fn rewrite_cancel_or_session_replacement_cannot_create_fallback() {
     for replace in [false,true] {
         let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
         let (began_tx,began_rx)=oneshot::channel();let (release_tx,release_rx)=oneshot::channel();let worker=h.clone();
-        let job=tokio::spawn(async move {worker.finish_rewrite_with_policy("s".into(),7,move|_,_,_,_|async move {
+        let job=tokio::spawn(async move {worker.finish_rewrite_with_policy("s".into(),7,move|_,_,_,_,_execution|async move {
             began_tx.send(()).unwrap();let _=release_rx.await;Err(CloudError::new("rewrite_network","rewrite","late failure"))
         },RewriteWaitPolicy::default(),|_,_,_|panic!("cancelled/replaced session cannot deliver")).await;});
         began_rx.await.unwrap();

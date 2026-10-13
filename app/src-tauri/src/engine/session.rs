@@ -612,15 +612,15 @@ impl AppHub {
         // Reuse the vocabulary frozen when this recording began, not a live
         // dictionary that the user may have changed while speaking.
         let Some(dictionary)=self.recording_rewrite_dictionary(&id,generation)else{return;};
-        self.finish_rewrite_with(id,generation,move|config,mode,source,cancel|async move{
-            rewrite::rewrite_with_dictionary(&config,&secret,&mode,&source,&dictionary,cancel).await
+        self.finish_rewrite_with(id,generation,move|config,mode,source,cancel,execution|async move{
+            rewrite::rewrite_with_execution(&config,&secret,&mode,&source,&dictionary,cancel,execution).await
         }).await;
     }
     // Private completion seam: tests supply a parsed fixture future while using
     // the same checkpoint, cancellation, storage and delivery gates. Production
     // always uses the cloud wrapper, with its allowlisted endpoint and a source-bound wait budget.
     async fn finish_rewrite_with<F>(self:&Arc<Self>,id:String,generation:u64,
-        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken)->F)
+        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken,rewrite::execution::RewriteExecution)->F)
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         self.finish_rewrite_with_policy(id,generation,generate,None::<RewriteWaitPolicy>,|hub,id,generation| {
             let hub=Arc::clone(hub);let id=id.to_owned();
@@ -631,7 +631,7 @@ impl AppHub {
     // None selects production policy from the same frozen snapshot sent to the provider;
     // tests can inject a fixed budget without changing the production selection path.
     async fn finish_rewrite_with_policy<F>(self:&Arc<Self>,id:String,generation:u64,
-        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken)->F,
+        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken,rewrite::execution::RewriteExecution)->F,
         policy:impl Into<Option<RewriteWaitPolicy>>,deliver:impl FnOnce(&Arc<Self>,&str,u64))
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
@@ -641,10 +641,14 @@ impl AppHub {
         self.diagnostics.rewrite_started(trace.as_ref(),rewrite::production_protocol_version(&config,&mode),policy.deadline.as_millis().min(u64::MAX as u128) as u64);
         let rewrite_cancel=cancel.child_token();
         let rewrite_deadline=tokio::time::Instant::now()+policy.deadline;
+        let observer_hub=Arc::downgrade(self);let observer_trace=trace.clone();
+        let execution=rewrite::execution::RewriteExecution::observed(rewrite_deadline,move|event|{
+            if let Some(hub)=observer_hub.upgrade(){hub.diagnostics.rewrite_request(observer_trace.as_ref(),event);}
+        });
         let generated=tokio::select! {
             biased;
             _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
-            result=tokio::time::timeout_at(rewrite_deadline,generate(config,mode.clone(),source.clone(),rewrite_cancel.clone()))=>match result {
+            result=tokio::time::timeout_at(rewrite_deadline,generate(config,mode.clone(),source.clone(),rewrite_cancel.clone(),execution))=>match result {
                 Ok(result)=>result,
                 Err(_)=>{rewrite_cancel.cancel();Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))},
             },

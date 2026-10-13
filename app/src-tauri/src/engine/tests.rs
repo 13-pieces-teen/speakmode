@@ -10,6 +10,9 @@ use std::sync::Barrier;
 mod preview_tests;
 #[path="rewrite_fallback_tests.rs"]
 mod rewrite_fallback_tests;
+
+#[path="rewrite_deadline_tests.rs"]
+mod rewrite_deadline_tests;
 #[path="recorder_copy_tests.rs"]
 mod recorder_copy_tests;
 #[path="typeless_import_tests.rs"]
@@ -398,7 +401,7 @@ fn range_rewrite_checkpoint(h:&AppHub) {
     h.checkpoint("s",7,range_rewrite_source()).unwrap();
 }
 async fn finish_parsed_fixture(h:&Arc<AppHub>,content:String) {
-    h.finish_rewrite_with_policy("s".into(),7,move|_config,mode,source,_cancel|async move{
+    h.finish_rewrite_with_policy("s".into(),7,move|_config,mode,source,_cancel,_execution|async move{
         rewrite::parse_model_output(&content,&mode,&source)
     },RewriteWaitPolicy::default(),|hub,_,_|{hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
 }
@@ -456,7 +459,7 @@ async fn cancellation_rejects_late_successfully_parsed_range_output_before_commi
     let h=hub();range_rewrite_checkpoint(&h);
     let (parsed_tx,parsed_rx)=tokio::sync::oneshot::channel();let(release_tx,release_rx)=tokio::sync::oneshot::channel();
     let worker=h.clone();let job=tokio::spawn(async move{
-        worker.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel|async move{
+        worker.finish_rewrite_with("s".into(),7,move|_config,mode,source,_cancel,_execution|async move{
             let parsed=rewrite::parse_model_output(&range_rewrite_content(true,true),&mode,&source);
             assert!(parsed.is_ok());parsed_tx.send(()).unwrap();
             // Deliberately ignore cancellation in the fixture transport: the

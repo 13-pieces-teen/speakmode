@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use super::execution::{RequestStage, RewriteExecution};
 
 fn cancelled() -> CloudError { CloudError::new("cancelled", "rewrite", "已取消整理") }
 fn timed_out() -> CloudError { CloudError::new("rewrite_timeout", "rewrite", "整理与核对等待已结束，识别稿仍保留") }
@@ -67,15 +68,31 @@ pub(super) async fn request_content(client: &Client, config: &ProviderConfig, se
         .ok_or_else(|| CloudError::new("empty_output", "rewrite", "整理响应为空"))
 }
 
+pub(super) async fn request_observed(client: &Client, config: &ProviderConfig, secret: &str,
+    endpoint: &str, body: &Value, cancel: &CancellationToken, execution: &RewriteExecution,
+    stage: RequestStage) -> Result<String, CloudError> {
+    execution.checkpoint(cancel)?;
+    let mut guard = execution.start(stage, cancel);
+    let result = request_content(client,config,secret,endpoint,body,cancel,execution.deadline).await;
+    guard.finish(&result);
+    result
+}
+
 pub(super) async fn run(client: &Client, config: &ProviderConfig, secret: &str, mode: &ModeSnapshot,
     source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken,
     endpoint: &str, timeout: Duration) -> Result<RewriteResult, CloudError> {
-    let deadline = Instant::now() + timeout;
+    run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,RewriteExecution::for_duration(timeout)).await
+}
+
+pub(super) async fn run_until(client: &Client, config: &ProviderConfig, secret: &str, mode: &ModeSnapshot,
+    source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken,
+    endpoint: &str, execution: RewriteExecution) -> Result<RewriteResult, CloudError> {
+    let deadline = execution.deadline;
     let job = async {
         checkpoint(&cancel, deadline)?;
         let protected = if uses_guarded_long(source) { Some(prepare_guarded_long(config, mode, source, dictionary)?) } else { None };
         let body = match &protected { Some(request) => request.body.clone(), None => fluent_request_body(config, mode, source, dictionary)? };
-        let content = request_content(client, config, secret, endpoint, &body, &cancel, deadline).await?;
+        let content = request_observed(client, config, secret, endpoint, &body, &cancel, &execution, RequestStage::Generation).await?;
         let mut draft = match &protected { Some(request) => parse_protected_long(&content, mode, source, request)?, None => parse_fluent_draft(&content, mode, source)? };
         super::normalize_draft_dictionary(source, dictionary, &mut draft);
         checkpoint(&cancel, deadline)?;
@@ -83,7 +100,7 @@ pub(super) async fn run(client: &Client, config: &ProviderConfig, secret: &str, 
         checkpoint(&cancel, deadline)?;
         let review_request = semantic_review::prepare(config, mode, source, &draft).map_err(review_error)?;
         checkpoint(&cancel, deadline)?;
-        let content = request_content(client, config, secret, endpoint, &review_request.body, &cancel, deadline).await?;
+        let content = request_observed(client, config, secret, endpoint, &review_request.body, &cancel, &execution, RequestStage::Review).await?;
         // Reuse this exact draft: reparsing would change its bound block identity.
         let review = semantic_review::parse(&content, &review_request.binding, source, &draft).map_err(review_error)?;
         checkpoint(&cancel, deadline)?;

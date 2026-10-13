@@ -221,12 +221,40 @@ def filter_rewrite(value):
     budget = unsigned(value.get("configuredBudgetMs"), "configuredBudgetMs")
     if not 0 < budget <= 120000:
         raise ExportError("Invalid rewrite budget metadata")
-    return {"protocolVersion": choice(value.get("protocolVersion"), REWRITE_PROTOCOLS),
+    result = {"protocolVersion": choice(value.get("protocolVersion"), REWRITE_PROTOCOLS),
             "configuredBudgetMs": budget,
             "outcome": choice(value.get("outcome"), REWRITE_OUTCOMES),
             "fallbackReason": choice(value.get("fallbackReason"), REWRITE_FALLBACKS),
             "errorCode": choice(value.get("errorCode"), REWRITE_ERROR_CODES),
             "durationMs": elapsed(value.get("durationMs"), "rewrite.durationMs")}
+    if "requests" in value:
+        result["requests"] = filter_rewrite_requests(value["requests"])
+    return result
+
+
+def filter_rewrite_requests(value):
+    if type(value) is not list or len(value) > 4:
+        raise ExportError("Invalid rewrite request list")
+    stages = frozenset(("generation", "review", "repair", "finalReview"))
+    outcomes = frozenset(("responseReceived", "failed", "cancelled", "timedOut", "interrupted"))
+    result, seen = [], set()
+    for raw in value:
+        raw = metadata_object(raw)
+        stage = choice(raw.get("stage"), stages)
+        if stage in seen:
+            raise ExportError("Duplicate rewrite request stage")
+        seen.add(stage)
+        start = elapsed(raw.get("startMs"), "request.startMs")
+        end = elapsed(raw.get("endMs"), "request.endMs")
+        duration = elapsed(raw.get("durationMs"), "request.durationMs")
+        remaining = unsigned(raw.get("remainingBudgetMs"), "remainingBudgetMs")
+        if start is None or remaining > 120000 or ((end is None) != (duration is None)):
+            raise ExportError("Invalid rewrite request timing")
+        if end is not None and (end < start or abs((end - start) - duration) > 0.01):
+            raise ExportError("Inconsistent rewrite request timing")
+        result.append({"stage": stage, "startMs": start, "endMs": end, "durationMs": duration,
+                       "remainingBudgetMs": remaining, "outcome": choice(raw.get("outcome"), outcomes)})
+    return result
 
 
 def flag(value):
