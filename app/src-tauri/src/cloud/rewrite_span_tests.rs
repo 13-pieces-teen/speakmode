@@ -201,7 +201,7 @@ fn coarse_span_block_still_allows_partial_restore_and_undo_without_changing_othe
         capture_duration_ms: 5_000, end_local_date: "2026-10-08".into(), time_zone: "Asia/Shanghai".into(),
         storage_policy: StoragePolicy::History, mode_snapshot: mode.clone() };
     store.checkpoint_source(seed, source.clone()).unwrap();
-    let initial = store.commit_ready(OutputRevision { id: "initial-span-result".into(),
+    let initial = store.commit_ready(OutputRevision { confirmed_context:None, id: "initial-span-result".into(),
         session_id: source.session_id.clone(), parent_revision_id: None, base_revision_id: None,
         source_revision_id: source.id.clone(), mode_snapshot: mode, resolved_mode: result.resolved_mode,
         blocks: result.blocks, kind: RevisionKind::Initial, creation_reason: CreationReason::NormalInitial,

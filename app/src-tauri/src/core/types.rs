@@ -208,6 +208,9 @@ pub enum RewriteFallbackReason { Timeout, ServiceUnavailable, InvalidOutput, Mea
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutputRevision {
+    /// Explicit source corrections used for this candidate; retained for review/undo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_context: Option<super::ConfirmedContext>,
     pub id: String,
     pub session_id: String,
     pub parent_revision_id: Option<String>,

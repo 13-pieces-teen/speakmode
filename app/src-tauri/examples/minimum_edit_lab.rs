@@ -1,5 +1,5 @@
 //! Finite read-only paired experiment. No history, audio, config writes or paste.
-use speakmode_lib::{cloud::{self,rewrite},core::{BaseMode,ModeSnapshot,ProviderConfig,SourceRevision,SourceItem}};
+use speakmode_lib::{cloud::{self,rewrite},core::{BaseMode,ModeSnapshot,ProviderConfig,SourceRevision,SourceItem,ConfirmedContext}};
 use serde::Deserialize;
 use serde_json::{json,Value};
 use std::{fs::{self,OpenOptions},io::Write,path::PathBuf,time::{Duration,Instant}};
@@ -7,7 +7,7 @@ use rusqlite::{Connection,OpenFlags};
 use sha2::{Digest,Sha256};
 
 #[derive(Deserialize)]#[serde(deny_unknown_fields,rename_all="camelCase")]
-struct Case{id:String,base_mode:BaseMode,#[serde(default)]rules:String,source_items:Vec<String>,category:String}
+struct Case{id:String,base_mode:BaseMode,#[serde(default)]rules:String,source_items:Vec<String>,category:String,#[serde(default)]confirmed_context:Option<ConfirmedContext>}
 fn config(path:&str)->anyhow::Result<ProviderConfig>{
     let db=Connection::open_with_flags(path,OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     let raw:String=db.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|r|r.get(0))?;
@@ -53,7 +53,7 @@ async fn main()->anyhow::Result<()>{
     let args=std::env::args().skip(1).collect::<Vec<_>>();
     anyhow::ensure!(args.len()==4,"minimum_edit_lab CONFIG_DB FIXTURE NEW_OUT --plan-only|--run|--current-plan|--current-run");
     for path in &args[..3]{anyhow::ensure!(PathBuf::from(path).is_absolute(),"absolute paths required");}
-    anyhow::ensure!(["--plan-only","--run","--current-plan","--current-run","--explain-review","--refine-run","--fixed-only","--confirm-repair","--repair-shape-check","--replay-native"].contains(&args[3].as_str()),"explicit action required");
+    anyhow::ensure!(["--confirmed-replay","--confirmed-plan","--confirmed-run","--plan-only","--run","--current-plan","--current-run","--explain-review","--refine-run","--fixed-only","--confirm-repair","--repair-shape-check","--replay-native"].contains(&args[3].as_str()),"explicit action required");
     let fixed_only=args[3]=="--fixed-only";
     let current_only=["--current-plan","--current-run"].contains(&args[3].as_str());
     let refinement=args[3]=="--refine-run"||fixed_only||current_only;
@@ -63,6 +63,38 @@ async fn main()->anyhow::Result<()>{
     let mut ids=std::collections::HashSet::new();for c in &cases{anyhow::ensure!(ids.insert(&c.id)&&!c.id.is_empty()&&c.id.len()<=80&&c.id.bytes().all(|v|v.is_ascii_alphanumeric()||b"-_".contains(&v))
         &&c.rules.chars().count()<=4000&&!c.source_items.is_empty()&&c.source_items.len()<=32&&c.source_items.iter().all(|t|!t.trim().is_empty())&&c.source_items.iter().map(|t|t.chars().count()).sum::<usize>()<=8000,"invalid case");}
     let config=config(&args[0])?;
+    if ["--confirmed-replay","--confirmed-plan","--confirmed-run"].contains(&args[3].as_str()) {
+        anyhow::ensure!(cases.len()<=6,"maximum twelve requests per confirmed run");
+        for c in &cases {rewrite::confirmed_candidate::validate(c.confirmed_context.as_ref().ok_or_else(||anyhow::anyhow!("confirmedContext required"))?,&source(c))?;}
+        if args[3]=="--confirmed-replay" {
+            anyhow::ensure!(cases.len()==1,"one frozen draft per local replay");
+            let text=fixture["frozenText"].as_str().ok_or_else(||anyhow::anyhow!("frozenText required"))?;
+            anyhow::ensure!(text.chars().count()<=80_000,"draft too large");
+            let result=json!({"scope":"OFFLINE_TENSE_HINT_ONLY_NOT_A_FULL_REVIEW","calls":0,"deliveryAuthorized":false,
+                "tenseChanged":rewrite::confirmed_candidate::tense_changed(cases[0].confirmed_context.as_ref().unwrap(),&source(&cases[0]),text)?});
+            let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+            output.write_all(serde_json::to_string_pretty(&result)?.as_bytes())?;println!("{}",result);return Ok(());
+        }
+        let metadata=json!({"scope":"EXPLICIT_HISTORY_CANDIDATE_TEXT_ONLY","maximumCalls":cases.len()*2,"protocol":rewrite::confirmed_candidate::VERSION,"fixtureSha256":format!("{:x}",Sha256::digest(&bytes)),"deliveryAuthorized":false});
+        if args[3]=="--confirmed-plan"{println!("{}",serde_json::to_string_pretty(&metadata)?);return Ok(());}
+        let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        let mut journal=OpenOptions::new().write(true).create_new(true).open(format!("{}.jsonl",args[2]))?;
+        writeln!(journal,"{}",metadata)?;journal.flush()?;
+        let secret=cloud::credentials::read(&config)?;let mut rows=Vec::new();let mut calls=0;
+        for c in &cases {
+            writeln!(journal,"{}",json!({"caseId":c.id,"state":"started","reservedCalls":2}))?;journal.flush()?;
+            let outcome=rewrite::confirmed_candidate::experiment(&config,&secret,&mode(c),&source(c),c.confirmed_context.as_ref().unwrap()).await?;
+            calls+=outcome.trace.calls;
+            let stop=outcome.result.as_ref().err().is_some_and(|e|matches!(e.code.as_str(),"authentication_failed"|"rate_limited"));
+            let row=json!({"id":c.id,"source":source(c),"context":c.confirmed_context,"candidate":outcome.result.as_ref().ok(),"error":outcome.result.as_ref().err(),"trace":outcome.trace});
+            writeln!(journal,"{}",row)?;journal.flush()?;rows.push(row);
+            if stop{break;}
+        }
+        output.write_all(serde_json::to_string_pretty(&json!({"metadata":metadata,"actualCalls":calls,"rows":rows}))?.as_bytes())?;output.flush()?;
+        println!("confirmed_candidate_complete: requests={calls}");return Ok(());
+    }
+
+    anyhow::ensure!(cases.iter().all(|c|c.confirmed_context.is_none()),"confirmedContext requires --confirmed-plan or --confirmed-run");
     if args[3]=="--explain-review" {
         anyhow::ensure!(cases.len()==1,"one frozen review per diagnosis");
         let content=fixture["frozenDraft"].as_str().ok_or_else(||anyhow::anyhow!("frozen draft required"))?;

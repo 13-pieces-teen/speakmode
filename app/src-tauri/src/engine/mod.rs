@@ -643,6 +643,14 @@ impl AppHub {
         let mode=db_mode(self.db_read(DbCommand::ModeSnapshot{id:p.get("modeId").and_then(Value::as_str).unwrap_or(&detail.session.seed.mode_snapshot.mode_id).into(),revision:None}).await?)?;
         let base=detail.output.as_ref().map(|v|v.id.clone()).unwrap_or_default();
         if p.get("baseRevisionId").and_then(Value::as_str).is_some_and(|v|v!=base){return Err(ApiError::new("revisionConflict","rewrite","记录已变化，请重新核对"));}
+        let confirmed_context:Option<ConfirmedContext>=p.get("confirmedContext").map(|value|serde_json::from_value(value.clone())
+            .map_err(|_|ApiError::new("invalid_confirmation","rewrite","确认内容格式无效"))).transpose()?;
+        if let Some(context)=&confirmed_context {
+            if p.get("sourceRevisionId").and_then(Value::as_str)!=Some(detail.source.id.as_str()) || p.get("baseRevisionId").and_then(Value::as_str)!=Some(base.as_str()) {
+                return Err(ApiError::new("revisionConflict","rewrite","确认内容需要绑定当前记录和识别稿"));
+            }
+            rewrite::confirmed_candidate::validate(context,&detail.source)?;
+        }
         let (config,dictionary)=self.auxiliary_rewrite_snapshot();
         cloud::endpoints(&config)?;
         let secret=credentials::read(&config)?;
@@ -657,10 +665,14 @@ impl AppHub {
             i.candidate=Some(CandidateSlot{key:id.clone(),run:run.clone(),cancel:cancel.clone(),base,result:None,adopting:None});
             i.auxiliary_workers.insert(operation.clone(),cancel.clone());AuxiliaryLease{hub:Arc::clone(self),key:operation}
         };
-        let generated=match (AuxiliaryFuture{future:Some(Box::pin(rewrite::rewrite_manual_candidate(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone()))),lease:Some(lease)}).await {
+        let generation=async {
+            if let Some(context)=&confirmed_context {rewrite::confirmed_candidate::generate(&config,&secret,&mode,&detail.source,&dictionary,context,cancel.clone()).await}
+            else {rewrite::rewrite_manual_candidate(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone()).await}
+        };
+        let generated=match (AuxiliaryFuture{future:Some(Box::pin(generation)),lease:Some(lease)}).await {
             Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.candidate.as_ref().is_some_and(|slot|slot.key==id&&slot.run==run){i.candidate=None;}return Err(ApiError::from(error).for_operation("application",&run));}
         };
-        let candidate=OutputRevision{id:run.clone(),session_id:id.clone(),parent_revision_id:None,base_revision_id:detail.output.as_ref().map(|o|o.id.clone()),source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:generated.draft.resolved_mode,rewrite_fallback:None,blocks:generated.draft.blocks,kind:RevisionKind::Adopt,creation_reason:if retry{CreationReason::Retry}else{CreationReason::History},created_at:now()};
+        let candidate=OutputRevision{confirmed_context,id:run.clone(),session_id:id.clone(),parent_revision_id:None,base_revision_id:detail.output.as_ref().map(|o|o.id.clone()),source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:generated.draft.resolved_mode,rewrite_fallback:None,blocks:generated.draft.blocks,kind:RevisionKind::Adopt,creation_reason:if retry{CreationReason::Retry}else{CreationReason::History},created_at:now()};
         let current=db_detail(self.db_read(DbCommand::GetResult{session_id:id.clone()}).await?)?;let mut i=self.inner.lock().unwrap();
         if i.guards.get(&id).is_some_and(|g|g.is_cancelled())||cancel.is_cancelled()||!i.candidate.as_ref().is_some_and(|s|s.key==id&&s.run==run&&!s.cancel.is_cancelled())||current.output.as_ref().map(|o|o.id.as_str()).unwrap_or("")!=candidate.base_revision_id.as_deref().unwrap_or(""){return Err(ApiError::new("revisionConflict","rewrite","当前记录已变化，候选不能覆盖新版本"));}
         let candidate=HistoryCandidate{revision:candidate,review_issues:generated.review_issues};

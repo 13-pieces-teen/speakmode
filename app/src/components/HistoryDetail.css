@@ -103,3 +103,10 @@
 .history-correction-conflict { margin-top: 12px; padding: 12px; border: 1px solid #e5d7ba; border-radius: 8px; color: #795c2f; font-size: 13px; line-height: 22px; }
 .history-correction-conflict p { margin-top: 0; }
 @container history-detail (max-width: 459px) { .history-term-correction { padding: 14px; } }
+
+.confirmed-context-editor {display:grid;gap:10px;margin-block:16px;min-width:0;}
+.confirmed-context-editor details {min-width:0;}
+.confirmed-context-editor summary {cursor:pointer;font-weight:500;}
+.confirmed-context-editor textarea {max-height:280px;}
+.confirmed-context-editor li,.candidate-source-reference li {overflow-wrap:anywhere;white-space:pre-wrap;margin-block:8px;}
+.confirmed-context-editor .rt-TextFieldRoot {margin-bottom:10px;}

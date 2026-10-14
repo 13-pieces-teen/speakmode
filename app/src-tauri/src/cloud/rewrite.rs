@@ -55,6 +55,10 @@ mod literals;
 mod fluent_pipeline;
 #[path="rewrite_manual_candidate.rs"]
 mod manual_candidate;
+#[path="rewrite_confirmed_candidate.rs"]
+pub mod confirmed_candidate;
+#[path="rewrite_tense_hint.rs"]
+mod tense_hint;
 #[path="rewrite_minimum.rs"]
 pub mod minimum;
 #[path="rewrite_language.rs"]

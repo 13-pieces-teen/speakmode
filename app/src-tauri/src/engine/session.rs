@@ -716,7 +716,7 @@ impl AppHub {
                 (rewrite_fallback::source_fallback(&source),fallback)
             },
         };
-        let output=OutputRevision{id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
+        let output=OutputRevision{confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}
         self.publish_session();self.changed();deliver(self,&id,generation);
     }
