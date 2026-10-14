@@ -47,7 +47,7 @@ REGIONS = frozenset(("beijing", "singapore"))
 # The current MVP models. Other values are redacted, never copied as arbitrary strings.
 ASR_MODELS = frozenset(("qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2025-10-27", "qwen3-asr-flash-realtime-2026-02-10"))
 REWRITE_MODELS = frozenset(("qwen-flash", "qwen-plus", "qwen3.8-flash", "qwen3.7-plus", "qwen3.7-plus-2026-05-26"))
-REWRITE_PROTOCOLS = frozenset(("mode-contract-v1", "mode-contract-v3", "cleanup-contract-v1", "automatic-dictation-v3", "natural-cleanup-v1", "natural-cleanup-v2", "fluent-dictation-v1+semantic-review-compact-v2", "fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3", "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2"))
+REWRITE_PROTOCOLS = frozenset(("mode-contract-v1", "mode-contract-v3", "cleanup-contract-v1", "automatic-dictation-v3", "natural-cleanup-v1", "natural-cleanup-v2", "fluent-dictation-v1+semantic-review-compact-v2", "fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3", "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2", "minimum-edit-v4+minimum-review-v4+residue-hint-v2+local-repair-v2"))
 REWRITE_OUTCOMES = frozenset(("validated", "fallback", "failed", "cancelled"))
 REWRITE_FALLBACKS = frozenset(("timeout", "serviceUnavailable", "invalidOutput", "meaningRisk"))
 REWRITE_ERROR_CODES = frozenset("""

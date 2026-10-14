@@ -51,17 +51,31 @@ async fn confirmed_request(config:&ProviderConfig,secret:&str,body:&Value,wait:D
 #[tokio::main]
 async fn main()->anyhow::Result<()>{
     let args=std::env::args().skip(1).collect::<Vec<_>>();
-    anyhow::ensure!(args.len()==4,"minimum_edit_lab CONFIG_DB FIXTURE NEW_OUT --plan-only|--run");
+    anyhow::ensure!(args.len()==4,"minimum_edit_lab CONFIG_DB FIXTURE NEW_OUT --plan-only|--run|--current-plan|--current-run");
     for path in &args[..3]{anyhow::ensure!(PathBuf::from(path).is_absolute(),"absolute paths required");}
-    anyhow::ensure!(["--plan-only","--run","--refine-run","--fixed-only","--confirm-repair","--repair-shape-check","--replay-native"].contains(&args[3].as_str()),"explicit action required");
+    anyhow::ensure!(["--plan-only","--run","--current-plan","--current-run","--explain-review","--refine-run","--fixed-only","--confirm-repair","--repair-shape-check","--replay-native"].contains(&args[3].as_str()),"explicit action required");
     let fixed_only=args[3]=="--fixed-only";
-    let refinement=args[3]=="--refine-run"||fixed_only;
+    let current_only=["--current-plan","--current-run"].contains(&args[3].as_str());
+    let refinement=args[3]=="--refine-run"||fixed_only||current_only;
     let bytes=fs::read(&args[1])?;anyhow::ensure!(bytes.len()<=1024*1024,"fixture limit");
     let fixture:Value=serde_json::from_slice(&bytes)?;let cases:Vec<Case>=serde_json::from_value(fixture["cases"].clone())?;
     anyhow::ensure!(!cases.is_empty()&&cases.len()<=16,"1..16 cases");
     let mut ids=std::collections::HashSet::new();for c in &cases{anyhow::ensure!(ids.insert(&c.id)&&!c.id.is_empty()&&c.id.len()<=80&&c.id.bytes().all(|v|v.is_ascii_alphanumeric()||b"-_".contains(&v))
         &&c.rules.chars().count()<=4000&&!c.source_items.is_empty()&&c.source_items.len()<=32&&c.source_items.iter().all(|t|!t.trim().is_empty())&&c.source_items.iter().map(|t|t.chars().count()).sum::<usize>()<=8000,"invalid case");}
     let config=config(&args[0])?;
+    if args[3]=="--explain-review" {
+        anyhow::ensure!(cases.len()==1,"one frozen review per diagnosis");
+        let content=fixture["frozenDraft"].as_str().ok_or_else(||anyhow::anyhow!("frozen draft required"))?;
+        let source=source(&cases[0]);let mode=mode(&cases[0]);
+        let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
+        let mut journal=OpenOptions::new().write(true).create_new(true).open(format!("{}.jsonl",args[2]))?;
+        writeln!(journal,"{}",json!({"scope":"ONE_DIAGNOSTIC_REVIEW_NOT_PRODUCTION_ACCEPTANCE","maximumCalls":1,"source":source,"mode":mode,"frozenDraft":content}))?;journal.flush()?;
+        let secret=cloud::credentials::read(&config)?;
+        let review=rewrite::minimum_pipeline::explain_review(&config,&secret,&mode,&source,content).await;
+        let result=json!({"calls":1,"review":review.as_ref().ok(),"error":review.as_ref().err(),"fixtureSha256":format!("{:x}",Sha256::digest(&bytes))});
+        output.write_all(serde_json::to_string_pretty(&result)?.as_bytes())?;output.flush()?;
+        println!("diagnostic_review_complete: requests=1");return Ok(());
+    }
     if ["--confirm-repair","--repair-shape-check","--replay-native"].contains(&args[3].as_str()){
         let shape_only=args[3]=="--repair-shape-check";
         let row=&fixture["receipt"];
@@ -110,10 +124,11 @@ async fn main()->anyhow::Result<()>{
     // R2 reuses recorded baselines and spends at most the remaining 44 calls.
     let maximum=if refinement{fixture["maximumCalls"].as_u64().unwrap_or(44) as usize}else{cases.len()*7};
     anyhow::ensure!(maximum>0&&maximum<=112&&(!refinement||maximum<=44),"invalid finite budget");
+    anyhow::ensure!(!current_only || (maximum<=16 && cases.len()*4<=maximum),"current-only plan must reserve at most 16 calls for all cases");
     let plan=json!({"tool":"minimum-edit-lab-v1","fixtureSha256":format!("{:x}",Sha256::digest(&bytes)),"caseCount":cases.len(),"maximumCalls":maximum,
-        "generationModel":config.rewrite_model,"region":config.region,"judgeModel":"qwen3.7-plus","sharedDeadlineMs":"5000/8000/20000 by source Unicode count",
-        "baseline":"frozen actual 0.2.18","candidate":rewrite::MINIMUM_PIPELINE_VERSION,"retries":0,"actualNativeDelivery":"NOT_RUN"});
-    if args[3]=="--plan-only"{println!("{}",serde_json::to_string_pretty(&plan)?);return Ok(());}
+        "generationModel":config.rewrite_model,"region":config.region,"judgeModel":if current_only{"NOT_RUN"}else{"qwen3.7-plus"},"sharedDeadlineMs":"5000/8000/20000 by source Unicode count",
+        "baseline":if current_only{"NOT_RUN_CURRENT_ONLY"}else{"frozen actual 0.2.18"},"candidate":rewrite::MINIMUM_PIPELINE_VERSION,"retries":0,"actualNativeDelivery":"NOT_RUN"});
+    if ["--plan-only","--current-plan"].contains(&args[3].as_str()){println!("{}",serde_json::to_string_pretty(&plan)?);return Ok(());}
     let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
     let journal_path=format!("{}.jsonl",args[2]);let mut journal=OpenOptions::new().write(true).create_new(true).open(&journal_path)?;
     writeln!(journal,"{}",plan)?;journal.flush()?;
@@ -123,14 +138,14 @@ async fn main()->anyhow::Result<()>{
         let source=source(c);let mode=mode(c);let wait=Duration::from_millis(rewrite::initial_wait_ms(&source));
         if refinement{
             if dispatched+4>maximum{break;}
-            let previous=fixture["priorResults"].as_array().and_then(|rows|rows.iter().find(|r|r["caseId"]==c.id)).ok_or_else(||anyhow::anyhow!("recorded baseline required"))?;
-            writeln!(journal,"{}",json!({"caseId":c.id,"phase":"candidate-v2","reservedMaximumCalls":4,"source":source,"mode":mode,"deadlineMs":wait.as_millis()}))?;journal.flush()?;
+            let previous=if current_only {&Value::Null}else{fixture["priorResults"].as_array().and_then(|rows|rows.iter().find(|r|r["caseId"]==c.id)).ok_or_else(||anyhow::anyhow!("recorded baseline required"))?};
+            writeln!(journal,"{}",json!({"caseId":c.id,"phase":if current_only{"current-production"}else{"candidate-v2"},"reservedMaximumCalls":4,"source":source,"mode":mode,"deadlineMs":wait.as_millis()}))?;journal.flush()?;
             let outcome=rewrite::minimum_pipeline::experiment(&config,&secret,&mode,&source,wait).await?;
             dispatched+=outcome.trace.calls;
             let generated=outcome.result.as_ref().map(text).unwrap_or_else(|_|source.text());
             if outcome.result.as_ref().err().is_some_and(|e|["authentication_failed","rate_limited"].contains(&e.code.as_str())){fatal=true;}
             let row=json!({"caseId":c.id,"category":c.category,"mode":mode,"sourceText":source.text(),"deadlineMs":wait.as_millis(),"baseline":previous["baseline"],
-                "candidate":{"success":outcome.result.is_ok(),"text":generated,"error":outcome.result.err(),"trace":outcome.trace},"baselineReused":true,"blindJudge":"R1 grader failed calibration; human code agent review required"});
+                "candidate":{"success":outcome.result.is_ok(),"text":generated,"error":outcome.result.err(),"trace":outcome.trace},"baselineReused":!current_only,"blindJudge":if current_only{"NOT_RUN_CURRENT_ONLY"}else{"R1 grader failed calibration; human code agent review required"}});
         println!("{} candidate={}",c.id,row["candidate"]["success"]);writeln!(journal,"{}",json!({"completed":row}))?;journal.flush()?;rows.push(row);
             if fatal{break;}continue;
         }

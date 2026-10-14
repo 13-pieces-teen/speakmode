@@ -33,6 +33,43 @@ fn review_admission_allows_cleanup_and_exact_unit_normalization() {
 }
 
 #[test]
+fn english_measurements_after_words_keep_value_and_unit_checks() {
+    for (source, changed) in [
+        ("The budget is 30 dollars.", "The budget is 40 dollars."),
+        ("We wait 3 seconds.", "We wait 3 minutes."),
+        ("The limit is\n30元.", "The limit is\n40元."),
+    ] { assert!(!admitted(&[source],changed),"{source} -> {changed}"); }
+    assert!(admitted(&["We wait 60 seconds."],"We wait 1 minute."));
+    assert!(admitted(&["The budget is 30 dollars."],"The budget is 30 USD."));
+    let keys:Vec<_>=facts::extract("Qwen3.8, v0.2.1, budget 30 dollars.").into_iter().map(|fact|fact.key).collect();
+    assert_eq!(keys,["version:0.2.1","usd:30"]);
+}
+
+#[test]
+fn spoken_english_measurements_normalize_without_allowing_value_changes() {
+    for (raw, good, bad) in [
+        ("I have two years of experience.", "I have 2 years of experience.", "I have 3 years of experience."),
+        ("The budget is twenty seven hundred dollars.", "The budget is 2700 USD.", "The budget is 1700 USD."),
+        ("Wait for sixty seconds.", "Wait for 1 minute.", "Wait for 2 minutes.")
+    ] {
+        assert!(admitted(&[raw], good), "{raw} => {good}");
+        assert!(!admitted(&[raw], bad), "{raw} => {bad}");
+    }
+}
+
+#[test]
+fn interrupted_english_year_cannot_pass_as_a_shorter_year_and_orphan_suffix() {
+    let input=["I expect to graduate in twenty thirty.", "Two. I am still learning."];
+    assert!(admitted(&input,"I expect to graduate in 2032. I am still learning."));
+    assert!(admitted(&input,"I expect to graduate in twenty thirty two. I am still learning."));
+    assert!(!admitted(&input,"I expect to graduate in 2030.\nTwo. I am still learning."));
+    assert!(!admitted(&input,"I expect to graduate in 2033. I am still learning."));
+    assert!(admitted(&["I graduated in two thousand and twenty seven."],"I graduated in 2027."));
+    assert!(admitted(&["I graduated in twenty twenty.\nTwo teams joined."],"I graduated in 2020. Two teams joined."));
+    assert!(admitted(&["I graduated in 2027, sorry, in 2028."],"I graduated in 2028."));
+}
+
+#[test]
 fn review_admission_rejects_explicit_value_unit_version_or_time_changes() {
     for (input, output) in [
         ("预算3000元。", "预算3500元。"),

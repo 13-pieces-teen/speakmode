@@ -8,6 +8,7 @@
 use super::{anchors, effective_spans, facts, same_kind, CloudError, Kind};
 use crate::core::{OutputBlock, SourceRevision};
 use std::collections::HashSet;
+#[path = "rewrite_english_years.rs"] mod english_years;
 
 fn reject(message: &'static str) -> CloudError {
     CloudError::new("rewrite_meaning_risk", "rewrite", message)
@@ -17,6 +18,23 @@ fn numeric_set<'a>(texts: impl Iterator<Item = &'a str>) -> HashSet<String> {
     texts.flat_map(facts::extract).map(|fact| fact.key)
         .filter(|key| !key.starts_with("count:") && !key.starts_with("scalar:"))
         .collect()
+}
+
+fn numeric_sets(source: &SourceRevision, blocks: &[OutputBlock], spans: &[super::Span<'_>]) -> (HashSet<String>, HashSet<String>) {
+    let mut source_numbers = numeric_set(spans.iter().map(|span| span.text.as_str()));
+    let mut output_numbers = numeric_set(blocks.iter().map(|block| block.text.as_str()));
+    // Whole-source extraction is essential here: clause splitting would turn
+    // "in twenty thirty.\nTwo." into a false 2030 before seeing its suffix.
+    let text=source.text();
+    // Explicit correction resolution is outside this bounded English parser.
+    // Abstain on those sources and retain the existing semantic review.
+    if !english_years::has_correction(&text) {
+        let expected=english_years::keys(&text);
+        output_numbers.extend(blocks.iter().flat_map(|block| english_years::retained_keys(&block.text))
+            .filter(|key|expected.contains(key)));
+        source_numbers.extend(expected);
+    }
+    (source_numbers, output_numbers)
 }
 
 fn kinds<'a>(texts: impl Iterator<Item = &'a str>) -> HashSet<Kind> {
@@ -53,8 +71,7 @@ fn sorted(values: impl Iterator<Item = String>) -> Vec<String> {
 /// changing validation, repairing a draft, or asserting semantic equivalence.
 pub(super) fn evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> serde_json::Value {
     let spans = effective_spans(source);
-    let source_numbers = numeric_set(spans.iter().map(|span| span.text.as_str()));
-    let output_numbers = numeric_set(blocks.iter().map(|block| block.text.as_str()));
+    let (source_numbers, output_numbers) = numeric_sets(source, blocks, &spans);
     let source_kinds = kinds(spans.iter().map(|span| span.text.as_str()));
     let output_kinds = kinds(blocks.iter().map(|block| block.text.as_str()));
     let time_labels = |values: &HashSet<Kind>| sorted(values.iter().copied()
@@ -108,6 +125,7 @@ pub(super) fn required_evidence(source: &SourceRevision, blocks: &[OutputBlock])
             else { scope_required = true; }
         }
     }
+    facts_required |= !english_years::keys(&source.text()).is_empty() || blocks.iter().any(|block| !english_years::keys(&block.text).is_empty());
     (facts_required, scope_required)
 }
 
@@ -116,8 +134,7 @@ pub(super) fn validate(source: &SourceRevision, blocks: &[OutputBlock]) -> Resul
     if spans.is_empty() || blocks.is_empty() || spans.iter().any(|span| span.unresolved_correction) {
         return Err(reject("语义复核的来源或改口含义尚不明确"));
     }
-    let source_numbers = numeric_set(spans.iter().map(|span| span.text.as_str()));
-    let output_numbers = numeric_set(blocks.iter().map(|block| block.text.as_str()));
+    let (source_numbers, output_numbers) = numeric_sets(source, blocks, &spans);
     if source_numbers != output_numbers {
         return Err(reject("语义复核前发现明确数值、单位或版本变化"));
     }

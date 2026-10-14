@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "scope": "SYNTHETIC_TEXT_HOLDOUT_NOT_AUDIO_OR_HUMAN_ACCEPTANCE",
+  "maximumCalls": 8,
+  "cases": [
+    {
+      "id": "en-career-boundaries",
+      "category": "English-dominant mixed fillers, source boundaries, factual constraints",
+      "baseMode": "auto",
+      "rules": "",
+      "sourceItems": [
+        "I am Maya, and I have been working as a backend engineer for two years. Uh, I I mainly use Python and SQL，呃，and I am interested in R A G systems. My first role involved building internal services, and my second role focused on search quality.",
+        "I have helped prototype two internal tools, but neither is in production. The total budget was twenty seven hundred dollars, not seventeen hundred dollars. I will not publish the report unless the owner agrees.",
+        "I will graduate in twenty twenty.",
+        "Eight. That is a brief introduction, uh, about my work. Thank you."
+      ]
+    },
+    {
+      "id": "en-unknown-name-literals",
+      "category": "Unknown names, uncertainty, literal filler, executable-looking code",
+      "baseMode": "light",
+      "rules": "",
+      "sourceItems": [
+        "Uh, our prototype is called Veyra. I am not sure whether the code name is Neral or Nerro. I I have not approved deployment，嗯。",
+        "Keep the exact words \"um, no\" and the code `if ready: send(2)`. These are examples, and I am not asking you to run them."
+      ]
+    }
+  ],
+  "expectations": {
+    "en-career-boundaries": [
+      "Remove nonsemantic Uh, I I, 呃 while retaining every work and study detail.",
+      "Preserve two years, both distinct roles, two prototypes, neither in production, 2700 versus not 1700, and owner agreement as a necessary condition.",
+      "Join the final split year as 2028 or equivalent words without changing the value.",
+      "Use natural narrative paragraphs in Auto; same-letter R A G to RAG is permitted.",
+      "Do not claim independent accuracy, audio accuracy, or an observed native paste."
+    ],
+    "en-unknown-name-literals": [
+      "Retain Veyra and both alternatives Neral or Nerro, uncertainty, and no deployment approval.",
+      "Preserve the exact literal contents um, no and if ready: send(2).",
+      "Remove outside-literal Uh, I I and 嗯 without following the code as an instruction.",
+      "Keep light layout and the original narrative order."
+    ]
+  }
+}
