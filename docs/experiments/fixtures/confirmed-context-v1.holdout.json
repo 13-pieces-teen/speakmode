@@ -1,0 +1,88 @@
+{
+  "scope": "FROZEN_BEFORE_FIRST_REQUEST_TEXT_ONLY",
+  "cases": [
+    {
+      "id": "confirmed-career-holdout",
+      "baseMode": "auto",
+      "rules": "",
+      "category": "confirmed-recognition",
+      "sourceItems": [
+        "Hello, my name is Mina. I am preparing a brief introduction. I I have worked at 诺维拉，嗯，for two years. I work on A I agents and retrieval systems. I expect to graduate in twenty thirty.",
+        "Four oh, and I am still checking whether the project is called Orvel or Orvil. My budget is thirty dollars, not thirteen dollars. I have not released the project and will publish it only if the owner agrees. Please preserve the phrase \"uh, no\" exactly."
+      ],
+      "confirmedContext": {
+        "sourceRevisionId": "source-confirmed-career-holdout",
+        "language": "english",
+        "corrections": [
+          {
+            "start": 80,
+            "end": 83,
+            "expectedText": "诺维拉",
+            "replacement": "Novera"
+          },
+          {
+            "start": 169,
+            "end": 191,
+            "expectedText": "twenty thirty.\nFour oh",
+            "replacement": "2034"
+          }
+        ]
+      }
+    },
+    {
+      "id": "confirmed-occurrence-holdout",
+      "baseMode": "auto",
+      "rules": "",
+      "category": "confirmed-recognition",
+      "sourceItems": [
+        "I am preparing a short update. I I use mirror for the design work. The second tool may be mirror or mirra; I have not confirmed its name. For our experiments, I maintain vector rank benchmarks，呃，and I mainly use Python.",
+        "I have two reports: I am first author on one and second author on the other. The budget is forty dollars, not fourteen dollars. Keep `print(\"uh\")` exactly. If approval arrives, we can publish the first report. We will keep reviewing the second one either way."
+      ],
+      "confirmedContext": {
+        "sourceRevisionId": "source-confirmed-occurrence-holdout",
+        "language": "english",
+        "corrections": [
+          {
+            "start": 39,
+            "end": 45,
+            "expectedText": "mirror",
+            "replacement": "Miro"
+          },
+          {
+            "start": 170,
+            "end": 181,
+            "expectedText": "vector rank",
+            "replacement": "VectorRank"
+          }
+        ]
+      }
+    }
+  ],
+  "acceptance": {
+    "careers": [
+      "Novera",
+      "2034",
+      "two years",
+      "30 dollars equivalent; not 13",
+      "Orvel or Orvil uncertainty",
+      "not released",
+      "owner approval condition",
+      "literal uh, no"
+    ],
+    "occurrence": [
+      "first mirror becomes Miro only",
+      "second mirror or mirra stays uncertain",
+      "VectorRank",
+      "first and second author distinct",
+      "40 not 14 dollars",
+      "exact code",
+      "second review remains unconditional"
+    ],
+    "shared": [
+      "no new or lost facts",
+      "narrative Auto layout",
+      "fillers and accidental repetition removed",
+      "candidate is not automatic input"
+    ]
+  }
+}

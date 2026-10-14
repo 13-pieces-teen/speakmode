@@ -439,7 +439,7 @@ impl Store {
         if detail.output.is_some() {return Err(StoreError::AlreadyCompleted);}
         let mode=detail.session.seed.mode_snapshot;
         let resolved=if mode.base_mode==BaseMode::Auto {BaseMode::Light} else {mode.base_mode};
-        let output=OutputRevision{id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None,
+        let output=OutputRevision{confirmed_context:None, id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None,
             blocks:detail.source.items.into_iter().map(|item|OutputBlock{id:id(),text:item.text,source_refs:vec![item.id]}).collect(),kind:RevisionKind::UseSource,creation_reason:CreationReason::UseSource,created_at:created_at.into()};
         self.commit_ready(output)
     }
@@ -746,6 +746,10 @@ fn validate_source(seed:&SessionSeed,source:&SourceRevision) -> StoreResult<()> 
 }
 pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreResult<()> {
     valid_id(&output.id)?;
+    if let Some(context)=&output.confirmed_context {
+        context.reference_text(source).map_err(invalid)?;
+        if output.rewrite_fallback.is_some() || matches!(output.kind,RevisionKind::Initial|RevisionKind::UseSource) {return Err(invalid("confirmed context belongs only to an explicit history revision"));}
+    }
     if !source.complete || output.source_revision_id!=source.id || output.session_id!=source.session_id || output.blocks.is_empty() || output.resolved_mode==BaseMode::Auto {return Err(invalid("output must bind a complete source and resolved base Mode"));}
     if output.rewrite_fallback.is_none() && output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
     if output.rewrite_fallback.is_some() && (output.resolved_mode!=BaseMode::Light || !matches!(output.kind,RevisionKind::Initial|RevisionKind::Undo)) {return Err(invalid("source fallback must be an initial result or an explicit undo"));}

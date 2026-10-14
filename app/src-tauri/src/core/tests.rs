@@ -9,7 +9,7 @@ fn source(session:&str) -> SourceRevision {
     SourceRevision{id:format!("source-{session}"),session_id:session.into(),asr_attempt_id:format!("attempt-{session}"),generation:7,provider:"aliyun".into(),model:"candidate-model".into(),adapter_version:"test-protocol-v1".into(),complete:true,items:vec![SourceItem{id:format!("item-{session}-1"),provider_item_id:"provider-1".into(),capture_order:1,text:"如果会议未确认，不要订机票。Hello 12 🙂".into(),is_final:true,start_ms:Some(0),end_ms:Some(7000)},SourceItem{id:format!("item-{session}-2"),provider_item_id:"provider-2".into(),capture_order:2,text:"先保留行程。".into(),is_final:true,start_ms:Some(7000),end_ms:Some(12000)}],created_at:"2026-10-04T10:00:12+08:00".into()}
 }
 fn output(session:&str) -> OutputRevision {
-    OutputRevision{id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
+    OutputRevision{confirmed_context:None, id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
 }
 fn ready(store:&mut Store,session:&str,policy:StoragePolicy) -> HistoryDetail {
     store.checkpoint_source(seed(session,policy),source(session)).unwrap();
@@ -639,4 +639,26 @@ fn source_only_memory_adoption_keeps_body_out_of_sqlite_and_uses_the_same_first_
     assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
     store.clear_temporary_results();assert!(store.get_result("private").is_err());
     assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
+}
+
+#[test]
+fn confirmed_history_context_follows_retention_undo_and_source_validation() {
+    for policy in [StoragePolicy::History,StoragePolicy::MemoryOnly] {
+        let mut store=Store::in_memory().unwrap();let before=ready(&mut store,"confirmed",policy);
+        let context=ConfirmedContext{source_revision_id:before.source.id.clone(),language:DraftLanguage::English,
+            corrections:vec![SourceCorrection{start:2,end:4,expected_text:"会议".into(),replacement:"review".into()}]};
+        let mut candidate=before.output.clone().unwrap();candidate.id="candidate".into();candidate.kind=RevisionKind::Adopt;
+        candidate.base_revision_id=before.session.current_output_id.clone();candidate.creation_reason=CreationReason::History;candidate.confirmed_context=Some(context.clone());
+        let mut stale=candidate.clone();stale.confirmed_context.as_mut().unwrap().corrections[0].expected_text="wrong".into();
+        assert!(store.adopt_candidate("confirmed","output-confirmed",stale).is_err());assert_eq!(store.get_result("confirmed").unwrap(),before);
+        let adopted=store.adopt_candidate("confirmed","output-confirmed",candidate).unwrap();assert_eq!(adopted.source,before.source);
+        let output=adopted.output.unwrap();assert_eq!(output.confirmed_context,Some(context));assert_eq!(store.dictionary().unwrap(),DictionarySnapshot::default());
+        assert_eq!(serde_json::from_str::<OutputRevision>(&serde_json::to_string(&output).unwrap()).unwrap(),output);
+        if policy==StoragePolicy::MemoryOnly {for table in ["sessions","sources","source_items","outputs"] {
+            assert_eq!(store.test_connection().query_row(&format!("SELECT COUNT(*) FROM {table}"),[],|row|row.get::<_,u64>(0)).unwrap(),0);
+        }}
+        let undone=store.undo_output("confirmed",&output.id,"undo").unwrap();assert!(undone.output.unwrap().confirmed_context.is_none());
+        if policy==StoragePolicy::MemoryOnly {store.clear_temporary_results();}else{store.delete_history("confirmed").unwrap();}
+        assert!(store.get_result("confirmed").is_err());assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
+    }
 }

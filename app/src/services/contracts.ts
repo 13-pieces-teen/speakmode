@@ -7,8 +7,10 @@ export interface ModeSnapshot { modeId:string; name:string; baseMode:BaseMode; r
 export interface SourceItem { id:string; providerItemId:string; captureOrder:number; text:string; final:boolean; startMs:number|null; endMs:number|null }
 export interface SourceRevision { id:string; sessionId:string; asrAttemptId:string; generation:number; provider:string; model:string; adapterVersion:string; complete:boolean; items:SourceItem[]; createdAt:string }
 export interface OutputBlock { id:string; text:string; sourceRefs:string[] }
-export interface OutputRevision { rewriteFallback?:RewriteFallbackReason; id:string; sessionId:string; parentRevisionId:string|null; baseRevisionId:string|null; sourceRevisionId:string; modeSnapshot:ModeSnapshot; resolvedMode:BaseMode; blocks:OutputBlock[]; kind:'initial'|'useSource'|'adopt'|'edit'|'restore'|'undo'; creationReason:'normalInitial'|'retry'|'useSource'|'history'|'preview'; createdAt:string }
-export type CandidateReviewIssue='valuesChanged'|'meaningChanged'|'literalsChanged';
+export interface SourceCorrection { start:number; end:number; expectedText:string; replacement:string }
+export interface ConfirmedContext { sourceRevisionId:string; language:'asSpoken'|'english'; corrections:SourceCorrection[] }
+export interface OutputRevision { confirmedContext?:ConfirmedContext; rewriteFallback?:RewriteFallbackReason; id:string; sessionId:string; parentRevisionId:string|null; baseRevisionId:string|null; sourceRevisionId:string; modeSnapshot:ModeSnapshot; resolvedMode:BaseMode; blocks:OutputBlock[]; kind:'initial'|'useSource'|'adopt'|'edit'|'restore'|'undo'; creationReason:'normalInitial'|'retry'|'useSource'|'history'|'preview'; createdAt:string }
+export type CandidateReviewIssue='valuesChanged'|'meaningChanged'|'literalsChanged'|'tenseChanged'|'confirmedTextChanged'|'reviewRejected'|'reviewUnavailable';
 /** Ephemeral history draft, never an automatic delivery authorization. */
 export interface HistoryCandidate extends OutputRevision { reviewIssues?:CandidateReviewIssue[] }
 export interface SessionRecord { id:string; generation:number; startedAt:string; endedAt:string; captureDurationMs:number; endLocalDate:string; timeZone:string; storagePolicy:'history'|'memoryOnly'; modeSnapshot:ModeSnapshot; status:'checkpointed'|'ready'|'interrupted'; currentSourceId:string; currentOutputId:string|null; undoTargetId:string|null }

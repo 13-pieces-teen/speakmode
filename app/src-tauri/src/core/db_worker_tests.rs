@@ -69,7 +69,7 @@ fn source(id: &str) -> SourceRevision {
         created_at: "2026-10-04T23:59:57+08:00".into() }
 }
 fn output(id: &str) -> OutputRevision {
-    OutputRevision { id: format!("output-{id}"), session_id: id.into(),
+    OutputRevision { confirmed_context:None, id: format!("output-{id}"), session_id: id.into(),
         parent_revision_id: None, base_revision_id: None, source_revision_id: format!("source-{id}"),
         mode_snapshot: seed(id, StoragePolicy::History).mode_snapshot, resolved_mode: BaseMode::Light, rewrite_fallback: None,
         blocks: vec![

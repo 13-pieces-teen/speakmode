@@ -6,8 +6,10 @@ use tokio::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all="camelCase")]
-pub enum ManualReviewIssue { ValuesChanged, MeaningChanged, LiteralsChanged }
+pub enum ManualReviewIssue { ValuesChanged, MeaningChanged, LiteralsChanged, ConfirmedTextChanged, TenseChanged, ReviewRejected, ReviewUnavailable }
 
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
 pub struct ManualCandidate {
     pub draft: RewriteResult,
     pub review_issues: Vec<ManualReviewIssue>,

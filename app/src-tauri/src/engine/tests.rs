@@ -114,7 +114,7 @@ fn source(id: &str) -> SourceRevision {
 
 fn output(hub: &AppHub, id: &str) -> OutputRevision {
     OutputRevision {
-        id: format!("output-{id}"), session_id: id.into(), parent_revision_id: None, base_revision_id: None,
+        confirmed_context:None, id: format!("output-{id}"), session_id: id.into(), parent_revision_id: None, base_revision_id: None,
         source_revision_id: format!("source-{id}"),
         mode_snapshot: hub.inner.lock().unwrap().active.as_ref().unwrap().mode.clone(),
         resolved_mode: BaseMode::Structure, rewrite_fallback: None,

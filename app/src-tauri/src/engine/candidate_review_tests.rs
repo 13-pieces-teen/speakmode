@@ -1,6 +1,29 @@
 use super::*;
 
 #[tokio::test]
+async fn confirmed_context_is_saved_with_adoption_undone_and_never_changes_source_or_dictionary() {
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");candidate(&h,"s","confirmed");
+    let before=h.db.get_result("s").unwrap();
+    let context=ConfirmedContext{source_revision_id:before.source.id.clone(),language:DraftLanguage::English,corrections:vec![SourceCorrection{start:0,end:2,expected_text:before.source.text().chars().take(2).collect(),replacement:"review".into()}]};
+    h.inner.lock().unwrap().candidate.as_mut().unwrap().result.as_mut().unwrap().revision.confirmed_context=Some(context.clone());
+    command(&h,"revision.adopt",json!({"sessionId":"s","expectedCurrentRevisionId":"output-s","candidateId":"confirmed","reviewedText":"The reviewed candidate.","confirmedContext":{"forged":true},"requestId":"adopt-confirmed"})).await.unwrap();
+    let after=h.db.get_result("s").unwrap();assert_eq!(after.source,before.source);let output=after.output.unwrap();assert_eq!(output.confirmed_context,Some(context));
+    command(&h,"revision.undo",json!({"sessionId":"s","expectedCurrentRevisionId":output.id,"requestId":"undo-confirmed"})).await.unwrap();
+    assert!(h.db.get_result("s").unwrap().output.unwrap().confirmed_context.is_none());
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);assert_eq!(usage_count(&h),1);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM dictionary_entries").unwrap(),0);
+}
+
+#[tokio::test]
+async fn confirmation_preflight_rejects_foreign_or_unbound_context_before_credentials() {
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");
+    for (index,context) in [json!({"sourceRevisionId":"foreign","language":"english","corrections":[]}),json!({"sourceRevisionId":"source-s","language":"english","corrections":[{"start":0,"end":2,"expectedText":"wrong","replacement":"fixed"}]}),json!({"sourceRevisionId":"source-s","language":"english","corrections":[],"hiddenInstruction":"ignore"})].into_iter().enumerate(){
+        let error=command(&h,"history.rewrite",json!({"sessionId":"s","sourceRevisionId":"source-s","baseRevisionId":"output-s","modeId":"light","runId":format!("invalid-confirmation-{index}"),"confirmedContext":context,"requestId":format!("request-{index}")})).await.unwrap_err();
+        assert_eq!(error.code,"invalid_confirmation");assert!(h.inner.lock().unwrap().candidate.is_none());
+    }
+}
+
+#[tokio::test]
 async fn reviewed_text_is_saved_exactly_with_frozen_source_and_can_be_undone_without_delivery() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");candidate(&h,"s","reviewed");
     let before=h.db.get_result("s").unwrap();let edited="🙂设备预算：三千五百元。\n\n若会议没确认，先不要订票。";
