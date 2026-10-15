@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { Button, Select, Switch } from '@radix-ui/themes';
 import { ArrowRightIcon, CheckIcon, ChevronDownIcon, FileTextIcon, GearIcon, KeyboardIcon, MixerHorizontalIcon, ResetIcon } from '@radix-ui/react-icons';
 import type { BuiltinMode, Mode } from '../model';
-import { builtinModes, isBuiltinMode } from '../modes';
+import { allBuiltinModes, scenarioOptions, isBuiltinMode } from '../modes';
 import { useModes } from '../hooks/useModes';
 import { defaultPreferences, languageLabels, type Preferences, type RecognitionLanguage, type DeliveryMode } from '../preferences';
 import { PageHeading } from '../components/ui';
@@ -23,11 +23,7 @@ export interface SettingsPageProps {
   onManageModes: () => void;
 }
 
-const modeDescriptions: Record<BuiltinMode, string> = {
-  自动: '根据表达内容，选择轻整理或结构。',
-  轻整理: '清理口语冗余，保留原有顺序。',
-  结构: '分点组织内容，保留全部信息。',
-};
+const modeDescriptions = Object.fromEntries(allBuiltinModes.map(mode=>[mode.id,mode.detail])) as Record<BuiltinMode,string>;
 
 type FeedbackTarget = keyof Preferences | 'defaultMode' | 'reset';
 type SaveFeedback = { target: FeedbackTarget; state: 'saving' | 'saved' | 'error'; message: string };
@@ -46,8 +42,8 @@ function ModeExample({ mode }: { mode: BuiltinMode }) {
     <summary><span><FileTextIcon />查看整理示例</span><ChevronDownIcon /></summary>
     <div className="settings-example-content">
       <div className="settings-example-source"><span>说出的话</span><p>嗯，下周先完成访谈，然后周五之前把原型发给大家。时间还没定，先别发邀请。</p></div>
-      <div className="settings-example-output"><span>{mode === '自动' ? '自动选择：结构' : `${mode}结果`}</span>
-        {mode === '轻整理'
+      <div className="settings-example-output"><span>{mode === '自动' ? '自动：按内容组织' : `${mode}结果`}</span>
+        {mode !== '结构' && mode !== '技术沟通'
           ? <p>下周先完成访谈，然后周五之前把原型发给大家。时间还没定，先别发邀请。</p>
           : <ol><li>下周先完成访谈。</li><li>周五之前把原型发给大家。</li><li>时间还没定，先别发邀请。</li></ol>}
       </div>
@@ -102,13 +98,13 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
       await command('preferences.reset', { expectedVersion: preferences.version });
       await refresh();
       setResetRevision(value => value + 1);
-    }, '已恢复默认偏好；个人 Mode、已有记录和 API Key 保持不变。');
+    }, '已恢复默认偏好；自定义场合、已有记录和 API Key 保持不变。');
   }
 
   return <div className="settings-page" aria-busy={saving}>
     <PageHeading title="设置" />
     <div className="settings-preview-note"><p id="settings-preview-scope">{available
-      ? '设置保存到本机。麦克风、语言与默认 Mode 的更改用于下一次口述。'
+      ? '设置保存到本机。麦克风、语言与默认场合 的更改用于下一次口述。'
       : '当前为浏览器预览。请在 SpeakMode 桌面应用中修改设备、系统偏好和云端服务配置。'}</p></div>
     <div className="settings-sections">
       <SettingsSection title="录音与输入" icon={<KeyboardIcon />}>
@@ -148,18 +144,18 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
       </SettingsSection>
 
       <SettingsSection title="整理与输出" icon={<MixerHorizontalIcon />}>
-        <SettingRow title="默认 Mode" description="用于下一次口述，已有记录与当前会话保持不变。" htmlFor="settings-default-mode" feedback={<SettingFeedback feedback={feedback} target="defaultMode" />}>
+        <SettingRow title="默认场合" description="用于下一次口述，已有记录与当前会话保持不变。" htmlFor="settings-default-mode" feedback={<SettingFeedback feedback={feedback} target="defaultMode" />}>
           <div className="settings-mode-control">
             <Select.Root value={defaultMode} disabled={disabled}
-              onValueChange={value => handle(save('defaultMode', () => onDefaultModeChange(value as Mode), `默认 Mode 已保存为${catalog.label(value as Mode)}，下一次口述生效。`))}>
-              <Select.Trigger id="settings-default-mode" aria-label="新口述默认 Mode" aria-describedby="settings-default-mode-description settings-mode-hint" variant="surface" className="settings-select settings-mode-select" />
+              onValueChange={value => handle(save('defaultMode', () => onDefaultModeChange(value as Mode), `默认场合已保存为${catalog.label(value as Mode)}，下一次口述生效。`))}>
+              <Select.Trigger id="settings-default-mode" aria-label="新口述默认场合" aria-describedby="settings-default-mode-description settings-mode-hint" variant="surface" className="settings-select settings-mode-select" />
               <Select.Content position="popper" sideOffset={6} className="settings-mode-menu">
-                <Select.Group><Select.Label>内置模式</Select.Label>{builtinModes.map(mode => <Select.Item key={mode.id} value={mode.id}>{mode.id}</Select.Item>)}</Select.Group>
-                {catalog.modes.length > 0 && <><Select.Separator /><Select.Group><Select.Label>我的 Mode</Select.Label>{catalog.modes.map(mode => <Select.Item key={mode.id} value={mode.id}><span className="settings-mode-option-label">{mode.name}</span></Select.Item>)}</Select.Group></>}
+                <Select.Group><Select.Label>常用场合</Select.Label>{scenarioOptions(defaultMode,[]).map(mode => <Select.Item key={mode.id} value={mode.id}>{mode.id}</Select.Item>)}</Select.Group>
+                {catalog.modes.length > 0 && <><Select.Separator /><Select.Group><Select.Label>自定义场合</Select.Label>{catalog.modes.map(mode => <Select.Item key={mode.id} value={mode.id}><span className="settings-mode-option-label">{mode.name}</span></Select.Item>)}</Select.Group></>}
               </Select.Content>
             </Select.Root>
             <p id="settings-mode-hint" className="settings-control-hint settings-mode-description">{isBuiltinMode(defaultMode) ? modeDescriptions[defaultMode] : catalog.findMode(defaultMode)?.instructions}</p>
-            <Button variant="ghost" size="2" onClick={onManageModes}>管理 Mode<ArrowRightIcon /></Button>
+            <Button variant="ghost" size="2" onClick={onManageModes}>管理场合<ArrowRightIcon /></Button>
           </div>
         </SettingRow>
         {isBuiltinMode(defaultMode) && <ModeExample mode={defaultMode} />}

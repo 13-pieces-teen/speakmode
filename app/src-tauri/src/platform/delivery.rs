@@ -2,7 +2,7 @@
 //! The core must durably record an attempt before constructing its permit.
 use super::{PlatformError, Result, TargetCaptureFailure};
 use serde::{Serialize, Deserialize};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 const NATIVE_EDIT_RUNTIME_ID: i32 = 0x534d_4e41;
@@ -81,6 +81,11 @@ impl DeliveryPermit {
 pub fn capture_target() -> Result<TargetSnapshot> { native::capture_bounded() }
 pub fn capture_foreground_anchor() -> Result<ForegroundAnchor> { native::capture_anchor() }
 pub fn capture_target_for_anchor(anchor: &ForegroundAnchor) -> Result<TargetSnapshot> { native::capture_bounded_for_anchor(*anchor) }
+/// Best-effort context from the already frozen editable control. This never
+/// changes focus/selection, reads a clipboard, or obtains a page/window title.
+pub fn capture_input_context(target: &TargetSnapshot) -> Result<crate::core::writing_context::InputContext> {
+    native::capture_input_context(target.clone()).map(crate::core::writing_context::InputContext::bounded)
+}
 pub fn validate_target(snapshot: &TargetSnapshot) -> Result<()> {
     // Validation may inspect only the frozen host. Never read a newly focused
     // application's UIA prefix and discover the identity mismatch afterwards.
@@ -222,6 +227,55 @@ fn writable_native_style(style: u32) -> Result<()> {
     }
     Ok(())
 }
+
+const INPUT_CONTEXT_TIMEOUT: Duration = Duration::from_millis(500);
+const NATIVE_CONTEXT_UTF16_LIMIT: usize = 4_000;
+fn context_timeout() -> PlatformError { target_failure(TargetCaptureFailure::TargetInspectionTimeout) }
+fn check_context_deadline(deadline: Instant) -> Result<()> {
+    if Instant::now() >= deadline { Err(context_timeout()) } else { Ok(()) }
+}
+fn first_chars(value: &str, count: usize) -> String { value.chars().take(count).collect() }
+fn last_chars(value: &str, count: usize) -> String {
+    value.chars().rev().take(count).collect::<Vec<_>>().into_iter().rev().collect()
+}
+fn range_inside_field(start_vs_field: i32, end_vs_field: i32) -> bool {
+    start_vs_field >= 0 && end_vs_field <= 0
+}
+fn normalize_uia_context_objects(value: String) -> String {
+    // UIA can represent an empty Chromium editor or an inline object with
+    // OBJECT REPLACEMENT CHARACTER. It is structural metadata, not dictation
+    // context. Preserve word boundaries around real inline objects and leave
+    // every other character (including ordinary whitespace) unchanged.
+    if !value.contains('\u{fffc}') { return value; }
+    if value.chars().all(|c| c == '\u{fffc}' || c.is_whitespace()) {
+        String::new()
+    } else {
+        value.replace('\u{fffc}', " ")
+    }
+}
+fn split_native_context(wide: &[u16], selection: (usize, usize)) -> Result<crate::core::writing_context::InputContext> {
+    let unsupported = || target_failure(TargetCaptureFailure::TargetCapabilityUnsupported);
+    let (start, end) = selection;
+    if wide.len() > NATIVE_CONTEXT_UTF16_LIMIT || start > end || end > wide.len() { return Err(unsupported()); }
+    // Strict decoding rejects a caret in the middle of a surrogate pair rather
+    // than silently inventing a replacement character or moving the selection.
+    let before = String::from_utf16(&wide[..start]).map_err(|_| unsupported())?;
+    let selected = String::from_utf16(&wide[start..end]).map_err(|_| unsupported())?;
+    let after = String::from_utf16(&wide[end..]).map_err(|_| unsupported())?;
+    Ok(crate::core::writing_context::InputContext { control_label: String::new(),
+        before_text: last_chars(&before, 1_000), selected_text: first_chars(&selected, 500),
+        after_text: first_chars(&after, 500) })
+}
+
+// Each worker's busy flag remains set after a caller times out until it has
+// actually returned. A hung provider can disable best-effort inspection, but
+// cannot create a new orphan thread on every recording/delivery attempt.
+struct InspectionLease<'a>(&'a AtomicBool);
+impl Drop for InspectionLease<'_> { fn drop(&mut self) { self.0.store(false, Ordering::Release); } }
+fn claim_inspection(busy: &AtomicBool) -> Result<InspectionLease<'_>> {
+    busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .map(|_| InspectionLease(busy)).map_err(|_| context_timeout())
+}
 #[cfg(windows)]
 fn require_text_input_route(gui_flags: u32) -> Result<()> {
     use windows::Win32::UI::WindowsAndMessaging::{GUI_INMENUMODE, GUI_POPUPMENUMODE, GUI_SYSTEMMENUMODE};
@@ -255,7 +309,7 @@ struct ClipboardError { cleared: bool, reason: String }
 #[cfg(windows)]
 mod native {
     use super::*;
-    use std::{mem::size_of, thread};
+    use std::{mem::size_of, thread, sync::{Arc, OnceLock, mpsc::{SyncSender, sync_channel}}};
     use windows::core::{PCWSTR, Interface};
     use windows::Win32::Foundation::{HANDLE, HWND, FILETIME, CloseHandle, GlobalFree, WPARAM, LPARAM, GetLastError, SetLastError, ERROR_SUCCESS, ERROR_TIMEOUT};
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, CoCreateInstance, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, SAFEARRAY};
@@ -264,9 +318,9 @@ mod native {
     use windows::Win32::System::Ole::{SafeArrayAccessData, SafeArrayUnaccessData, SafeArrayDestroy, SafeArrayGetLBound, SafeArrayGetUBound, SafeArrayGetDim};
     use windows::Win32::System::Threading::{OpenProcess, GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::Security::{GetTokenInformation, GetSidSubAuthority, GetSidSubAuthorityCount, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY};
-    use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationTextPattern, IUIAutomationValuePattern,
+    use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, IUIAutomationValuePattern,
         UIA_EditControlTypeId, UIA_DocumentControlTypeId, UIA_GroupControlTypeId, UIA_IsReadOnlyAttributeId,
-        UIA_TextPatternId, UIA_ValuePatternId, TextPatternRangeEndpoint_Start, TextPatternRangeEndpoint_End};
+        UIA_TextPatternId, UIA_ValuePatternId, TextPatternRangeEndpoint_Start, TextPatternRangeEndpoint_End, TextUnit_Character};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
         VIRTUAL_KEY, VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, IsWindowEnabled};
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, GetGUIThreadInfo, GUITHREADINFO,
@@ -353,9 +407,112 @@ mod native {
         capture_bounded_inner(Some(anchor))
     }
     fn capture_bounded_inner(anchor: Option<ForegroundAnchor>) -> Result<TargetSnapshot> {
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        thread::spawn(move || { let _ = tx.send(capture_with_anchor(anchor)); });
-        rx.recv_timeout(Duration::from_secs(1)).map_err(|error| target_failure(match error {
+        let (tx, rx) = sync_channel(1);
+        submit_target_inspection(InspectionRequest::Target(anchor, tx))?;
+        receive_inspection(rx, Duration::from_secs(1))
+    }
+    pub fn capture_input_context(target: TargetSnapshot) -> Result<crate::core::writing_context::InputContext> {
+        let (tx, rx) = sync_channel(1);
+        let deadline = Instant::now() + INPUT_CONTEXT_TIMEOUT;
+        submit_context_inspection(InspectionRequest::Context(target, deadline, tx))?;
+        receive_inspection(rx, INPUT_CONTEXT_TIMEOUT)
+    }
+    type Context = crate::core::writing_context::InputContext;
+    enum InspectionRequest {
+        Target(Option<ForegroundAnchor>, SyncSender<Result<TargetSnapshot>>),
+        Context(TargetSnapshot, Instant, SyncSender<Result<Context>>),
+        #[cfg(test)]
+        Probe { entered: SyncSender<()>, release: Option<std::sync::mpsc::Receiver<()>>, reply: SyncSender<Result<()>> },
+    }
+    struct InspectionWorker { sender: SyncSender<InspectionRequest>, busy: Arc<AtomicBool> }
+    static TARGET_WORKER: OnceLock<InspectionWorker> = OnceLock::new();
+    static CONTEXT_WORKER: OnceLock<InspectionWorker> = OnceLock::new();
+    fn submit_target_inspection(request: InspectionRequest) -> Result<()> { submit_inspection(&TARGET_WORKER, request) }
+    fn submit_context_inspection(request: InspectionRequest) -> Result<()> { submit_inspection(&CONTEXT_WORKER, request) }
+    fn submit_inspection(slot: &'static OnceLock<InspectionWorker>, request: InspectionRequest) -> Result<()> {
+        let worker = slot.get_or_init(|| {
+            let (sender, receiver) = sync_channel(1);
+            let busy = Arc::new(AtomicBool::new(false));
+            let worker_busy = busy.clone();
+            thread::spawn(move || {
+                // Optional context and required delivery target inspection have
+                // independent fixed workers. A hung context provider never owns
+                // the target worker's gate. All COM objects remain local to the
+                // thread that creates them; only owned Rust data crosses threads.
+                let initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }.is_ok();
+                let _com = initialized.then(|| ComGuard);
+                while let Ok(request) = receiver.recv() {
+                    let lease = InspectionLease(&worker_busy);
+                    match request {
+                        InspectionRequest::Target(anchor, reply) => {
+                            let result = capture_with_anchor(anchor);
+                            drop(lease);
+                            let _ = reply.send(result);
+                        }
+                        InspectionRequest::Context(target, deadline, reply) => {
+                            let result = context_from_target(&target, deadline);
+                            drop(lease);
+                            let _ = reply.send(result);
+                        }
+                        #[cfg(test)]
+                        InspectionRequest::Probe { entered, release, reply } => {
+                            // Exercise the real worker routing/lease lifecycle
+                            // without a UIA call or inspection of any window.
+                            let _ = entered.send(());
+                            let result = release.map_or(Ok(()), |receiver|
+                                receiver.recv_timeout(Duration::from_secs(2)).map_err(|_| context_timeout()));
+                            drop(lease);
+                            let _ = reply.send(result);
+                        }
+                    }
+                }
+            });
+            InspectionWorker { sender, busy }
+        });
+        let lease = claim_inspection(&worker.busy)?;
+        worker.sender.try_send(request).map_err(|_| context_timeout())?;
+        // Ownership of clearing busy passes to the worker, including after the
+        // receiver has timed out. Requests never queue behind a stuck provider.
+        std::mem::forget(lease);
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(super) fn assert_context_worker_isolation() {
+        struct ReleaseOnDrop(Option<SyncSender<()>>);
+        impl Drop for ReleaseOnDrop {
+            fn drop(&mut self) { if let Some(sender) = self.0.take() { let _ = sender.try_send(()); } }
+        }
+        let (context_started, entered) = sync_channel(1);
+        let (release, blocked) = sync_channel(1);
+        let release_guard = ReleaseOnDrop(Some(release));
+        let (context_reply, completed) = sync_channel(1);
+        submit_context_inspection(InspectionRequest::Probe { entered: context_started,
+            release: Some(blocked), reply: context_reply }).unwrap();
+        entered.recv_timeout(Duration::from_secs(1)).expect("context worker did not start");
+
+        let (second_started, _) = sync_channel(1);
+        let (second_reply, _) = sync_channel(1);
+        assert!(submit_context_inspection(InspectionRequest::Probe { entered: second_started,
+            release: None, reply: second_reply }).is_err(), "busy context worker accepted another request");
+
+        let (target_started, target_entered) = sync_channel(1);
+        let (target_reply, target_completed) = sync_channel(1);
+        submit_target_inspection(InspectionRequest::Probe { entered: target_started,
+            release: None, reply: target_reply }).expect("context work occupied the delivery target route");
+        target_entered.recv_timeout(Duration::from_secs(1)).expect("target worker blocked behind context");
+        target_completed.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+
+        drop(release_guard);
+        completed.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+        let (resumed_started, resumed_entered) = sync_channel(1);
+        let (resumed_reply, resumed_completed) = sync_channel(1);
+        submit_context_inspection(InspectionRequest::Probe { entered: resumed_started,
+            release: None, reply: resumed_reply }).unwrap();
+        resumed_entered.recv_timeout(Duration::from_secs(1)).unwrap();
+        resumed_completed.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+    }
+    fn receive_inspection<T>(receiver: std::sync::mpsc::Receiver<Result<T>>, timeout: Duration) -> Result<T> {
+        receiver.recv_timeout(timeout).map_err(|error| target_failure(match error {
             std::sync::mpsc::RecvTimeoutError::Timeout => TargetCaptureFailure::TargetInspectionTimeout,
             std::sync::mpsc::RecvTimeoutError::Disconnected => TargetCaptureFailure::TargetCapabilityUnsupported,
         }))?
@@ -518,10 +675,204 @@ mod native {
             if final_gui.hwndFocus != gui.hwndFocus || GetForegroundWindow() != hwnd {
                 return Err(target_failure(TargetCaptureFailure::StopFocusChanged));
             }
-            Ok(TargetSnapshot { hwnd: hwnd.0 as usize, process_id, focused_hwnd: gui.hwndFocus.0 as usize,
+            let target = TargetSnapshot { hwnd: hwnd.0 as usize, process_id, focused_hwnd: gui.hwndFocus.0 as usize,
                 runtime_id, selection: Some((start, start + selected.len())),
-                process_created_at: created })
+                process_created_at: created };
+            Ok(target)
         }
+    }
+
+    fn validate_context_anchor(target: &TargetSnapshot, deadline: Instant) -> Result<()> {
+        check_context_deadline(deadline)?;
+        if target.selection.is_none() || target.runtime_id.is_empty() {
+            return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported));
+        }
+        require_external_target_process(target.process_id, unsafe { GetCurrentProcessId() })?;
+        compare_anchor(&capture_anchor()?, target)?;
+        verify_input_route(target)?;
+        check_context_deadline(deadline)
+    }
+    fn context_from_target(target: &TargetSnapshot, deadline: Instant) -> Result<Context> {
+        validate_context_anchor(target, deadline)?;
+        if target.runtime_id.first() == Some(&NATIVE_EDIT_RUNTIME_ID) {
+            let context = unsafe { native_edit_context(target, deadline)? };
+            validate_context_anchor(target, deadline)?;
+            return Ok(context);
+        }
+        unsafe {
+            let automation: IUIAutomation = CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER).map_err(fail)?;
+            let options = automation.cast::<IUIAutomation2>().map_err(fail)?;
+            options.SetConnectionTimeout(100).map_err(fail)?;
+            options.SetTransactionTimeout(100).map_err(fail)?;
+            let (focused, selection, field_range) = verify_context_selection(&automation, target, None, deadline)?;
+            check_context_deadline(deadline)?;
+            let before = selection.Clone().map_err(fail)?;
+            before.MoveEndpointByRange(TextPatternRangeEndpoint_End, &selection, TextPatternRangeEndpoint_Start).map_err(fail)?;
+            before.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1_000).map_err(fail)?;
+            let after = selection.Clone().map_err(fail)?;
+            after.MoveEndpointByRange(TextPatternRangeEndpoint_Start, &selection, TextPatternRangeEndpoint_End).map_err(fail)?;
+            after.MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, 500).map_err(fail)?;
+            // Chromium range movement can leave its focused TextPattern and
+            // enter sibling controls in the page. Clamp using this field's
+            // DocumentRange metadata BEFORE reading any text from the ranges.
+            clamp_to_field(&before, &field_range)?;
+            clamp_to_field(&after, &field_range)?;
+            // Only these selected/adjacent ranges become model context. The
+            // separate bounded prefix verification above remains transient.
+            let before_text = read_context_range(&before, 2_000, deadline)?;
+            let selected_text = read_context_range(&selection, 1_000, deadline)?;
+            let after_text = read_context_range(&after, 1_000, deadline)?;
+            check_context_deadline(deadline)?;
+            // A Document provider's Name can be its file/page title, rather
+            // than a field label. Do not collect it as input-position context.
+            let control_label = if focused.CurrentControlType().map_err(fail)? == UIA_DocumentControlTypeId {
+                String::new()
+            } else { focused.CurrentName().map_err(fail)?.to_string() };
+            verify_context_selection(&automation, target, Some(&selection), deadline)?;
+            validate_context_anchor(target, deadline)?;
+            Ok(Context { control_label: first_chars(&control_label, 160),
+                before_text: last_chars(&before_text, 1_000), selected_text: first_chars(&selected_text, 500),
+                after_text: first_chars(&after_text, 500) })
+        }
+    }
+    unsafe fn verify_context_selection(automation: &IUIAutomation, target: &TargetSnapshot, expected_selection: Option<&IUIAutomationTextRange>, deadline: Instant)
+        -> Result<(IUIAutomationElement, IUIAutomationTextRange, IUIAutomationTextRange)> {
+        unsafe {
+            check_context_deadline(deadline)?;
+            let focused = automation.GetFocusedElement().map_err(fail)?;
+            if focused.CurrentProcessId().map_err(fail)? as u32 != target.process_id ||
+                runtime_id_of(&focused)? != target.runtime_id {
+                return Err(target_failure(TargetCaptureFailure::StopFocusChanged));
+            }
+            if focused.CurrentIsPassword().map_err(fail)?.as_bool() || !focused.CurrentIsEnabled().map_err(fail)?.as_bool() {
+                return Err(target_failure(TargetCaptureFailure::TargetNotEditable));
+            }
+            let control_type = focused.CurrentControlType().map_err(fail)?;
+            if control_type != UIA_EditControlTypeId && control_type != UIA_DocumentControlTypeId && control_type != UIA_GroupControlTypeId ||
+                (control_type == UIA_GroupControlTypeId && !focused.CurrentIsKeyboardFocusable().map_err(fail)?.as_bool()) {
+                return Err(target_failure(TargetCaptureFailure::TargetNotEditable));
+            }
+            let text = focused.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId).map_err(fail)?;
+            let field_range = text.DocumentRange().map_err(fail)?;
+            let selections = text.GetSelection().map_err(fail)?;
+            if selections.Length().map_err(fail)? != 1 { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+            let current = selections.GetElement(0).map_err(fail)?;
+            if let Ok(value) = focused.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) {
+                if value.CurrentIsReadOnly().map_err(fail)?.as_bool() { return Err(target_failure(TargetCaptureFailure::TargetNotEditable)); }
+            } else if !explicit_writable_text_attribute(&field_range.GetAttributeValue(UIA_IsReadOnlyAttributeId).map_err(fail)?) {
+                return Err(target_failure(TargetCaptureFailure::TargetNotEditable));
+            }
+            require_range_inside_field(&current, &field_range)?;
+            // Only after exact process/runtime/field identity and writability
+            // proof may this worker inspect the same field's bounded prefix.
+            // It verifies the original UTF-16 offsets without sharing COM range
+            // bookmarks with the independent target worker. Never return or log
+            // the transient prefix/selected-length verification text.
+            verify_selection_offsets(&current, &field_range, target.selection, deadline)?;
+            if let Some(expected) = expected_selection {
+                if current.CompareEndpoints(TextPatternRangeEndpoint_Start, expected, TextPatternRangeEndpoint_Start).map_err(fail)? != 0 ||
+                    current.CompareEndpoints(TextPatternRangeEndpoint_End, expected, TextPatternRangeEndpoint_End).map_err(fail)? != 0 {
+                    return Err(target_failure(TargetCaptureFailure::StopFocusChanged));
+                }
+            }
+            check_context_deadline(deadline)?;
+            Ok((focused, current, field_range))
+        }
+    }
+    unsafe fn runtime_id_of(element: &IUIAutomationElement) -> Result<Vec<i32>> {
+        unsafe {
+            let array = element.GetRuntimeId().map_err(fail)?;
+            let _array = ArrayGuard(array);
+            if array.is_null() || SafeArrayGetDim(array) != 1 { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+            let lower = SafeArrayGetLBound(array, 1).map_err(fail)?;
+            let upper = SafeArrayGetUBound(array, 1).map_err(fail)?;
+            let count = (upper - lower + 1).max(0) as usize;
+            if count == 0 || count > 256 { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+            let mut data = std::ptr::null_mut();
+            SafeArrayAccessData(array, &mut data).map_err(fail)?;
+            let id = std::slice::from_raw_parts(data.cast::<i32>(), count).to_vec();
+            let _ = SafeArrayUnaccessData(array);
+            Ok(id)
+        }
+    }
+    unsafe fn verify_selection_offsets(selection: &IUIAutomationTextRange, field: &IUIAutomationTextRange,
+        offsets: Option<(usize, usize)>, deadline: Instant) -> Result<()> {
+        let (start, end) = offsets.ok_or_else(|| target_failure(TargetCaptureFailure::TargetCapabilityUnsupported))?;
+        if start > 65_536 || end < start || end - start > 65_536 {
+            return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported));
+        }
+        unsafe {
+            check_context_deadline(deadline)?;
+            let prefix = field.Clone().map_err(fail)?;
+            prefix.MoveEndpointByRange(TextPatternRangeEndpoint_End, selection, TextPatternRangeEndpoint_Start).map_err(fail)?;
+            require_range_inside_field(&prefix, field)?;
+            let prefix_length = prefix.GetText((start + 1) as i32).map_err(fail)?.len();
+            check_context_deadline(deadline)?;
+            let selected_length = selection.GetText((end - start + 1) as i32).map_err(fail)?.len();
+            if prefix_length != start || selected_length != end - start {
+                return Err(target_failure(TargetCaptureFailure::StopFocusChanged));
+            }
+            check_context_deadline(deadline)
+        }
+    }
+    unsafe fn require_range_inside_field(range: &IUIAutomationTextRange, field: &IUIAutomationTextRange) -> Result<()> {
+        let start = unsafe { range.CompareEndpoints(TextPatternRangeEndpoint_Start, field, TextPatternRangeEndpoint_Start).map_err(fail)? };
+        let end = unsafe { range.CompareEndpoints(TextPatternRangeEndpoint_End, field, TextPatternRangeEndpoint_End).map_err(fail)? };
+        if !range_inside_field(start, end) { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+        Ok(())
+    }
+    unsafe fn clamp_to_field(range: &IUIAutomationTextRange, field: &IUIAutomationTextRange) -> Result<()> {
+        unsafe {
+            if range.CompareEndpoints(TextPatternRangeEndpoint_Start, field, TextPatternRangeEndpoint_Start).map_err(fail)? < 0 {
+                range.MoveEndpointByRange(TextPatternRangeEndpoint_Start, field, TextPatternRangeEndpoint_Start).map_err(fail)?;
+            }
+            if range.CompareEndpoints(TextPatternRangeEndpoint_End, field, TextPatternRangeEndpoint_End).map_err(fail)? > 0 {
+                range.MoveEndpointByRange(TextPatternRangeEndpoint_End, field, TextPatternRangeEndpoint_End).map_err(fail)?;
+            }
+            require_range_inside_field(range, field)
+        }
+    }
+    unsafe fn read_context_range(range: &IUIAutomationTextRange, limit: i32, deadline: Instant) -> Result<String> {
+        check_context_deadline(deadline)?;
+        let text = unsafe { range.GetText(limit).map_err(fail)? };
+        // BSTR truncation can split a supplementary character. Omit context
+        // rather than feed the model an invented replacement character.
+        let value = String::from_utf16(text.as_wide()).map_err(|_| target_failure(TargetCaptureFailure::TargetCapabilityUnsupported))?;
+        check_context_deadline(deadline)?;
+        Ok(normalize_uia_context_objects(value))
+    }
+    unsafe fn native_edit_context(target: &TargetSnapshot, deadline: Instant) -> Result<Context> {
+        unsafe {
+            let focus = HWND(target.focused_hwnd as _);
+            let (runtime_id, selection) = native_edit_selection(HWND(target.hwnd as _), focus, target.process_id)?
+                .ok_or_else(|| target_failure(TargetCaptureFailure::TargetCapabilityUnsupported))?;
+            if runtime_id != target.runtime_id || Some(selection) != target.selection {
+                return Err(target_failure(TargetCaptureFailure::StopFocusChanged));
+            }
+            let length = context_message(focus, 0x000E, WPARAM(0), LPARAM(0), deadline)?; // WM_GETTEXTLENGTH
+            if length > NATIVE_CONTEXT_UTF16_LIMIT { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+            let mut buffer = vec![0u16; length + 1];
+            let copied = context_message(focus, 0x000D, WPARAM(buffer.len()), LPARAM(buffer.as_mut_ptr() as isize), deadline)?; // WM_GETTEXT
+            let final_length = context_message(focus, 0x000E, WPARAM(0), LPARAM(0), deadline)?;
+            if copied > length || final_length != length { return Err(target_failure(TargetCaptureFailure::StopFocusChanged)); }
+            buffer.truncate(copied);
+            let final_selection = native_edit_selection(HWND(target.hwnd as _), focus, target.process_id)?;
+            if final_selection != Some((runtime_id, selection)) { return Err(target_failure(TargetCaptureFailure::StopFocusChanged)); }
+            split_native_context(&buffer, selection)
+        }
+    }
+    unsafe fn context_message(focus: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, deadline: Instant) -> Result<usize> {
+        check_context_deadline(deadline)?;
+        let remaining = deadline.saturating_duration_since(Instant::now()).as_millis().min(100).max(1) as u32;
+        let mut result = 0;
+        unsafe { SetLastError(ERROR_SUCCESS); }
+        let accepted = unsafe { SendMessageTimeoutW(focus, message, wparam, lparam,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT, remaining, Some(&mut result)) };
+        if accepted.0 == 0 { return Err(target_failure(if unsafe { GetLastError() } == ERROR_TIMEOUT {
+            TargetCaptureFailure::TargetInspectionTimeout
+        } else { TargetCaptureFailure::TargetCapabilityUnsupported })); }
+        check_context_deadline(deadline)?;
+        Ok(result)
     }
 
     pub fn modifiers_released() -> bool {
@@ -579,6 +930,7 @@ mod native {
     pub fn capture_bounded() -> Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
     pub fn capture_anchor() -> Result<ForegroundAnchor> { Err(target_failure(TargetCaptureFailure::StopAnchorUnavailable)) }
     pub fn capture_bounded_for_anchor(_: ForegroundAnchor) -> Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
+    pub fn capture_input_context(_: TargetSnapshot) -> Result<crate::core::writing_context::InputContext> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
     pub fn modifiers_released() -> bool { false }
     pub fn paste_chord() -> u32 { 0 }
     pub fn copy_text(_: &str) -> std::result::Result<bool, ClipboardError> { Err(ClipboardError { cleared: false, reason: "Windows clipboard required".into() }) }
@@ -587,6 +939,72 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn uia_context_omits_empty_object_placeholders() {
+        for value in ["\u{fffc}", "\u{fffc}\u{fffc}", " \r\n\u{fffc}\t\u{3000}"] {
+            assert_eq!(normalize_uia_context_objects(value.into()), "");
+        }
+    }
+    #[test] fn uia_context_keeps_inline_object_word_boundaries_and_unicode() {
+        assert_eq!(normalize_uia_context_objects("hello\u{fffc}world".into()), "hello world");
+        assert_eq!(normalize_uia_context_objects("前😀\u{fffc}後😀".into()), "前😀 後😀");
+        for value in ["", " \r\n\t", "前😀 后\n", "\u{fffd}", "  word  "] {
+            assert_eq!(normalize_uia_context_objects(value.into()), value);
+        }
+        let native: Vec<_> = "a\u{fffc}b".encode_utf16().collect();
+        assert_eq!(split_native_context(&native, (0, 0)).unwrap().after_text, "a\u{fffc}b");
+    }
+    #[test] fn input_context_rejects_ranges_that_enter_sibling_fields() {
+        for (start, end) in [(0,0), (1,-1), (1,0), (0,-1)] { assert!(range_inside_field(start,end)); }
+        for (start, end) in [(-1,0), (0,1), (-1,1), (-1,-1), (1,1)] { assert!(!range_inside_field(start,end)); }
+    }
+    #[test] fn input_context_preserves_unicode_and_reads_the_nearest_bounded_spans() {
+        let before = format!("omitted{}", "前😀".repeat(600));
+        let selected = "選😀".repeat(260);
+        let after = "後😀".repeat(260);
+        let start = before.encode_utf16().count();
+        let end = start + selected.encode_utf16().count();
+        let wide: Vec<_> = format!("{before}{selected}{after}").encode_utf16().collect();
+        let context = split_native_context(&wide, (start, end)).unwrap();
+        assert_eq!(context.before_text, "前😀".repeat(500));
+        assert_eq!(context.selected_text, "選😀".repeat(250));
+        assert_eq!(context.after_text, "後😀".repeat(250));
+        assert!(context.control_label.is_empty());
+        assert!(!context.before_text.contains('\u{fffd}'));
+    }
+    #[test] fn input_context_rejects_invalid_or_split_surrogate_carets_and_oversized_fields() {
+        let wide: Vec<_> = "a😀b".encode_utf16().collect();
+        assert!(split_native_context(&wide, (1, 3)).is_ok());
+        for selection in [(2, 2), (3, 2), (0, 5)] { assert!(split_native_context(&wide, selection).is_err()); }
+        assert!(split_native_context(&vec![65; NATIVE_CONTEXT_UTF16_LIMIT + 1], (0, 0)).is_err());
+        let empty = split_native_context(&[], (0, 0)).unwrap();
+        assert!(empty.before_text.is_empty() && empty.selected_text.is_empty() && empty.after_text.is_empty());
+    }
+    #[test] fn expired_input_context_deadline_never_reauthorizes_collection() {
+        assert!(check_context_deadline(Instant::now() - Duration::from_millis(1)).is_err());
+        assert!(check_context_deadline(Instant::now() + INPUT_CONTEXT_TIMEOUT).is_ok());
+    }
+    #[test] fn timed_out_inspection_caller_cannot_spawn_additional_native_work() {
+        use std::sync::{Arc, mpsc::sync_channel};
+        let busy = Arc::new(AtomicBool::new(false));
+        let worker_busy = busy.clone();
+        let (started_tx, started_rx) = sync_channel(1);
+        let (release_tx, release_rx) = sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let _lease = claim_inspection(&worker_busy).unwrap();
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv().unwrap();
+        // A caller giving up does not own or release the native-work lease.
+        drop(started_rx);
+        for _ in 0..20 { assert!(claim_inspection(&busy).is_err()); }
+        release_tx.send(()).unwrap(); worker.join().unwrap();
+        assert!(claim_inspection(&busy).is_ok());
+    }
+    #[cfg(windows)]
+    #[test] fn blocked_optional_context_does_not_occupy_required_target_gate() {
+        native::assert_context_worker_isolation();
+    }
     fn snapshot() -> TargetSnapshot { TargetSnapshot { hwnd: 10, process_id: 20, focused_hwnd: 30, runtime_id: vec![1,2,3], selection: Some((4,4)), process_created_at: 50 } }
     #[test] fn rejects_different_field_in_same_window_and_changed_caret() {
         let before = snapshot(); let mut now = before.clone(); now.runtime_id.push(4);

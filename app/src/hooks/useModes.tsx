@@ -9,7 +9,7 @@ const ModeContext=createContext<Catalog|null>(null);
 function personal(record:ModeRecord):PersonalMode{return {id:record.id,name:record.name,base:record.baseMode==='structure'?'结构':'轻整理',instructions:record.rules,version:record.revision};}
 export function ModeProvider({children}:{children:ReactNode}) {
  const desktop=useDesktop();const modes=desktop.modes.filter(m=>!m.builtin).map(personal);const findMode=(id:Mode)=>modes.find(m=>m.id===id);
- return <ModeContext.Provider value={{modes,defaultMode:fromModeId(desktop.preferences.defaultModeId),sessionAvailable:desktop.available,findMode,label:id=>findMode(id)?.name??(isPersonalMode(id)?'个人 Mode':id),
+ return <ModeContext.Provider value={{modes,defaultMode:fromModeId(desktop.preferences.defaultModeId),sessionAvailable:desktop.available,findMode,label:id=>findMode(id)?.name??(isPersonalMode(id)?'自定义场合':id),
  setDefaultMode:async mode=>{await desktop.command('mode.setDefault',{modeId:toModeId(mode),expectedVersion:desktop.preferences.version});await desktop.refresh();},
  saveMode:async draft=>{const saved=await desktop.command<ModeRecord>('mode.save',{draft:{id:draft.expectedRevision===null?null:draft.id,name:draft.name.trim(),baseMode:draft.base==='结构'?'structure':'light',rules:draft.instructions.trim(),expectedRevision:draft.expectedRevision}});await desktop.refresh();return personal(saved);},
  removeMode:async id=>{await desktop.command('mode.delete',{modeId:id,expectedRevision:findMode(id)?.version});await desktop.refresh();}

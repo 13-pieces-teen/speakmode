@@ -51,6 +51,8 @@ mod long;
 mod protected_terms;
 #[path="rewrite_literals.rs"]
 mod literals;
+#[path="rewrite_format_requests.rs"]
+mod format_requests;
 #[path="rewrite_fluent_pipeline.rs"]
 mod fluent_pipeline;
 #[path="rewrite_manual_candidate.rs"]
@@ -71,6 +73,8 @@ pub mod minimum_pipeline;
 pub mod scene;
 #[path="rewrite_scene_layout.rs"]
 pub mod scene_layout;
+#[path="rewrite_writing_context.rs"]
+pub mod writing_context;
 pub use manual_candidate::{ManualCandidate, ManualReviewIssue, rewrite_manual_candidate};
 
 // Identifies the task contract independently of the selected provider/model.
@@ -158,8 +162,8 @@ pub const MINIMUM_PROTOCOL_PROMOTED: bool = true;
 pub const MINIMUM_PIPELINE_VERSION: &str = if cfg!(feature="experimental-english-dictation") {
     "minimum-edit-v4+minimum-review-v4+residue-hint-v2+local-repair-v2"
 } else { "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2" };
-fn uses_minimum_contract(config: &ProviderConfig, _mode: &ModeSnapshot) -> bool {
-    MINIMUM_PROTOCOL_PROMOTED && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing")
+fn uses_minimum_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
+    writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
 }
 fn uses_fluent_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
     config.rewrite_model == "qwen3.8-flash" && config.region.as_deref() == Some("beijing")
@@ -173,12 +177,14 @@ fn uses_automatic_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool
 /// Report the actual selected production protocol, independently of provider
 /// model naming. Diagnostics must not infer protocol from a model preference.
 pub fn production_protocol_version(config: &ProviderConfig, mode: &ModeSnapshot) -> &'static str {
-    if uses_minimum_contract(config,mode) { MINIMUM_PIPELINE_VERSION }
+    if writing_context::for_mode(mode).is_some() { writing_context::VERSION }
+    else if uses_minimum_contract(config,mode) { MINIMUM_PIPELINE_VERSION }
     else if uses_fluent_contract(config, mode) { FLUENT_PIPELINE_VERSION }
     else if uses_automatic_contract(config, mode) { AUTOMATIC_REWRITE_PROMPT_VERSION } else { REWRITE_PROMPT_VERSION }
 }
 pub fn manual_protocol_version(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision)->&'static str {
-    if uses_minimum_contract(config,mode){minimum::VERSION}
+    if writing_context::for_mode(mode).is_some(){writing_context::VERSION}
+    else if uses_minimum_contract(config,mode){minimum::VERSION}
     else if uses_fluent_contract(config,mode){if uses_guarded_long(source){LONG_REWRITE_PROMPT_VERSION}else{FLUENT_REWRITE_PROMPT_VERSION}}
     else{REWRITE_PROMPT_VERSION}
 }
@@ -262,7 +268,9 @@ pub fn validate_draft_meaning(source:&SourceRevision,draft:&RewriteResult)->Resu
     integrity::validate_meaning(source,&draft.blocks)
 }
 pub fn review_admission(source:&SourceRevision,draft:&RewriteResult)->Result<(),CloudError> {
-    literals::validate(&source.text(), &draft.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n"))?;
+    let text=draft.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
+    literals::validate(&source.text(), &text)?;
+    format_requests::validate(&source.text(), &text)?;
     integrity::review_admission(source,&draft.blocks)
 }
 
@@ -459,6 +467,16 @@ pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode
 pub(crate) async fn rewrite_with_execution(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken, execution: RewriteExecution) -> Result<RewriteResult, CloudError> {
     let endpoint = endpoints(config)?.rewrite;
     rewrite_with_client_execution(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution).await
+}
+
+/// Caller freezes context with the stop-time target. No capture, persistence or
+/// delivery authority is granted here; every request shares the same deadline.
+pub(crate) async fn rewrite_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,execution:RewriteExecution,
+    context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError> {
+    execution.checkpoint(&cancel)?;
+    let endpoint=endpoints(config)?.rewrite;
+    minimum_pipeline::run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,context).await
 }
 
 pub(crate) fn validate_source(source:&SourceRevision)->Result<(),CloudError> {

@@ -1,51 +1,32 @@
-//! A frozen, local scene for initial dictation. No cloud request or host text.
+//! Freeze purpose and bounded host hints before generation; never restyle an accepted draft.
 use super::*;
-use crate::cloud::rewrite::{scene::{SceneSnapshot,WritingScene}, scene_layout};
+use crate::core::writing_context::{InputContext,WritingContext,selected_scene,input_scene};
 
-fn hash(value: &impl Serialize) -> String {
-    format!("{:x}", Sha256::digest(serde_json::to_vec(value).expect("typed scene identity serializes")))
+pub(super) struct CapturedInput {
+    pub target: platform::delivery::TargetSnapshot,
+    pub context: InputContext,
+    pub captured_at: Instant,
 }
 
-pub(super) struct FrozenScene {
-    target: platform::delivery::TargetSnapshot,
-    source_hash: String,
-    mode_hash: String,
-    scene: SceneSnapshot,
-    pub kind: AppWritingScene,
-}
-
-pub(super) fn freeze(session: &ActiveSession, source: &SourceRevision) -> Option<FrozenScene> {
-    if !session.prefs.app_writing.enabled || session.mode.base_mode != BaseMode::Auto || !session.mode.rules.trim().is_empty()
-        || session.reason != CreationReason::NormalInitial || session.target_capture_pending
-        || session.cancel.is_cancelled() || session.original_delivery_revoked { return None; }
-    let target = session.target.as_ref()?;
-    let kind = session.prefs.app_writing.scene_for(session.target_application.as_deref().unwrap_or(""));
-    let scene = SceneSnapshot { session_id: session.id.clone(), generation: session.generation,
-        target_id: hash(target), revision: session.prefs.version,
-        scene: match kind { AppWritingScene::General=>WritingScene::General, AppWritingScene::Chat=>WritingScene::Chat,
-            AppWritingScene::Document=>WritingScene::Document, AppWritingScene::Technical=>WritingScene::Technical },
-        use_nearby_text:false,nearby_text:None };
-    Some(FrozenScene { target:target.clone(), source_hash:hash(source), mode_hash:hash(&session.mode), scene, kind })
-}
-
-/// Caller has already received an accepted semantic result. Return that result
-/// unchanged if any provenance/format constraint fails; never edit a fallback.
-pub(super) fn present(session: &ActiveSession, frozen: &FrozenScene, source: &SourceRevision,
-    mode: &ModeSnapshot, draft: rewrite::RewriteResult) -> rewrite::RewriteResult {
-    if session.id != source.session_id || session.generation != source.generation
-        || session.cancel.is_cancelled() || session.original_delivery_revoked
-        || session.target.as_ref() != Some(&frozen.target) || session.source.as_ref() != Some(source)
-        || hash(source) != frozen.source_hash || hash(mode) != frozen.mode_hash
-        || hash(&session.mode) != frozen.mode_hash { return draft; }
-    // Preserve spoken formatting requests beyond the frozen experimental
-    // renderer's original vocabulary. A false positive only keeps the draft.
-    let text = source.text();
-    if ["分点", "分条", "分项", "逐项", "按点", "项目符号"].iter().any(|word| text.contains(word)) {
-        return draft;
-    }
-    let english = text.to_ascii_lowercase();
-    let words: Vec<_> = english.split(|c: char| !c.is_ascii_alphabetic()).filter(|s| !s.is_empty()).collect();
-    if words.iter().any(|word| matches!(*word, "bullet" | "bullets" | "numbered" | "numbering" | "list"))
-        || words.windows(3).any(|phrase| phrase == ["step", "by", "step"]) { return draft; }
-    scene_layout::candidate(mode,source,&frozen.scene,&draft).map(|candidate|candidate.draft).unwrap_or(draft)
+pub(super) fn freeze(session: &ActiveSession) -> Option<WritingContext> {
+    if session.cancel.is_cancelled() { return None; }
+    let explicit=selected_scene(&session.mode);
+    let automatic=session.mode.mode_id=="auto" && session.mode.rules.is_empty();
+    let language=session.prefs.app_writing.output_language;
+    if explicit.is_none() && !automatic && !session.prefs.app_writing.input_context_enabled && language==DraftLanguage::AsSpoken { return None; }
+    let target_ready=!session.target_capture_pending && !session.original_delivery_revoked && session.reason==CreationReason::NormalInitial;
+    let application=session.target_application.as_deref().unwrap_or("");
+    let input=if target_ready && session.prefs.app_writing.permits_input_context(application) {
+        session.input_context.as_ref().filter(|input|
+            session.target.as_ref()==Some(&input.target) && input.captured_at.elapsed()<Duration::from_secs(3)
+            && input.context.validate().is_ok()).map(|input|input.context.clone())
+    } else {None};
+    let hinted=input.as_ref().map(input_scene).unwrap_or_default();
+    let scene=explicit.unwrap_or_else(|| {
+        if !automatic || !session.prefs.app_writing.enabled { return AppWritingScene::General; }
+        if hinted!=AppWritingScene::General {hinted}
+        else if target_ready {session.prefs.app_writing.scene_for(application)}
+        else {AppWritingScene::General}
+    });
+    Some(WritingContext {scene,language,input})
 }

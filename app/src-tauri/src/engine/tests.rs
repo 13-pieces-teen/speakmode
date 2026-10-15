@@ -91,7 +91,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,
         processing_worker_released: true,db_pending:0,cancel_pending:false,
         source: None, output: None, pending: None, cache: None, cache_complete: false,
-        cache_created: None, target: None, target_application:None, writing_scene:None, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
+        cache_created: None, target: None, target_application:None, writing_scene:None, input_context_frozen:false,input_context:None,input_context_status:InputContextStatus::Disabled, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
         original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,
         reason: CreationReason::NormalInitial, asr_attempt_id: Some(format!("attempt-{id}")),
@@ -114,7 +114,7 @@ fn source(id: &str) -> SourceRevision {
 
 fn output(hub: &AppHub, id: &str) -> OutputRevision {
     OutputRevision {
-        confirmed_context:None, id: format!("output-{id}"), session_id: id.into(), parent_revision_id: None, base_revision_id: None,
+        writing_receipt:None, confirmed_context:None, id: format!("output-{id}"), session_id: id.into(), parent_revision_id: None, base_revision_id: None,
         source_revision_id: format!("source-{id}"),
         mode_snapshot: hub.inner.lock().unwrap().active.as_ref().unwrap().mode.clone(),
         resolved_mode: BaseMode::Structure, rewrite_fallback: None,

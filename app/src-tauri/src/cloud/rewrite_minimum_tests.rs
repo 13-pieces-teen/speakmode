@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Notify, task::JoinHandle};
 #[path="rewrite_language_tests.rs"]
 mod language_tests;
+#[path="rewrite_writing_context_tests.rs"]
+mod writing_context_tests;
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 

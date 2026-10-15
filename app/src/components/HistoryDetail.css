@@ -110,3 +110,5 @@
 .confirmed-context-editor textarea {max-height:280px;}
 .confirmed-context-editor li,.candidate-source-reference li {overflow-wrap:anywhere;white-space:pre-wrap;margin-block:8px;}
 .confirmed-context-editor .rt-TextFieldRoot {margin-bottom:10px;}
+
+.history-writing-reference { margin: 0; color: var(--sm-muted); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }

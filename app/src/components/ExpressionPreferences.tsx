@@ -24,6 +24,6 @@ export function ExpressionPreferences({ value, disabled, onChange }: {
         {selected ? <CheckIcon /> : <PlusIcon />}{preference.label}
       </Button>;
     })}</div>
-    <p className="mode-field-hint">点选后加入下方整理要求，可继续编辑，随这个 Mode 保存。</p>
+    <p className="mode-field-hint">点选后加入下方整理要求，可继续编辑，随这个场合保存。</p>
   </div>;
 }

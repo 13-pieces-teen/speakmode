@@ -7,6 +7,7 @@ pub mod store;
 pub mod types;
 pub mod app_writing;
 pub mod confirmed_context;
+pub mod writing_context;
 pub use confirmed_context::{ConfirmedContext, DraftLanguage, SourceCorrection};
 pub use app_writing::{AppWritingPreferences, AppWritingOverride, AppWritingScene};
 pub use store::{Store, StoreError, StoreResult};

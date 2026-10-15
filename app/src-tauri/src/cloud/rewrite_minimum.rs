@@ -25,11 +25,19 @@ pub struct MinimumRequest {
 }
 pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision,
     dictionary: &DictionarySnapshot, protect_long: bool) -> Result<MinimumRequest, CloudError> {
+    let context = super::writing_context::for_mode(mode);
+    prepare_with_writing_context(config,mode,source,dictionary,protect_long,context.as_ref())
+}
+pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision,
+    dictionary: &DictionarySnapshot, protect_long: bool,
+    context: Option<&crate::core::writing_context::WritingContext>) -> Result<MinimumRequest, CloudError> {
+    if let Some(context)=context { context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?; }
     let english = super::language::enabled(&source.text());
     let prompt = if english { super::language::GENERATION } else { PROMPT };
     let mut body = super::request_body_with_system(config, mode, source, format!("协议版本：{VERSION}\n{prompt}"))?;
     let canonical = super::terms::canonicalize(&source.text(), dictionary);
-    let terms = if protect_long && super::uses_guarded_long(source) { Some(ProtectedTerms::new_guarded(&canonical)?) } else { None };
+    let explicit_english = context.is_some_and(|v|v.language==crate::core::DraftLanguage::English);
+    let terms = if protect_long && !explicit_english && super::uses_guarded_long(source) { Some(ProtectedTerms::new_guarded(&canonical)?) } else { None };
     let text = terms.as_ref().map_or_else(||source.text(), |p|p.masked_source().to_owned());
     if terms.is_some() {
         body["messages"][0]["content"] = json!(format!("协议版本：{VERSION}\n{PROMPT}\n特殊括号标记是不可改动的原始专名、逐字引语或代码。所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。不在标记外输出英文字母。标记内的语气词是原话，不能去掉；本地逐字恢复后再核对全文。"));
@@ -40,6 +48,8 @@ pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevi
     });
     if english { data["sourceFragments"] = json!(source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>()); }
     body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("minimum edit data serialize"));
+    if let Some(context)=context { super::writing_context::attach(&mut body,mode,source,context,super::writing_context::Stage::Generation)?; }
+    super::format_requests::attach(&mut body,&source.text())?;
     Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms})
 }
 

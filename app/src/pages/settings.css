@@ -137,3 +137,14 @@
   .shortcut-actions { justify-content: flex-start; }
   .settings-device { flex-wrap: wrap; gap: 4px 10px; }
 }
+
+.input-context-exclusions { margin: 14px 0 20px; padding: 14px 16px; border: 1px solid var(--sm-control-line); border-radius: 10px; }
+.input-context-exclusions summary { cursor: pointer; font-size: 13px; color: var(--sm-secondary); }
+.input-context-exclusions summary:focus-visible { outline: 3px solid #85aff5; outline-offset: 4px; }
+.input-context-exclusion-list { padding: 0; list-style: none; }
+.input-context-exclusion-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; font-size: 13px; }
+.input-context-exclusion-list small { color: var(--sm-muted); overflow-wrap: anywhere; }
+.input-context-exclusion-editor { display: flex; align-items: end; gap: 12px; margin: 14px 0 8px; }
+.input-context-exclusion-editor label { display: grid; gap: 7px; flex: 1; min-width: 0; font-size: 12px; }
+.input-context-exclusion-editor button { min-height: 32px; }
+@container settings (max-width: 400px) { .input-context-exclusion-editor { flex-direction: column; align-items: stretch; } }

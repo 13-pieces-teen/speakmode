@@ -1,9 +1,10 @@
-export type AppWritingScene = 'general' | 'chat' | 'document' | 'technical';
+export type AppWritingScene = 'general' | 'chat' | 'document' | 'email' | 'technical';
 export interface AppWritingOverride { application: string; scene: AppWritingScene }
-export interface AppWritingPreferences { enabled: boolean; overrides: AppWritingOverride[] }
-export const defaultAppWriting: AppWritingPreferences = { enabled: true, overrides: [] };
+export interface AppWritingPreferences { enabled: boolean; overrides: AppWritingOverride[]; inputContextEnabled:boolean; excludedApplications:string[]; outputLanguage:'asSpoken'|'english' }
+export const defaultAppWriting: AppWritingPreferences = { enabled: true, overrides: [], inputContextEnabled:false, excludedApplications:[], outputLanguage:'asSpoken' };
+export function normalizeAppWriting(value?:Partial<AppWritingPreferences>):AppWritingPreferences { return {...defaultAppWriting,...value}; }
 export const writingSceneLabels: Record<AppWritingScene, string> = {
-  general: '通用 · 按内容决定', chat: '聊天 · 自然短句', document: '文档 · 清晰条目', technical: '技术 · 保留条目与代码',
+  general: '通用 · 按内容决定', chat: '聊天 · 自然短句', document: '文档 · 连贯自然段', email: '邮件 · 来意与请求', technical: '技术 · 保留术语与代码',
 };
 export const writingApplications = [
   { id: 'wechat.exe', name: '微信', scene: 'chat' }, { id: 'weixin.exe', name: '微信（Weixin）', scene: 'chat' },
@@ -19,4 +20,4 @@ export function applicationKey(value: string): string | null {
 export function applicationLabel(key: string): string {
   return writingApplications.find(app => app.id === key.toLowerCase())?.name ?? key;
 }
-export function appWritingIsDefault(value: AppWritingPreferences): boolean { return value.enabled && value.overrides.length === 0; }
+export function appWritingIsDefault(value: AppWritingPreferences): boolean { return value.enabled && value.overrides.length === 0 && !value.inputContextEnabled && value.excludedApplications.length === 0 && value.outputLanguage === 'asSpoken'; }
