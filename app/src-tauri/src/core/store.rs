@@ -323,7 +323,10 @@ impl Store {
         if name.chars().count()==0 || name.chars().count()>40 || name.chars().any(char::is_control) { return Err(invalid("Mode name needs 1–40 printable characters")); }
         if rules.is_empty() || rules.chars().count()>4000 { return Err(invalid("Mode rules need 1–4000 characters")); }
         let normalized = folded(&name);
-        if ["auto","automatic","light","structure","自动","轻整理","结构"].iter().any(|reserved| folded(reserved)==normalized) { return Err(invalid("Mode name conflicts with a built-in Mode")); }
+        let reserved=["auto","automatic","light","structure","自动","轻整理","结构","chat","document","email","technical","聊天消息","文档写作","邮件沟通","技术沟通"].iter().any(|reserved| folded(reserved)==normalized);
+        let retained_personal_name=draft.id.as_ref().filter(|id|!builtin_modes().iter().any(|mode|&mode.id==*id))
+            .and_then(|id|self.mode_snapshot(id,None).ok()).is_some_and(|current|folded(&current.name)==normalized);
+        if reserved && !retained_personal_name { return Err(invalid("Mode name conflicts with a built-in Mode")); }
         let mode_id = draft.id.clone().unwrap_or_else(id);
         if builtin_modes().iter().any(|m|m.id==mode_id) { return Err(invalid("built-in Modes cannot be modified")); }
         let current: Option<u64> = self.connection.query_row("SELECT current_revision FROM modes WHERE id=?1 AND deleted=0", [&mode_id], |r|r.get(0)).optional()?;
@@ -439,7 +442,7 @@ impl Store {
         if detail.output.is_some() {return Err(StoreError::AlreadyCompleted);}
         let mode=detail.session.seed.mode_snapshot;
         let resolved=if mode.base_mode==BaseMode::Auto {BaseMode::Light} else {mode.base_mode};
-        let output=OutputRevision{confirmed_context:None, id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None,
+        let output=OutputRevision{writing_receipt:None, confirmed_context:None, id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None,
             blocks:detail.source.items.into_iter().map(|item|OutputBlock{id:id(),text:item.text,source_refs:vec![item.id]}).collect(),kind:RevisionKind::UseSource,creation_reason:CreationReason::UseSource,created_at:created_at.into()};
         self.commit_ready(output)
     }
@@ -725,6 +728,10 @@ fn json_string(s:&str) -> String { serde_json::to_string(s).expect("serializing 
 fn builtin_modes() -> Vec<ModeRecord> {
     vec![
         ModeRecord{id:"auto".into(),name:"自动".into(),base_mode:BaseMode::Auto,rules:"".into(),revision:1,builtin:true},
+        ModeRecord{id:"chat".into(),name:"聊天消息".into(),base_mode:BaseMode::Auto,rules:"".into(),revision:1,builtin:true},
+        ModeRecord{id:"document".into(),name:"文档写作".into(),base_mode:BaseMode::Auto,rules:"".into(),revision:1,builtin:true},
+        ModeRecord{id:"email".into(),name:"邮件沟通".into(),base_mode:BaseMode::Auto,rules:"".into(),revision:1,builtin:true},
+        ModeRecord{id:"technical".into(),name:"技术沟通".into(),base_mode:BaseMode::Auto,rules:"".into(),revision:1,builtin:true},
         ModeRecord{id:"light".into(),name:"轻整理".into(),base_mode:BaseMode::Light,rules:"".into(),revision:1,builtin:true},
         ModeRecord{id:"structure".into(),name:"结构".into(),base_mode:BaseMode::Structure,rules:"".into(),revision:1,builtin:true},
     ]
@@ -746,6 +753,9 @@ fn validate_source(seed:&SessionSeed,source:&SourceRevision) -> StoreResult<()> 
 }
 pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreResult<()> {
     valid_id(&output.id)?;
+    if let Some(receipt)=&output.writing_receipt {
+        if receipt.contract_version.len()>80 || receipt.contract_version.is_empty() || output.rewrite_fallback.is_some() {return Err(invalid("invalid writing receipt"));}
+    }
     if let Some(context)=&output.confirmed_context {
         context.reference_text(source).map_err(invalid)?;
         if output.rewrite_fallback.is_some() || matches!(output.kind,RevisionKind::Initial|RevisionKind::UseSource) {return Err(invalid("confirmed context belongs only to an explicit history revision"));}

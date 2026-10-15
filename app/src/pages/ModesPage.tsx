@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge, Button, IconButton, RadioCards, Select, TextArea, TextField } from '@radix-ui/themes';
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, CheckCircledIcon, FileTextIcon, Pencil2Icon, PlusIcon, TrashIcon, UpdateIcon } from '@radix-ui/react-icons';
-import type { Dictation, ResolvedMode } from '../model';
-import { builtinModes, instructionTemplates, projectSample, type PersonalMode } from '../modes';
+import type { Dictation, ResolvedMode, Mode } from '../model';
+import { allBuiltinModes, builtinModes, instructionTemplates, projectSample, type PersonalMode } from '../modes';
 import { useModes, type ModeDraft as Draft } from '../hooks/useModes';
 import { useDesktop } from '../services/DesktopProvider';
 import { ModeIcon, OutputBlocks, PageHeading } from '../components/ui';
@@ -27,7 +27,7 @@ type TrialResult = PreviewSource & { fingerprint: string } & (
   { kind: 'personal'; output: ModePreviewResult } |
   { kind: 'comparison'; comparison: ModeComparisonResult['comparison'] }
 );
-const desktopRequired = '请在 SpeakMode 桌面应用中保存、管理和试用 Mode。当前页面可编辑草稿与输入样例，但不会联网或保存。';
+const desktopRequired = '请在 SpeakMode 桌面应用中保存、管理和试用场合。当前页面可编辑草稿与输入样例，但不会联网或保存。';
 
 function scalarCount(value: string) {
   const characters = Array.from(value);
@@ -119,7 +119,11 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
   const changedElsewhere = !isNew && (!currentMode || currentMode.version !== initial.expectedRevision);
   const nameLength = scalarCount(draft.name.trim());
   const rulesLength = scalarCount(draft.instructions.trim());
-  const nameError = nameLength === 0 ? '给这个 Mode 起一个名字。' : nameLength < 0 || nameLength > 40 ? '名称需为 1–40 个有效 Unicode 字符。' : builtinModes.some(mode => mode.id === draft.name.trim()) || modes.some(mode => mode.id !== draft.id && mode.name.toLocaleLowerCase() === draft.name.trim().toLocaleLowerCase()) ? '已经有同名 Mode，换个名字便于区分。' : '';
+  const normalizedName = draft.name.trim().toLocaleLowerCase();
+  // Newly reserved scenario names must not force existing personal modes to rename.
+  const keepsExistingName = !isNew && currentMode?.name.trim().toLocaleLowerCase() === normalizedName;
+  const builtinNameTaken = !keepsExistingName && allBuiltinModes.some(mode => mode.id.toLocaleLowerCase() === normalizedName);
+  const nameError = nameLength === 0 ? '给这个场合起一个名字。' : nameLength < 0 || nameLength > 40 ? '名称需为 1–40 个有效 Unicode 字符。' : builtinNameTaken || modes.some(mode => mode.id !== draft.id && mode.name.trim().toLocaleLowerCase() === normalizedName) ? '已经有同名场合，换个名字便于区分。' : '';
   const instructionError = rulesLength === 0 ? '写下你希望怎样整理这段表达。' : rulesLength < 0 || rulesLength > 4000 ? '整理要求需为 1–4000 个有效 Unicode 字符。' : '';
   const invalidatePreview = useCallback((cancelling = false) => {
     // Invalidate locally before the IPC round trip. Each native cancellation is
@@ -202,7 +206,7 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
       });
       if (!mounted.current || generation !== runGeneration.current || activePreview.current?.runId !== runId) return;
       if (kind === 'comparison') {
-        if (!isComparisonResult(result)) throw new Error('未收到完整的模式对比，请重新试用。');
+        if (!isComparisonResult(result)) throw new Error('未收到完整的组织方式对比，请重新试用。');
         setPreview({ ...result, kind: 'comparison', fingerprint: inputFingerprint });
       } else {
         if (!isPreviewResult(result) || !hasPreviewSource(result)) throw new Error('未收到有效的整理结果，请重新试用。');
@@ -238,28 +242,28 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
     }
   }
   return <div className="mode-editor">
-    <Button className="mode-back" variant="ghost" color="gray" disabled={saving} onClick={() => dirty ? setClosePending(true) : onClose()}><ArrowLeftIcon />返回 Mode 管理</Button>
+    <Button className="mode-back" variant="ghost" color="gray" disabled={saving} onClick={() => dirty ? setClosePending(true) : onClose()}><ArrowLeftIcon />返回场合管理</Button>
     <div className="mode-page-header">
-      <PageHeading title={isNew ? '新建 Mode' : '编辑 Mode'} description="保存常用的整理规则，录音时直接选用。" />
-      <Button type="submit" form="mode-editor-form" disabled={!available || saving}>{saving ? <UpdateIcon className="mode-busy-icon" /> : <CheckIcon />}{saving ? '正在保存' : '保存 Mode'}</Button>
+      <PageHeading title={isNew ? '新建自定义场合' : '编辑自定义场合'} description="描述你在什么场合使用、希望怎样表达，录音时直接选用。" />
+      <Button type="submit" form="mode-editor-form" disabled={!available || saving}>{saving ? <UpdateIcon className="mode-busy-icon" /> : <CheckIcon />}{saving ? '正在保存' : '保存场合'}</Button>
     </div>
     {!available && <p className="mode-session-note" role="status">{desktopRequired}</p>}
     {saveError && <p className="mode-field-error" role="alert">{saveError} 草稿仍保留；若版本已变化，请返回管理重新打开后核对。</p>}
-    {changedElsewhere && <p className="mode-field-error" role="alert">{currentMode ? '此 Mode 已有新版本。' : '此 Mode 已被删除。'}当前草稿仍保留，保存不会覆盖新版或重新创建；请返回管理重新打开后核对。</p>}
+    {changedElsewhere && <p className="mode-field-error" role="alert">{currentMode ? '此场合已有新版本。' : '此场合已被删除。'}当前草稿仍保留，保存不会覆盖新版或重新创建；请返回管理重新打开后核对。</p>}
     {(leaving || closePending) && <LeaveNotice onKeep={() => { setClosePending(false); onKeepEditing(); }} onDiscard={leaving ? onDiscardAndLeave : onClose} />}
     <form id="mode-editor-form" noValidate onSubmit={event => { event.preventDefault(); void save(); }} className="mode-editor-grid" aria-busy={saving}>
       <section className="mode-definition surface" aria-labelledby="mode-definition-title">
-        <div className="mode-section-heading"><Pencil2Icon /><h2 id="mode-definition-title">整理规则</h2></div>
+        <div className="mode-section-heading"><Pencil2Icon /><h2 id="mode-definition-title">场合与表达偏好</h2></div>
         <div className="mode-field">
           <label htmlFor="personal-mode-name">名称</label>
-          <TextField.Root ref={nameRef} id="personal-mode-name" value={draft.name} disabled={saving} onChange={event => changeDraft({ ...draft, name: event.target.value })} placeholder="例如：项目记录、发给同学" aria-invalid={triedSubmit && Boolean(nameError)} aria-describedby={triedSubmit && nameError ? 'mode-name-hint mode-name-error' : 'mode-name-hint'} />
+          <TextField.Root ref={nameRef} id="personal-mode-name" value={draft.name} disabled={saving} onChange={event => changeDraft({ ...draft, name: event.target.value })} placeholder="例如：面试自我介绍、项目周报" aria-invalid={triedSubmit && Boolean(nameError)} aria-describedby={triedSubmit && nameError ? 'mode-name-hint mode-name-error' : 'mode-name-hint'} />
           <p className="mode-field-hint" id="mode-name-hint">名称 1–40 个字符。</p>
           {triedSubmit && nameError && <p className="mode-field-error" id="mode-name-error" role="alert">{nameError}</p>}
         </div>
         <div className="mode-field">
-          <span id="mode-base-label" className="mode-field-label">基础整理方式</span>
+          <span id="mode-base-label" className="mode-field-label">组织方式</span>
           <RadioCards.Root className="mode-base-options" aria-labelledby="mode-base-label" value={draft.base} onValueChange={value => setBase(value as ResolvedMode)} columns="2" size="1">
-            {(['轻整理', '结构'] as const).map(base => <RadioCards.Item key={base} value={base} disabled={saving}><ModeIcon mode={base} /><span>{base}</span>{draft.base === base && <CheckIcon />}</RadioCards.Item>)}
+            {(['轻整理', '结构'] as const).map(base => <RadioCards.Item key={base} value={base} disabled={saving}><ModeIcon mode={base} /><span>{base === '轻整理' ? '自然段' : '主题分点'}</span>{draft.base === base && <CheckIcon />}</RadioCards.Item>)}
           </RadioCards.Root>
           <p className="mode-field-hint">{draft.base === '轻整理' ? '让口语更自然，保留叙述顺序。' : '把同一主题的补充和条件放在一起。'}</p>
         </div>
@@ -290,28 +294,28 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
         <p className="mode-field-error" id="mode-sample-error" role="alert">{sampleError}</p>
         <div className="mode-try-action">
           <div className="mode-inline-actions">
-            <Button type="button" variant="soft" disabled={!available || busy || saving} onClick={() => { void runPreview('personal'); }}>{busy && trialKind === 'personal' ? <UpdateIcon className="mode-busy-icon" /> : <ArrowRightIcon />}试用我的 Mode</Button>
-            <Button type="button" variant="outline" color="gray" disabled={!available || busy || saving} onClick={() => { void runPreview('comparison'); }}>{busy && trialKind === 'comparison' && <UpdateIcon className="mode-busy-icon" />}对比轻整理与结构</Button>
+            <Button type="button" variant="soft" disabled={!available || busy || saving} onClick={() => { void runPreview('personal'); }}>{busy && trialKind === 'personal' ? <UpdateIcon className="mode-busy-icon" /> : <ArrowRightIcon />}试用这个场合</Button>
+            <Button type="button" variant="outline" color="gray" disabled={!available || busy || saving} onClick={() => { void runPreview('comparison'); }}>{busy && trialKind === 'comparison' && <UpdateIcon className="mode-busy-icon" />}对比两种组织方式</Button>
             {busy && <Button type="button" variant="ghost" color="gray" onClick={cancelPreview}>取消试用</Button>}
           </div>
-          <p id="mode-preview-boundary">内置模式对比会发起两次云端请求，不使用上方自定义规则。</p>
+          <p id="mode-preview-boundary">组织方式对比会发起两次云端请求，不使用上方自定义规则。</p>
         </div>
         {previewError && <p className="mode-field-error" role="alert">{previewError}</p>}
         <div className="mode-preview" data-stale={stale} aria-busy={busy}>
-          <div className="mode-preview-header"><h3 ref={previewHeading} tabIndex={-1}>{preview?.kind === 'comparison' ? '内置模式对比' : '整理预览'}</h3><span role="status" aria-live="polite">{busy ? trialKind === 'comparison' ? '正在生成两份结果…' : '正在生成预览…' : stale ? preview?.kind === 'comparison' ? '输入已变化，请重新对比' : '规则或输入已变化，请重新试用' : previewStatus || (previewError ? '试用未完成' : preview ? '预览已更新' : '尚未试用')}</span></div>
+          <div className="mode-preview-header"><h3 ref={previewHeading} tabIndex={-1}>{preview?.kind === 'comparison' ? '组织方式对比' : '整理预览'}</h3><span role="status" aria-live="polite">{busy ? trialKind === 'comparison' ? '正在生成两份结果…' : '正在生成预览…' : stale ? preview?.kind === 'comparison' ? '输入已变化，请重新对比' : '规则或输入已变化，请重新试用' : previewStatus || (previewError ? '试用未完成' : preview ? '预览已更新' : '尚未试用')}</span></div>
           {preview ? <>
             <p className="mode-preview-origin">{preview.sourceKind === 'history' ? '历史识别稿' : '文本样例'} · {preview.sourceItemCount} 个输入片段</p>
-            {preview.kind === 'comparison' ? <div className="mode-comparison" role="group" aria-label="同一输入的内置模式对比">
-              {(['light', 'structure'] as const).map(mode => <section key={mode} className="mode-comparison-pane" aria-label={mode === 'light' ? '轻整理结果' : '结构结果'}>
-                <div className="mode-comparison-title"><ModeIcon mode={mode === 'light' ? '轻整理' : '结构'} /><h4>{mode === 'light' ? '轻整理' : '结构'}</h4></div>
+            {preview.kind === 'comparison' ? <div className="mode-comparison" role="group" aria-label="同一输入的组织方式对比">
+              {(['light', 'structure'] as const).map(mode => <section key={mode} className="mode-comparison-pane" aria-label={mode === 'light' ? '自然段结果' : '主题分点结果'}>
+                <div className="mode-comparison-title"><ModeIcon mode={mode === 'light' ? '轻整理' : '结构'} /><h4>{mode === 'light' ? '自然段' : '主题分点'}</h4></div>
                 <p className="mode-comparison-intent">{mode === 'light' ? '自然表达，保持叙述顺序' : '按主题归组，合并补充说明'}</p>
                 <OutputBlocks texts={preview.comparison[mode].blocks.map(block => block.text)} className="mode-preview-text" />
               </section>)}
             </div> : <OutputBlocks texts={preview.output.blocks.map(block => block.text)} className="mode-preview-text" />}
             {preview.kind === 'comparison' && <p className="mode-comparison-note">简短、清楚的输入，两种结果可能相近。请一并检查事实、条件和否定是否保留。</p>}
-          </> : <div className="mode-preview-empty"><p>试用你的规则，或用同一段话对比两种内置模式。</p></div>}
+          </> : <div className="mode-preview-empty"><p>试用你的规则，或用同一段话对比两种组织方式。</p></div>}
         </div>
-        <details className="mode-preview-help"><summary>预览说明</summary><p>使用当前整理模型生成结果。历史样例保留原始识别分片；自行输入按换行分片，不代表真实录音。内置对比仅比较轻整理与结构，不运行自动模式。试用不新增历史、不计入口述统计，也不修改已有记录。取消、修改规则/样例或离开时会取消本次请求，并忽略迟到结果。</p></details>
+        <details className="mode-preview-help"><summary>预览说明</summary><p>使用当前整理模型生成结果。历史样例保留原始识别分片；自行输入按换行分片，不代表真实录音。组织方式对比仅比较自然段与主题分点，不推断场合。试用不新增历史、不计入口述统计，也不修改已有记录。取消、修改规则/样例或离开时会取消本次请求，并忽略迟到结果。</p></details>
       </section>
     </form>
   </div>;
@@ -341,6 +345,20 @@ export function ModesPage({ records, origin, onBack, onDirtyChange, leaving, onK
     setEditor({ isNew: true, draft: { id: `custom:${crypto.randomUUID()}`, name: templateIndex === 2 && !modes.some(mode => mode.name === template.name) ? template.name : '', base: template.base, instructions: template.text, expectedRevision: null } });
     setNotice(''); setActionError(''); setDeleteId(null);
   }
+  function createForScenario(id:Mode) {
+    const scenario = builtinModes.find(mode=>mode.id===id);
+    if (!scenario) return;
+    editorGeneration.current += 1;
+    setEditor({isNew:true,draft:{id:`custom:${crypto.randomUUID()}`,name:'',base:'轻整理',instructions:scenario.detail,expectedRevision:null}});
+    setNotice(''); setActionError(''); setDeleteId(null);
+  }
+  async function setBuiltinDefault(id:Mode) {
+    if (!available || actionPending.current) return;
+    actionPending.current=true;setPendingAction(`default:${id}`);setActionError('');
+    try { await setDefaultMode(id); if(mounted.current)setNotice(`下次口述使用“${id}”。`); }
+    catch(error) { if(mounted.current)setActionError(errorMessage(error,'设置默认场合失败，请重试。')); }
+    finally { actionPending.current=false;if(mounted.current)setPendingAction(null); }
+  }
   function edit(mode: PersonalMode) {
     editorGeneration.current += 1;
     setEditor({ draft: { id: mode.id, name: mode.name, instructions: mode.instructions, base: mode.base, expectedRevision: mode.version }, isNew: false });
@@ -356,7 +374,7 @@ export function ModesPage({ records, origin, onBack, onDirtyChange, leaving, onK
     const generation = editorGeneration.current;
     const saved = await saveMode(draft);
     if (!mounted.current || generation !== editorGeneration.current) return;
-    setNotice(`已保存“${saved.name}”。可在 Mode 菜单选用，已有记录保持不变。`);
+    setNotice(`已保存“${saved.name}”。可在场合菜单选用，已有记录保持不变。`);
     closeEditor();
   }
   async function manage(mode: PersonalMode, action: 'default' | 'delete') {
@@ -376,7 +394,7 @@ export function ModesPage({ records, origin, onBack, onDirtyChange, leaving, onK
         if (mounted.current) focusInView(action === 'default' ? editButtons.current.get(mode.id) ?? heading.current : heading.current);
       });
     } catch (error) {
-      if (mounted.current) setActionError(errorMessage(error, action === 'default' ? '设置默认 Mode 失败，请重试。' : '删除失败，Mode 已保留，请重试。'));
+      if (mounted.current) setActionError(errorMessage(error, action === 'default' ? '设置默认场合失败，请重试。' : '删除失败，场合已保留，请重试。'));
     } finally {
       actionPending.current = false;
       if (mounted.current) setPendingAction(null);
@@ -385,22 +403,22 @@ export function ModesPage({ records, origin, onBack, onDirtyChange, leaving, onK
   if (editor) return <ModeEditor key={editor.draft.id} initial={editor.draft} isNew={editor.isNew} records={records} onSave={save} onClose={closeEditor} onDirtyChange={onDirtyChange} leaving={leaving} onKeepEditing={onKeepEditing} onDiscardAndLeave={onDiscardAndLeave} />;
   return <div className="mode-library">
     <Button variant="ghost" color="gray" className="mode-back" onClick={onBack}><ArrowLeftIcon />返回{origin}</Button>
-    <div className="mode-page-header"><div className="page-heading"><h1 ref={heading} tabIndex={-1}>Mode 管理</h1><p>选择内置模式，或保存自己的整理规则。</p></div><Button disabled={pendingAction !== null} onClick={() => create()}><PlusIcon />新建 Mode</Button></div>
+    <div className="mode-page-header"><div className="page-heading"><h1 ref={heading} tabIndex={-1}>使用场合</h1><p>选择这次表达要用在什么场合，或保存自己的场合与表达偏好。</p></div><Button disabled={pendingAction !== null} onClick={() => create()}><PlusIcon />新建自定义场合</Button></div>
     <p className="mode-library-status" role="status" aria-live="polite">{notice}</p>
     {actionError && <p className="mode-field-error" role="alert">{actionError}</p>}
     {!available && <p className="mode-session-note" role="status">{desktopRequired}</p>}
     <section className="mode-personal-section surface" aria-labelledby="my-modes-title">
-      <div className="mode-library-section-heading"><h2 id="my-modes-title">我的 Mode</h2><span>{modes.length} 个</span></div>
+      <div className="mode-library-section-heading"><h2 id="my-modes-title">自定义场合</h2><span>{modes.length} 个</span></div>
       {modes.length === 0 ? <div className="mode-library-empty"><div className="mode-empty-icon"><Pencil2Icon /></div><div><p>把常用的整理要求保存下来。</p><Button variant="soft" color="gray" onClick={() => create(2)}>从“项目记录”示例开始<ArrowRightIcon /></Button></div></div>
         : <div className="personal-mode-list">{modes.map(mode => <article key={mode.id} className="personal-mode-row">
           <div className="personal-mode-icon"><Pencil2Icon /></div>
-          <div className="personal-mode-copy"><div className="personal-mode-title"><h3>{mode.name}</h3>{defaultMode === mode.id && <Badge>默认</Badge>}</div><p>{mode.instructions}</p><span>基于{mode.base}</span></div>
+          <div className="personal-mode-copy"><div className="personal-mode-title"><h3>{mode.name}</h3>{defaultMode === mode.id && <Badge>默认</Badge>}</div><p>{mode.instructions}</p><span>{mode.base === '轻整理' ? '自然段 · 保留叙述顺序' : '主题分点 · 合并补充说明'}</span></div>
           <div className="personal-mode-actions"><Button ref={element => { if (element) editButtons.current.set(mode.id, element); else editButtons.current.delete(mode.id); }} variant="soft" color="gray" disabled={pendingAction !== null} onClick={() => edit(mode)}><Pencil2Icon />编辑</Button>{defaultMode !== mode.id && <Button variant="ghost" disabled={!available || pendingAction !== null} onClick={() => { void manage(mode, 'default'); }}>{pendingAction === `default:${mode.id}` ? '正在设置' : '设为默认'}</Button>}<IconButton variant="ghost" color="gray" disabled={!available || pendingAction !== null} aria-label={`删除 ${mode.name}`} onClick={() => { setDeleteId(mode.id); setActionError(''); }}><TrashIcon /></IconButton></div>
-          {deleteId === mode.id && <div className="mode-delete-notice" role="alert"><p>删除“{mode.name}”？已有记录保留。{defaultMode === mode.id && '默认 Mode 将恢复为自动。'}</p><div className="mode-inline-actions"><Button variant="ghost" color="gray" disabled={pendingAction !== null} onClick={() => setDeleteId(null)}>取消</Button><Button variant="soft" color="red" disabled={!available || pendingAction !== null} onClick={() => { void manage(mode, 'delete'); }}>{pendingAction === `delete:${mode.id}` ? '正在删除' : '删除 Mode'}</Button></div></div>}
+          {deleteId === mode.id && <div className="mode-delete-notice" role="alert"><p>删除“{mode.name}”？已有记录保留。{defaultMode === mode.id && '默认场合将恢复为自动。'}</p><div className="mode-inline-actions"><Button variant="ghost" color="gray" disabled={pendingAction !== null} onClick={() => setDeleteId(null)}>取消</Button><Button variant="soft" color="red" disabled={!available || pendingAction !== null} onClick={() => { void manage(mode, 'delete'); }}>{pendingAction === `delete:${mode.id}` ? '正在删除' : '删除场合'}</Button></div></div>}
         </article>)}</div>}
     </section>
-    <section className="mode-builtins surface" aria-labelledby="builtin-modes-title"><div className="mode-library-section-heading"><h2 id="builtin-modes-title">内置模式</h2></div>
-      <div className="builtin-mode-grid">{builtinModes.map(mode => <div className="builtin-mode-tile" key={mode.id}><ModeIcon mode={mode.id} /><div><strong>{mode.id}</strong><p>{mode.detail}</p>{mode.id !== '自动' && <Button size="1" variant="ghost" disabled={pendingAction !== null} onClick={() => create(mode.id === '结构' ? 1 : 0)}>以此创建<ArrowRightIcon /></Button>}</div></div>)}</div>
+    <section className="mode-builtins surface" aria-labelledby="builtin-modes-title"><div className="mode-library-section-heading"><h2 id="builtin-modes-title">常用场合</h2></div>
+      <div className="builtin-mode-grid">{builtinModes.map(mode => <div className="builtin-mode-tile" key={mode.id}><ModeIcon mode={mode.id} /><div><strong>{mode.id}</strong><p>{mode.detail}</p><div className="mode-inline-actions">{defaultMode===mode.id?<Badge>默认</Badge>:<Button size="1" variant="soft" disabled={!available||pendingAction!==null} onClick={()=>void setBuiltinDefault(mode.id)}>设为默认</Button>}{mode.id !== '自动' && <Button size="1" variant="ghost" disabled={pendingAction !== null} onClick={() => createForScenario(mode.id)}>自定义表达<ArrowRightIcon /></Button>}</div></div></div>)}</div>
     </section>
   </div>;
 }

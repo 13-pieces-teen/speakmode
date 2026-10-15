@@ -3,6 +3,7 @@
 Requires psutil and Playwright in the caller's Python runtime. No browser download,
 microphone, cloud request, user profile, password readback or user-page inspection.
 Use explicit --binary ABS --edge ABS --scratch-dir ABS --out ABS.
+Use --context with owned_browser_context_probe for read-only input-position QA.
 """
 import argparse
 import ctypes
@@ -20,6 +21,8 @@ SCENARIOS = ["input", "textarea", "contenteditable", "readonly", "password",
              "noneditable", "contenteditable-false", "nested-readonly", "document"]
 SCENARIOS += [host + "--" + variant for host in ("textarea", "contenteditable")
               for variant in ("emoji", "long", "selection", "cancel", "window")]
+CONTEXT_SCENARIOS = SCENARIOS[:9] + [host + "--" + variant for host in ("textarea", "contenteditable")
+                                  for variant in ("chat", "document", "empty", "emoji", "long", "selection", "window")]
 POSITIVE = {"input", "textarea", "contenteditable"}
 INSERT = "SpeakMode 合成测试。"
 
@@ -104,14 +107,16 @@ def main():
     parser.add_argument("--edge", required=True, type=absolute)
     parser.add_argument("--scratch-dir", required=True, type=absolute)
     parser.add_argument("--out", required=True, type=absolute)
+    parser.add_argument("--context", action="store_true", help="Run the read-only context probe against the owned fixture")
     args = parser.parse_args()
+    scenarios = CONTEXT_SCENARIOS if args.context else SCENARIOS
     # An existing output cannot launch a window or mutate the clipboard.
     with args.out.open("x", encoding="utf-8") as receipt:
         report = {"scope": "REAL_WINDOWS_OWNED_BROWSER_SYNTHETIC_TEXT_ONLY",
                   "cloud": "NOT_USED", "microphone": "NOT_USED",
                   "passwordText": "NOT_READ", "userApplicationText": "NOT_READ",
-                  "productionDispatchState": "Unconfirmed", "scenarios": [],
-                  "registeredScenarios": SCENARIOS, "startedUnix": time.time(),
+                  "productionDispatchState": "NOT_ATTEMPTED" if args.context else "Unconfirmed", "scenarios": [],
+                  "registeredScenarios": scenarios, "startedUnix": time.time(),
                   "cleanup": {"completed": False}, "passed": False}
         browser_process = browser = owner = playwright = None
         root_created = None
@@ -129,7 +134,7 @@ def main():
             repo = Path(__file__).resolve().parents[1]
             source_paths = [repo / "app/src-tauri/src/platform/delivery.rs",
                             repo / "app/src-tauri/src/platform/mod.rs",
-                            repo / "app/src-tauri/examples/owned_browser_delivery_probe.rs",
+                            repo / ("app/src-tauri/examples/owned_browser_context_probe.rs" if args.context else "app/src-tauri/examples/owned_browser_delivery_probe.rs"),
                             repo / "app/src-tauri/examples/support/owned_delivery_cases.rs",
                             Path(__file__).resolve()]
             source_hashes = {str(path.relative_to(repo)): sha(path) for path in source_paths}
@@ -331,13 +336,16 @@ def main():
                 if not user32.IsWindow(hwnd) or pid.value != owner.pid:
                     raise RuntimeError("fixture HWND ownership changed")
 
-            for scenario in SCENARIOS:
+            for scenario in scenarios:
                 host, _, variant = scenario.partition("--")
                 case = {"scenario": scenario, "host": host, "variant": variant, "passed": False}
                 report["scenarios"].append(case)
                 phase = "foregroundReadiness"
                 try:
                     verify_fixture()
+                    # Ordinary activation by the already verified owned
+                    # browser. No global foreground-policy workaround.
+                    page.bring_to_front()
                     case["activationAccepted"] = bool(user32.SetForegroundWindow(hwnd))
                     deadline = time.monotonic() + .5
                     while user32.GetForegroundWindow() != hwnd and time.monotonic() < deadline:
@@ -346,19 +354,27 @@ def main():
                     if user32.GetForegroundWindow() != hwnd:
                         raise RuntimeError("owned browser did not become foreground; no input attempted")
                     phase = "fixtureFocus"
-                    page.evaluate("""({id, variant}) => {
+                    page.evaluate("""({id, variant, context}) => {
                       if(id==='document'){document.body.tabIndex=0;document.body.focus();return;}
                       const el=document.getElementById(id);
                       if(['input','textarea','contenteditable'].includes(id)) {
-                        if(el.value===undefined)el.textContent='alpha | omega'; else el.value='alpha | omega';
+                        let value='alpha | omega';
+                        if(context && variant==='empty')value='';
+                        if(context && variant==='emoji')value='前😀ab | 後😀';
+                        if(context && variant==='long')value='x'.repeat(1200)+'| omega';
+                        if(el.value===undefined)el.textContent=value; else el.value=value;
+                        el.removeAttribute('aria-label');
+                        if(context && variant==='chat')el.setAttribute('aria-label','聊天输入');
+                        if(context && variant==='document')el.setAttribute('aria-label','文档正文');
                       }
-                      el.focus(); const end=variant==='selection'?7:6;
-                      if(el.setSelectionRange)el.setSelectionRange(6,end);
+                      el.focus(); const start=context && variant==='empty'?0:context && variant==='long'?1200:6;
+                      const end=variant==='selection'?start+1:start;
+                      if(el.setSelectionRange)el.setSelectionRange(start,end);
                       else if(id==='contenteditable'){
-                        const range=document.createRange();range.setStart(el.firstChild,6);range.setEnd(el.firstChild,end);
+                        const range=document.createRange();range.setStart(el.firstChild||el,start);range.setEnd(el.firstChild||el,end);
                         const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
                       }
-                    }""", {"id": host, "variant": variant})
+                    }""", {"id": host, "variant": variant, "context": args.context})
                     active_id = page.evaluate("document.activeElement.id || (document.activeElement===document.body?'document':'')")
                     if active_id != host:
                         raise RuntimeError("owned DOM focus did not match the registered fixture")
@@ -372,7 +388,7 @@ def main():
                               "scenario": scenario, "fixtureFile": str(html),
                               "fixtureUrl": fixture_url, "profileDirectory": str(profile),
                               "alternateHwnd": alternate_hwnd if variant == "window" else None})
-                    phase = "nativeDispatch"
+                    phase = "inputContext" if args.context else "nativeDispatch"
                     native = subprocess.run([str(args.binary), "--scratch-dir", str(fixture),
                                              "--request", str(request_path), "--out", str(native_path)],
                                             capture_output=True, timeout=12,
@@ -389,15 +405,18 @@ def main():
                     case["native"] = result
                     if not result.get("passed") or native.returncode != 0:
                         case.update({"failureScope": result.get("failureScope") or "productPath",
-                                     "failurePhase": result.get("failurePhase") or "nativeDispatch"})
+                                     "failurePhase": result.get("failurePhase") or ("inputContext" if args.context else "nativeDispatch")})
                         print(json.dumps({"scenario": scenario, "passed": False,
                                           "failurePhase": case["failurePhase"]}), flush=True)
                         continue
                     phase = "ownedReadback"
                     verify_fixture()
                     if host in POSITIVE:
-                        blocked = variant in {"cancel", "window"}
-                        expected = "alpha | omega" if blocked else "alpha " + payload(variant) + (" omega" if variant == "selection" else "| omega")
+                        blocked = args.context or variant in {"cancel", "window"}
+                        if args.context:
+                            expected = "" if variant == "empty" else "前😀ab | 後😀" if variant == "emoji" else "x" * 1200 + "| omega" if variant == "long" else "alpha | omega"
+                        else:
+                            expected = "alpha | omega" if blocked else "alpha " + payload(variant) + (" omega" if variant == "selection" else "| omega")
                         read = lambda: page.locator("#" + host).evaluate("el => el.value===undefined?el.innerText:el.value").replace("\r\n", "\n")
                         deadline = time.monotonic() + 2
                         while read() != expected and time.monotonic() < deadline:
@@ -512,7 +531,7 @@ def main():
                                       ("productPath", "productPathFailures"), ("toolFailure", "toolFailures")):
                 report[count_name] = sum(case.get("failureScope") == scope for case in report["scenarios"]) \
                     + int(bool(report.get("error")) and report.get("failureScope") == scope)
-            report["passed"] = len(report["scenarios"]) == len(SCENARIOS) and not report.get("error") \
+            report["passed"] = len(report["scenarios"]) == len(scenarios) and not report.get("error") \
                 and all(case["passed"] for case in report["scenarios"]) and report["cleanup"]["completed"] \
                 and report.get("sourceInputsStable", False) and report.get("binaryStable", False)
             report["completedUnix"] = time.time()

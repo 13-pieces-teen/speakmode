@@ -31,7 +31,7 @@ mod probe {
         ensure!(matches!(name.as_str(),"powershell.exe"|"pwsh.exe"),"unexpected owned fixture executable");
         let mut stale=target.clone();stale.process_created_at+=1;
         ensure!(application::name_for_target(&stale).is_none(),"stale process lifetime was accepted");
-        let prefs=AppWritingPreferences {enabled:true,overrides:vec![AppWritingOverride {application:name,scene:AppWritingScene::Chat}]};
+        let prefs=AppWritingPreferences {enabled:true,overrides:vec![AppWritingOverride {application:name,scene:AppWritingScene::Chat}],..Default::default()};
         prefs.validate().map_err(anyhow::Error::msg)?;
         ensure!(prefs.scene_for("powershell.exe")==AppWritingScene::Chat||prefs.scene_for("pwsh.exe")==AppWritingScene::Chat,"explicit local application preference missing");
         let mode=ModeSnapshot {mode_id:if explicit{"structure"}else{"auto"}.into(),name:"合成验收".into(),

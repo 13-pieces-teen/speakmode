@@ -1,0 +1,86 @@
+{
+  "scope": "Follow-up synthetic text only; three preregistered r1 shortcomings plus one fresh document holdout; no automatic delivery or audio.",
+  "protocol": "situational-dictation-v2",
+  "cases": [
+    {
+      "id": "email-without-invented-social-text",
+      "modeId": "email",
+      "sourceItems": [
+        "Could you review the attached outline when you have time? I have updated the examples, but the cost estimate is still provisional. If the scope changes, please send comments by Thursday. I can also discuss the draft on Friday."
+      ],
+      "context": {
+        "scene": "email",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "Email body",
+          "beforeText": "",
+          "selectedText": "",
+          "afterText": "\nSent from the team mailbox."
+        }
+      },
+      "expectation": "Courteous complete email paragraphs preserving the request, completed example update, provisional estimate, conditional Thursday deadline and separate Friday availability. Do not add recipient, subject, thanks, signature, attachment content or Friday commitment.",
+      "baseline": false
+    },
+    {
+      "id": "technical-literals-and-conditional-scope",
+      "modeId": "technical",
+      "sourceItems": [
+        "嗯，先保留字段 `userID`，不要改成 `userId`。",
+        "如果请求超过500毫秒，再记录一次告警；日志采样间隔保持200毫秒。请把这两个约束分开列点。"
+      ],
+      "context": {
+        "scene": "technical",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "Code review comment",
+          "beforeText": "The API review is discussing identifier compatibility.\n",
+          "selectedText": "",
+          "afterText": ""
+        }
+      },
+      "expectation": "Preserve both quoted identifiers and the real negative contrast. The 500 ms alert condition must not govern the independent 200 ms sampling interval. Respect explicit line-separated constraints without inventing code, implementation steps or executing the instructions.",
+      "baseline": false
+    },
+    {
+      "id": "self-introduction-inside-chat",
+      "modeId": "auto",
+      "sourceItems": [
+        "Hello, my name is Mara Chen. I am studying information systems and expect to graduate in twenty thirty.",
+        "Uh, I have had two internships. First I worked on data quality at a small retailer. In my second internship, I worked on search evaluation. I now focus on retrieval experiments.",
+        "I enjoy turning ideas into practical tools, and I am still learning how to evaluate them carefully. Thank you."
+      ],
+      "context": {
+        "scene": "chat",
+        "language": "english",
+        "input": {
+          "controlLabel": "Send a message",
+          "beforeText": "Use this space to draft your spoken self-introduction.\n",
+          "selectedText": "",
+          "afterText": ""
+        }
+      },
+      "expectation": "Natural English self-introduction paragraphs despite chat host. First/second internships are biography, not an action checklist. Keep expected graduation 2030, both distinct roles, now focus present tense, enjoyment and still-learning qualification. No fabricated employer or qualification. Require natural topic paragraphs for education, experience, and interests without headings.",
+      "baseline": false
+    },
+    {
+      "id": "fresh-document-continuation",
+      "modeId": "document",
+      "sourceItems": [
+        "嗯，我们这次只评估本地原型，云端方案还没有进入测试。第一轮用了八个样例，其中两个因为权限不足没有运行，不能算失败。",
+        "我认为下一步应该补充长文档场景。如果周四能拿到测试账号，就先验证英文输入。除此之外，术语表需要保留上一版，负责人还没确定。"
+      ],
+      "context": {
+        "scene": "document",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "文档正文",
+          "beforeText": "原型评估记录\n本文区分已验证的结果和后续计划。\n",
+          "selectedText": "",
+          "afterText": "\n附录尚待补充。"
+        }
+      },
+      "expectation": "Natural paragraphs separating completed local-only evaluation and future plan. Preserve eight total/two not run due permissions, no tests of cloud方案, subjective next-step suggestion, conditional Thursday account/English input and independent previous glossary+unknown owner. Do not inherit host-only appendix or headings.",
+      "baseline": false
+    }
+  ]
+}

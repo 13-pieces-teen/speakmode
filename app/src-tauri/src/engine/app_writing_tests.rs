@@ -1,19 +1,24 @@
-//! Actual coordinator + SQLite, with parsed provider fixtures and owned IO seams.
+//! Real coordinator + SQLite with provider and native context seams.
 use super::*;
-const LIST: &str = "1. 如果会议未确认，不要订机票。\n2. 先保留行程。";
-const CHAT: &str = "如果会议未确认，不要订机票。\n先保留行程。";
-fn draft(source: &SourceRevision) -> rewrite::RewriteResult {
-    rewrite::RewriteResult { resolved_mode:BaseMode::Structure,blocks:vec![OutputBlock { id:"draft".into(),text:LIST.into(),
-        source_refs:source.items.iter().map(|i|i.id.clone()).collect() }] }
+use crate::core::writing_context::{InputContext,WritingContext};
+const PROSE:&str="如果会议未确认，不要订机票。先保留行程。";
+fn draft(source:&SourceRevision)->rewrite::RewriteResult {
+    rewrite::RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![OutputBlock{id:"draft".into(),text:PROSE.into(),source_refs:source.items.iter().map(|i|i.id.clone()).collect()}]}
 }
-fn setup(app: &str) -> Arc<AppHub> {
+fn setup(mode:&str,app:&str,label:&str)->Arc<AppHub>{
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);enable_fixture_delivery(&h);
-    h.inner.lock().unwrap().active.as_mut().unwrap().target_application=Some(app.into());
+    {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();
+        s.mode=h.db.mode_snapshot(mode,None).unwrap();s.target_application=Some(app.into());
+        if !label.is_empty(){s.prefs.app_writing.input_context_enabled=true;
+            s.input_context=Some(app_writing::CapturedInput{target:s.target.clone().unwrap(),captured_at:Instant::now(),
+                context:InputContext{control_label:label.into(),before_text:"LOCAL_HOST_SENTINEL".into(),..Default::default()}});}
+    }
     checkpoint(&h,"s");h
 }
-async fn complete(h: &Arc<AppHub>) {
-    h.finish_rewrite_with_policy("s".into(),7,|_,_,source,_,_|async move { Ok(draft(&source)) },
-        None::<RewriteWaitPolicy>,|hub,_,_| { hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true; }).await;
+async fn complete(h:&Arc<AppHub>,check:impl FnOnce(Option<WritingContext>)){
+    h.finish_rewrite_with_context_policy("s".into(),7,|_,_,source,_,_,context|{
+        check(context);async move {Ok(draft(&source))}
+    },None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
 }
 
 #[test]
@@ -41,146 +46,146 @@ async fn app_preferences_roundtrip_conflict_validation_and_reset_use_existing_rp
     assert_eq!(h.db.preferences().unwrap().app_writing,AppWritingPreferences::default());
 }
 
+
 #[tokio::test]
-async fn chat_presentation_is_saved_and_delivered_once_with_immutable_source() {
-    let h=setup("WeChat.exe");
-    let copies=Arc::new(Mutex::new(Vec::new()));let sink=copies.clone();
-    h.finish_rewrite_with_policy("s".into(),7,|_,_,source,_,_|async move {Ok(draft(&source))},None::<RewriteWaitPolicy>,
-        move|hub,id,generation|hub.initial_delivery_with(id,generation,|_|true,|permit,target,text,gate|
+async fn same_browser_fields_select_distinct_scenes_with_same_source(){
+    for (label,scene) in [("Send a message",AppWritingScene::Chat),("Document body",AppWritingScene::Document),("Email body",AppWritingScene::Email)] {
+        let h=setup("auto","msedge.exe",label);
+        complete(&h,|context|{let context=context.unwrap();assert_eq!(context.scene,scene);assert_eq!(context.input.unwrap().control_label,label);}).await;
+        let detail=h.db.get_result("s").unwrap();assert_eq!(detail.source,source("s"));
+        let output=detail.output.unwrap();assert_eq!(output.text(),PROSE);
+        let receipt=output.writing_receipt.as_ref().unwrap();assert_eq!(receipt.scene,scene);assert!(receipt.context_used);
+        assert!(!serde_json::to_string(&output).unwrap().contains("LOCAL_HOST_SENTINEL"));
+        assert!(h.inner.lock().unwrap().active.as_ref().unwrap().input_context.is_none());
+    }
+}
+#[tokio::test]
+async fn explicit_scene_beats_host_and_language_is_frozen(){
+    let h=setup("document","msedge.exe","Send a message");
+    h.inner.lock().unwrap().active.as_mut().unwrap().prefs.app_writing.output_language=DraftLanguage::English;
+    complete(&h,|context|{let context=context.unwrap();assert_eq!(context.scene,AppWritingScene::Document);assert_eq!(context.language,DraftLanguage::English);}).await;
+    assert_eq!(view(&h).writing_language,DraftLanguage::English);
+}
+#[tokio::test]
+async fn unknown_missing_or_disabled_context_keeps_speech_only_scene(){
+    for condition in ["none","stale","target","excluded","disabled"] {
+        let h=setup("auto","msedge.exe","Document body");
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();match condition {
+            "none"=>s.input_context=None,
+            "stale"=>s.input_context.as_mut().unwrap().captured_at=Instant::now()-Duration::from_secs(4),
+            "target"=>s.target.as_mut().unwrap().selection=Some((9,9)),
+            "excluded"=>s.prefs.app_writing.excluded_applications.push("MSEdge.exe".into()),
+            "disabled"=>s.prefs.app_writing.input_context_enabled=false,_=>unreachable!(),}}
+        complete(&h,|context|{let context=context.unwrap();assert!(context.input.is_none(),"{condition}");assert_eq!(context.scene,AppWritingScene::General);}).await;
+        assert!(!h.db.get_result("s").unwrap().output.unwrap().writing_receipt.unwrap().context_used);
+    }
+}
+#[tokio::test]
+async fn custom_rules_and_legacy_selection_are_preserved(){
+    let h=setup("structure","msedge.exe","");
+    complete(&h,|context|assert!(context.is_none())).await;
+    // The fake Light provider result is rejected by storage for Structure;
+    // the ordinary legacy contract remains strict.
+    assert!(h.db.get_result("s").unwrap().output.is_none());
+    let h=setup("light","msedge.exe","");complete(&h,|context|assert!(context.is_none())).await;
+    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().mode_snapshot.mode_id,"light");
+}
+#[test]
+fn excluded_unknown_or_disabled_apps_never_read_host_text(){
+    for case in ["excluded","unknown","disabled"] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.prefs.app_writing.input_context_enabled=case!="disabled";
+            if case=="excluded"{s.prefs.app_writing.excluded_applications.push("msedge.exe".into());}}
+        h.begin_stop_target(&identity("s"),Instant::now()).unwrap();
+        h.resolve_stop_target_with_context("s",7,||Ok(Some(delivery_target_fixture())),|_|if case=="unknown"{None}else{Some("msedge.exe".into())},|_|panic!("must not read {case}"));
+        let i=h.inner.lock().unwrap();assert!(i.active.as_ref().unwrap().input_context.is_none());assert!(i.active.as_ref().unwrap().target.is_some());
+    }
+}
+#[test]
+fn optional_context_failure_keeps_valid_delivery_target(){
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);
+    h.inner.lock().unwrap().active.as_mut().unwrap().prefs.app_writing.input_context_enabled=true;
+    h.begin_stop_target(&identity("s"),Instant::now()).unwrap();
+    h.resolve_stop_target_with_context("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("msedge.exe".into()),|_|Err(platform::PlatformError::TargetCapture(platform::TargetCaptureFailure::TargetInspectionTimeout)));
+    let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(s.target.is_some());assert!(s.input_context.is_none());assert!(!s.target_capture_pending);
+    assert_eq!(s.input_context_status,InputContextStatus::Unavailable);
+}
+#[tokio::test]
+async fn late_capture_cannot_change_already_frozen_cloud_context(){
+    let h=setup("auto","msedge.exe","");let worker=h.clone();
+    {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.target_capture_pending=true;s.target=None;s.target_application=None;}
+    h.finish_rewrite_with_context_policy("s".into(),7,move|_,_,source,_,_,context|async move {
+        assert_eq!(context.unwrap().scene,AppWritingScene::General);
+        worker.resolve_stop_target_with_context("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("wechat.exe".into()),|_|panic!("disabled"));
+        Ok(draft(&source))
+    },None::<RewriteWaitPolicy>,|h,_,_|h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
+    assert_eq!(view(&h).writing_scene,Some(AppWritingScene::General));
+    assert!(h.inner.lock().unwrap().active.as_ref().unwrap().input_context.is_none());
+}
+#[tokio::test]
+async fn bounded_capture_grace_is_inside_rewrite_deadline(){
+    let h=setup("auto","msedge.exe","");
+    {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.target_capture_pending=true;s.prefs.app_writing.input_context_enabled=true;}
+    let start=Instant::now();
+    h.finish_rewrite_with_context_policy("s".into(),7,|_,_,_,_,execution,context|async move {
+        assert!(context.unwrap().input.is_none());assert!(execution.deadline<=tokio::time::Instant::now()+Duration::from_millis(20));
+        Err(CloudError::new("rewrite_timeout","rewrite","fixture"))
+    },RewriteWaitPolicy{deadline:Duration::from_millis(30)},|h,_,_|h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
+    assert!(start.elapsed()<Duration::from_secs(1));
+    let output=h.db.get_result("s").unwrap().output.unwrap();assert_eq!(output.text(),source("s").text());assert!(output.writing_receipt.is_none());
+}
+#[tokio::test]
+async fn cancellation_never_commits_scene_or_retains_host_text(){
+    let h=setup("auto","msedge.exe","Document body");let worker=h.clone();
+    h.finish_rewrite_with_context_policy("s".into(),7,move|_,_,source,_,_,_|async move {
+        worker.inner.lock().unwrap().active.as_ref().unwrap().cancel.cancel();Ok(draft(&source))
+    },None::<RewriteWaitPolicy>,|_,_,_|panic!("cancelled result cannot deliver")).await;
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),0);
+    assert!(h.inner.lock().unwrap().active.as_ref().unwrap().input_context.is_none());
+}
+#[tokio::test]
+async fn accepted_scene_is_stored_and_dispatched_once(){
+    let h=setup("chat","msedge.exe","Send a message");let copies=Arc::new(Mutex::new(Vec::new()));let sink=copies.clone();
+    h.finish_rewrite_with_context_policy("s".into(),7,|_,_,source,_,_,_|async move{Ok(draft(&source))},None::<RewriteWaitPolicy>,move|h,id,generation|
+        h.initial_delivery_with(id,generation,|_|true,|permit,target,text,gate|
             platform::delivery::dispatch_with_test_operations(permit,target,text,gate,|text|{sink.lock().unwrap().push(text.to_owned());true},||4))).await;
-    let detail=h.db.get_result("s").unwrap();let output=detail.output.unwrap();
-    assert_eq!(detail.source,source("s"));assert_eq!(output.text(),CHAT);assert_eq!(output.resolved_mode,BaseMode::Light);
-    assert_eq!(output.mode_snapshot.base_mode,BaseMode::Auto);assert_eq!(output.blocks[0].source_refs,draft(&source("s")).blocks[0].source_refs);
-    assert_eq!(view(&h).writing_scene,Some(AppWritingScene::Chat));assert_eq!(*copies.lock().unwrap(),vec![CHAT]);
-    h.initial_delivery_with("s",7,|_|panic!("already delivered"),|_,_,_,_|panic!("already delivered"));
+    assert_eq!(*copies.lock().unwrap(),vec![PROSE]);
+    h.initial_delivery_with("s",7,|_|panic!("must not inspect twice"),|_,_,_,_|panic!("must not dispatch twice"));
     assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
 }
 
-#[tokio::test]
-async fn explicit_modes_rules_disabled_preferences_and_other_scenes_keep_the_draft() {
-    for case in ["structure","light","rules","disabled","general","document","technical"] {
-        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);enable_fixture_delivery(&h);
-        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.target_application=Some("wechat.exe".into());
-            match case {
-                "structure"=>s.mode=h.db.mode_snapshot("structure",None).unwrap(),
-                "light"=>s.mode=h.db.mode_snapshot("light",None).unwrap(),
-                "rules"=>{
-                    let personal=h.db.save_mode(ModeDraft{id:None,name:"保留列表".into(),base_mode:BaseMode::Structure,rules:"保留编号".into(),expected_revision:None}).unwrap();
-                    s.mode=h.db.mode_snapshot(&personal.id,Some(personal.revision)).unwrap();
-                },
-                "disabled"=>s.prefs.app_writing.enabled=false,
-                "general"=>s.target_application=Some("chrome.exe".into()),
-                "document"=>s.target_application=Some("winword.exe".into()),
-                "technical"=>s.target_application=Some("code.exe".into()),_=>unreachable!(),
-            }}
-        checkpoint(&h,"s");
-        // The Light fixture uses an appropriate resolved mode; this seam is
-        // after cloud semantic acceptance and does not exercise model prompting.
-        h.finish_rewrite_with_policy("s".into(),7,|_,mode,source,_,_|async move {
-            let mut value=draft(&source);if mode.base_mode==BaseMode::Light {value.resolved_mode=BaseMode::Light;value.blocks[0].text=CHAT.into();} Ok(value)
-        },None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
-        assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),if case=="light"{CHAT}else{LIST},"{case}");
+#[test]
+fn failure_clears_host_text_and_late_capture_cannot_restore_it(){
+    for before_capture in [true,false] {
+        let h=setup("auto","msedge.exe","Document body");
+        if before_capture {
+            let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.input_context=None;s.target_capture_pending=true;
+        }
+        h.fail("s",7,ApiError::new("asr_disconnected","asr","fixture"),true);
+        if before_capture {
+            h.resolve_stop_target_with_context("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("msedge.exe".into()),|_|panic!("failed session cannot read host text"));
+        }
+        let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();
+        assert!(s.input_context.is_none());assert!(s.input_context_frozen);assert_eq!(s.input_context_status,InputContextStatus::Unavailable);
     }
 }
 
 #[tokio::test]
-async fn spoken_layout_requests_keep_lists_without_matching_english_word_fragments() {
-    for (spoken, list, expected) in [
-        ("请分点写：检查预算。确认行程。", "1. 检查预算。\n2. 确认行程。", "1. 检查预算。\n2. 确认行程。"),
-        ("请分条写：检查预算。确认行程。", "1. 检查预算。\n2. 确认行程。", "1. 检查预算。\n2. 确认行程。"),
-        ("用项目符号写：检查预算。确认行程。", "- 检查预算。\n- 确认行程。", "- 检查预算。\n- 确认行程。"),
-        ("Use BULLETS: Check the budget. Confirm the trip.", "- Check the budget.\n- Confirm the trip.", "- Check the budget.\n- Confirm the trip."),
-        ("Use a numbered list: Check the budget. Confirm the trip.", "1. Check the budget.\n2. Confirm the trip.", "1. Check the budget.\n2. Confirm the trip."),
-        ("Write step-by-step: Check the budget. Confirm the trip.", "1. Check the budget.\n2. Confirm the trip.", "1. Check the budget.\n2. Confirm the trip."),
-        ("Keep listening. Confirm the trip.", "1. Keep listening.\n2. Confirm the trip.", "Keep listening.\nConfirm the trip."),
-    ] {
-        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);enable_fixture_delivery(&h);
-        h.inner.lock().unwrap().active.as_mut().unwrap().target_application=Some("wechat.exe".into());
-        let mut input=source("s");input.items.truncate(1);input.items[0].text=spoken.into();
-        h.checkpoint("s",7,input.clone()).unwrap();
-        h.finish_rewrite_with_policy("s".into(),7,|_,_,source,_,_|async move {
-            let mut value=draft(&source);value.blocks[0].text=list.into();Ok(value)
-        },None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
-        let detail=h.db.get_result("s").unwrap();
-        assert_eq!(detail.output.unwrap().text(),expected,"{spoken}");assert_eq!(detail.source,input);
-    }
+async fn recovered_recording_preserves_frozen_language_without_original_host(){
+    let h=setup("document","msedge.exe","Send a message");
+    {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.reason=CreationReason::Retry;s.original_delivery_revoked=true;s.prefs.app_writing.output_language=DraftLanguage::English;}
+    complete(&h,|context|{let context=context.unwrap();assert_eq!(context.scene,AppWritingScene::Document);assert_eq!(context.language,DraftLanguage::English);assert!(context.input.is_none());}).await;
+    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().writing_receipt.unwrap().language,DraftLanguage::English);
 }
 
 #[tokio::test]
-async fn recording_preferences_are_frozen_despite_later_global_changes() {
-    let h=hub();let mut prefs=h.db.preferences().unwrap();
-    prefs.app_writing.overrides.push(AppWritingOverride{application:"chrome.exe".into(),scene:AppWritingScene::Chat});
-    h.db.save_preferences(prefs,1).unwrap();
-    install(&h,"s",SessionPhase::FinalizingAsr,true);enable_fixture_delivery(&h);
-    h.inner.lock().unwrap().active.as_mut().unwrap().target_application=Some("chrome.exe".into());
-    let mut changed=h.db.preferences().unwrap();changed.app_writing.enabled=false;h.db.save_preferences(changed,2).unwrap();
-    checkpoint(&h,"s");complete(&h).await;
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),CHAT);
-}
-
-#[tokio::test]
-async fn stop_target_application_replaces_any_recording_time_app_hint() {
-    let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
-    h.inner.lock().unwrap().active.as_mut().unwrap().target_application=Some("winword.exe".into());
-    assert!(h.begin_stop_target(&identity("s"),Instant::now()).unwrap().is_some());
-    h.resolve_stop_target_with_application("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("wechat.exe".into()));
-    checkpoint(&h,"s");complete(&h).await;
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),CHAT);
-}
-
-#[tokio::test]
-async fn late_application_capture_cannot_restyle_a_started_rewrite() {
-    let h=setup("wechat.exe");
+async fn default_application_matching_gets_same_bounded_grace_without_reading_text(){
+    let h=setup("auto","msedge.exe","");
     {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.target_capture_pending=true;s.target=None;s.target_application=None;}
-    let worker=h.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,source,_,_|async move {
-        worker.resolve_stop_target_with_application("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("wechat.exe".into()));
-        Ok(draft(&source))
-    },None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),LIST);
-    assert!(view(&h).writing_scene.is_none());
-}
-
-#[tokio::test]
-async fn changed_bound_target_cannot_receive_previous_scene_policy() {
-    let h=setup("wechat.exe");let worker=h.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,source,_,_|async move {
-        worker.inner.lock().unwrap().active.as_mut().unwrap().target.as_mut().unwrap().selection=Some((5,5));
-        Ok(draft(&source))
-    },None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),LIST);
-}
-
-#[tokio::test]
-async fn preview_can_use_stop_scene_without_automatic_delivery() {
-    let h=hub();install(&h,"s",SessionPhase::Recording,true);
-    h.inner.lock().unwrap().active.as_mut().unwrap().prefs.delivery_mode=DeliveryMode::Preview;
-    assert!(h.begin_stop_target(&identity("s"),Instant::now()).unwrap().is_some());
-    h.resolve_stop_target_with_application("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("wechat.exe".into()));
-    checkpoint(&h,"s");
-    h.finish_rewrite_with_policy("s".into(),7,|_,_,source,_,_|async move{Ok(draft(&source))},None::<RewriteWaitPolicy>,
-        |h,id,generation|h.initial_delivery_with(id,generation,|_|panic!("preview must not inspect for delivery"),|_,_,_,_|panic!("preview must not paste"))).await;
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),CHAT);
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
-}
-
-#[tokio::test]
-async fn service_failure_and_explicit_retry_never_apply_initial_scene_cleanup() {
-    let h=setup("wechat.exe");
-    h.finish_rewrite_with_policy("s".into(),7,|_,_,_,_,_|async move{Err(CloudError::new("rewrite_timeout","rewrite","fixture"))},
-        None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),source("s").text());
-    let h=setup("wechat.exe");h.inner.lock().unwrap().active.as_mut().unwrap().reason=CreationReason::Retry;
-    complete(&h).await;assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),LIST);
-}
-
-#[tokio::test]
-async fn cancellation_after_generation_cannot_commit_scene_output() {
-    let h=setup("wechat.exe");let worker=h.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,source,_,_|async move {
-        worker.inner.lock().unwrap().active.as_ref().unwrap().cancel.cancel();Ok(draft(&source))
-    },
-        None::<RewriteWaitPolicy>,|_,_,_|panic!("cancelled result must not deliver")).await;
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),0);
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+    let worker=h.clone();let target=tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        worker.resolve_stop_target_with_context("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("winword.exe".into()),|_|panic!("context disabled"));
+    });
+    complete(&h,|context|{let context=context.unwrap();assert_eq!(context.scene,AppWritingScene::Document);assert!(context.input.is_none());}).await;
+    target.await.unwrap();
 }

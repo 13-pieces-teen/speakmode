@@ -9,7 +9,7 @@ fn source(session:&str) -> SourceRevision {
     SourceRevision{id:format!("source-{session}"),session_id:session.into(),asr_attempt_id:format!("attempt-{session}"),generation:7,provider:"aliyun".into(),model:"candidate-model".into(),adapter_version:"test-protocol-v1".into(),complete:true,items:vec![SourceItem{id:format!("item-{session}-1"),provider_item_id:"provider-1".into(),capture_order:1,text:"如果会议未确认，不要订机票。Hello 12 🙂".into(),is_final:true,start_ms:Some(0),end_ms:Some(7000)},SourceItem{id:format!("item-{session}-2"),provider_item_id:"provider-2".into(),capture_order:2,text:"先保留行程。".into(),is_final:true,start_ms:Some(7000),end_ms:Some(12000)}],created_at:"2026-10-04T10:00:12+08:00".into()}
 }
 fn output(session:&str) -> OutputRevision {
-    OutputRevision{confirmed_context:None, id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
+    OutputRevision{writing_receipt:None, confirmed_context:None, id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
 }
 fn ready(store:&mut Store,session:&str,policy:StoragePolicy) -> HistoryDetail {
     store.checkpoint_source(seed(session,policy),source(session)).unwrap();
@@ -190,7 +190,7 @@ fn cancelled_dictionary_transaction_rolls_back_version_and_entire_batch() {
 #[test]
 fn migrations_and_preferences_survive_reopen_without_mode_or_key_fields() {
     let path=path();
-    {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),3);}
+    {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),7);}
     let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),2);
     drop(store);fs::remove_file(path).unwrap();
 }
@@ -265,6 +265,21 @@ fn mode_revisions_are_frozen_and_deleting_default_resets_only_the_default() {
 fn mode_edit_requires_the_current_revision_and_builtin_modes_are_protected() {
     let mut store=Store::in_memory().unwrap();let original=store.save_mode(draft("消息")).unwrap();let stale=ModeDraft{id:Some(original.id),name:"消息".into(),base_mode:BaseMode::Light,rules:"保留全部信息".into(),expected_revision:Some(0)};
     assert!(matches!(store.save_mode(stale),Err(StoreError::Conflict{..})));assert!(store.delete_mode("light",1).is_err());
+}
+
+#[test]
+fn prior_personal_scene_names_remain_editable_without_changing_identity(){
+    for name in ["邮件沟通","document"] {
+        let mut store=Store::in_memory().unwrap();let mut old=store.save_mode(draft("旧个人场合")).unwrap();
+        // Seed a legacy record without bypassing the immutable-revision trigger.
+        old.id="legacy-scene".into();old.name=name.into();let data=serde_json::to_string(&old).unwrap();
+        store.test_connection().execute("INSERT INTO modes(id,normalized_name,current_revision) VALUES(?1,?2,1)",rusqlite::params![old.id,name]).unwrap();
+        store.test_connection().execute("INSERT INTO mode_revisions(mode_id,revision,data) VALUES(?1,1,?2)",rusqlite::params![old.id,data]).unwrap();
+        let updated=store.save_mode(ModeDraft{id:Some(old.id.clone()),name:name.into(),base_mode:old.base_mode,rules:"按原顺序保留全部信息".into(),expected_revision:Some(old.revision)}).unwrap();
+        assert_eq!(updated.id,old.id);assert_eq!(updated.name,name);assert_eq!(updated.revision,2);
+        assert!(store.save_mode(ModeDraft{id:None,name:name.into(),base_mode:BaseMode::Light,rules:"保留信息".into(),expected_revision:None}).is_err());
+        assert_eq!(store.mode_snapshot(&old.id,Some(1)).unwrap().name,name);
+    }
 }
 #[test]
 fn checkpoint_has_no_usage_or_output_and_is_immutable() {

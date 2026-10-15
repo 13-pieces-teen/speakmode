@@ -2,8 +2,8 @@
 html[data-surface=recorder],html[data-surface=recorder] body,html[data-surface=recorder] #root > .radix-themes[data-is-root-theme=true]{background:transparent!important}
 .recorder-surface{min-height:100dvh;display:flex;align-items:flex-end;justify-content:center;padding:16px 14px 22px;color:#20354c}
 .recorder-assembly{width:min(440px,100%);min-width:0}
-.recorder-toolbar{display:flex;align-items:center;gap:8px;width:min(320px,100%);height:48px;padding:7px 8px;margin:0 auto;border-radius:12px;background:#fff;box-shadow:0 0 0 1px #3050751a,0 3px 8px #23436814,0 12px 26px #23436812}
-.recorder-mode-trigger{flex:none;width:104px;min-width:0;height:34px;padding:0 9px;display:flex;align-items:center;gap:7px;border:1px solid #dce7f5;border-radius:9px;background:#eef4fc;color:#315b91;font-size:12px;font-weight:600;box-shadow:inset 0 1px 0 #fff,0 1px 2px #1e3f6909}
+.recorder-toolbar{display:flex;align-items:center;gap:8px;width:min(396px,100%);height:48px;padding:7px 8px;margin:0 auto;border-radius:12px;background:#fff;box-shadow:0 0 0 1px #3050751a,0 3px 8px #23436814,0 12px 26px #23436812}
+.recorder-mode-trigger{flex:none;width:184px;max-width:calc(100% - 168px);min-width:0;height:34px;padding:0 9px;display:flex;align-items:center;gap:7px;border:1px solid #dce7f5;border-radius:9px;background:#eef4fc;color:#315b91;font-size:12px;font-weight:600;box-shadow:inset 0 1px 0 #fff,0 1px 2px #1e3f6909}
 .recorder-mode-trigger span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.recorder-mode-trigger svg{width:14px;height:14px}.recorder-mode-trigger svg:last-child{width:10px;height:10px}.recorder-mode-trigger:disabled{color:#8192a8;background:#f0f3f7}
 .recorder-divider{height:19px;width:1px;background:#dce5ef;flex:none}
 .recorder-level{min-width:0;flex:1;display:grid;place-items:center;height:30px}
@@ -40,3 +40,5 @@ html[data-surface=recorder],html[data-surface=recorder] body,html[data-surface=r
 
 
 
+
+.recorder-context-note { margin: 7px 14px 0; color: #66788c; font-size: 11px; text-align: center; }

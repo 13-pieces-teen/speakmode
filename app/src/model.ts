@@ -1,6 +1,6 @@
 import {diffArrays} from 'diff';
-import type { HistoryCandidate, HistoryDetail, HistorySummary, OutputRevision, CandidateReviewIssue } from './services/contracts';
-export type BuiltinMode='自动'|'轻整理'|'结构';
+import type { HistoryCandidate, HistoryDetail, HistorySummary, OutputRevision, CandidateReviewIssue, WritingReceipt } from './services/contracts';
+export type BuiltinMode='自动'|'聊天消息'|'文档写作'|'邮件沟通'|'技术沟通'|'轻整理'|'结构';
 // Personal IDs are opaque native values (currently UUIDs); preserve legacy IDs verbatim.
 export type Mode=BuiltinMode|(string & {});
 export type ResolvedMode='轻整理'|'结构';
@@ -12,8 +12,10 @@ export interface Dictation extends Snapshot {
 }
 export interface Candidate { native:OutputRevision;mode:Mode;resolved:ResolvedMode|null;texts:string[];baseRevision:string;reviewIssues:CandidateReviewIssue[];modeName?:string;modeVersion?:number;modeInstructions?:string }
 export interface DiffSegment {text:string;changed:boolean}
-export const toModeId=(mode:Mode):string=>mode==='自动'?'auto':mode==='轻整理'?'light':mode==='结构'?'structure':mode;
-export const fromModeId=(id:string):Mode=>id==='auto'?'自动':id==='light'?'轻整理':id==='structure'?'结构':id;
+const builtinModeIds = new Map<string,string>([['自动','auto'],['聊天消息','chat'],['文档写作','document'],['邮件沟通','email'],['技术沟通','technical'],['轻整理','light'],['结构','structure']]);
+const builtinModeLabels = new Map(Array.from(builtinModeIds,([label,id])=>[id,label]));
+export const toModeId=(mode:Mode):string=>builtinModeIds.get(mode)??mode;
+export const fromModeId=(id:string):Mode=>builtinModeLabels.get(id)??id;
 export const resolvedLabel=(id:string|undefined|null):ResolvedMode|null=>id==='structure'?'结构':id==='light'?'轻整理':null;
 function dateFields(endedAt:string,date:string) { const today=new Date().toLocaleDateString('en-CA');const parsed=new Date(endedAt);return {date,group:date===today?'今天':date,time:Number.isNaN(parsed.getTime())?'':parsed.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}; }
 // Summaries omit output kind/reason; a stored resolvedMode alone cannot prove a model ran.
@@ -25,9 +27,12 @@ export function fromDetail(detail:HistoryDetail,temporary=false):Dictation {
  return {id:session.id,title:current.join(' ').slice(0,48)||'口述记录',...dateFields(session.endedAt,session.endLocalDate),source:source.items.map(i=>i.text),current,mode:fromModeId(snapshot.modeId),modeName:snapshot.name,resolved:sourceState==='unprocessed'||sourceState==='source'||sourceState==='fallback'?null:resolvedLabel(output?.resolvedMode),modeVersion:snapshot.revision,modeInstructions:snapshot.rules,durationSec:Math.round(session.captureDurationMs/1000),revision:output?.id??'',sourceRevisionId:source.id,sourceState,modified:!!output&&output.kind!=='initial',change:output?.rewriteFallback?'已使用识别稿':output?({initial:'初始版本',useSource:'采用识别稿',adopt:'采用了新整理版本',edit:'已保存手动修改',restore:'恢复了所选内容',undo:'已撤销上次修改'}[output.kind]):'尚无整理结果',undoAvailable:detail.canUndo,detail,temporary,status:session.status};
 }
 export function fromCandidate(native:HistoryCandidate):Candidate {return {native,mode:fromModeId(native.modeSnapshot.modeId),resolved:resolvedLabel(native.resolvedMode),texts:native.blocks.map(b=>b.text),baseRevision:native.baseRevisionId??'',reviewIssues:native.reviewIssues??[],modeName:native.modeSnapshot.name,modeVersion:native.modeSnapshot.revision,modeInstructions:native.modeSnapshot.rules};}
-export function modeLabel(record:Pick<Dictation,'mode'|'resolved'|'modeName'|'sourceState'>) {
+export const writingReceiptSceneLabel=(receipt:WritingReceipt):string=>({general:'',chat:'聊天消息',document:'文档写作',email:'邮件沟通',technical:'技术沟通'}[receipt.scene]);
+export function modeLabel(record:Pick<Dictation,'mode'|'resolved'|'modeName'|'sourceState'|'detail'>) {
  if(record.sourceState==='unprocessed')return '未整理';
  if(record.sourceState==='source'||record.sourceState==='fallback')return '识别稿';
+ const receipt=record.detail?.output?.writingReceipt;
+ if(record.mode==='自动'&&receipt)return [record.modeName??record.mode,writingReceiptSceneLabel(receipt)].filter(Boolean).join(' · ');
  return record.mode==='自动'&&record.resolved&&record.sourceState==='model'?`自动 → ${record.resolved}`:record.modeName??record.mode;
 }
 export function serializeRecord(record:Dictation) {return record.current.join('\n\n');}

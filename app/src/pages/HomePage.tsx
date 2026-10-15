@@ -57,7 +57,7 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
         <HomeSectionCard className="latest-card" titleId="latest-title" title="最近一次口述"
           action={latest ? <time>{latest.temporary ? '临时结果' : latest.group} {latest.time}</time> : undefined}>
           {latest ? <>
-          <div className="latest-title-row"><h3>{latest.title}</h3><ModeBadge mode={latest.mode} resolved={latest.resolved} name={latest.modeName} sourceState={latest.sourceState} /></div>
+          <div className="latest-title-row"><h3>{latest.title}</h3><ModeBadge mode={latest.mode} resolved={latest.resolved} name={latest.modeName} sourceState={latest.sourceState} receipt={latest.detail?.output?.writingReceipt} /></div>
           <LatestDictationPreview key={`${latest.id}:${latest.revision}`} record={latest} />
           <div className="latest-actions"><CopyAction record={latest} label="复制结果"><Button variant="soft" color="gray" onClick={() => onOpen(latest.id)}>查看与调整<ArrowRightIcon /></Button>{latest.modified && <span className="modified-label">已在本页修改</span>}</CopyAction></div>
           </> : <div className="home-empty">
@@ -79,9 +79,9 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
         </HomeSectionCard>
       </div>
       <aside className="home-controls" aria-label="录音偏好">
-        <HomeSectionCard className="default-mode-card" titleId="default-mode-title" title="默认 Mode"
-          action={<Button variant="ghost" size="1" onClick={onManageModes} aria-label="管理 Mode">管理<ArrowRightIcon /></Button>}>
-          <ModeSelector value={defaultMode} onChange={onDefaultModeChange} compact label="新口述默认 Mode" />
+        <HomeSectionCard className="default-mode-card" titleId="default-mode-title" title="默认场合"
+          action={<Button variant="ghost" size="1" onClick={onManageModes} aria-label="管理场合">管理<ArrowRightIcon /></Button>}>
+          <ModeSelector value={defaultMode} onChange={onDefaultModeChange} compact label="新口述默认场合" />
           <p className="mode-footnote">下次口述生效，录音时也可切换。</p>
         </HomeSectionCard>
         <QuickSettings onSettings={onSettings} preferences={preferences} />

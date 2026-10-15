@@ -148,6 +148,11 @@ pub struct MinimumReviewRequest {
     mode_hash: String,
 }
 pub fn prepare_minimum(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult)->Result<MinimumReviewRequest,CloudError> {
+    let context=super::writing_context::for_mode(mode);
+    prepare_minimum_with_writing_context(config,mode,source,draft,context.as_ref())
+}
+pub fn prepare_minimum_with_writing_context(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<MinimumReviewRequest,CloudError> {
     validate_draft(source,draft)?;
     if mode.rules.chars().count()>4000 || (mode.base_mode!=BaseMode::Auto && draft.resolved_mode!=mode.base_mode) {
         return Err(error("invalid_mode","核对模式与成稿不一致"));
@@ -168,10 +173,12 @@ cleanup：无意义卡顿、残句和不自然搭配已修复。“是现在的�
     let mut data = json!({"sourceText":source.text(),"draftText":draft.blocks[0].text,"baseMode":mode.base_mode,
         "resolvedMode":draft.resolved_mode,"formatRules":mode.rules});
     if english { data["sourceFragments"] = json!(source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>()); }
-    Ok(MinimumReviewRequest{body:json!({"model":config.rewrite_model,"messages":[
+    let mut request=MinimumReviewRequest{body:json!({"model":config.rewrite_model,"messages":[
         {"role":"system","content":prompt},{"role":"user","content":serde_json::to_string(&data).expect("review data serialize")}],
         "response_format":{"type":"json_object"},"enable_thinking":false,"temperature":0,"max_tokens":512,"stream":false}),
-        binding:ReviewBinding{source_sha256:fingerprint(source),draft_sha256:fingerprint(draft)},mode_hash:fingerprint(mode)})
+        binding:ReviewBinding{source_sha256:fingerprint(source),draft_sha256:fingerprint(draft)},mode_hash:fingerprint(mode)};
+    if let Some(context)=context { super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Review)?; }
+    Ok(request)
 }
 pub fn parse_minimum(content:&str,request:&MinimumReviewRequest,mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult)->Result<SemanticReview,CloudError> {
     if request.mode_hash!=fingerprint(mode) {return Err(error("stale_semantic_review","核对模式已变化"));}

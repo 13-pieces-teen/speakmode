@@ -1,0 +1,86 @@
+{
+  "scope": "Final finite follow-up: two r2 shortcomings plus two fresh synthetic cases; no audio or delivery. Separate 16-call maximum; earlier ledgers remain closed.",
+  "protocol": "situational-dictation-v3",
+  "cases": [
+    {
+      "id": "email-without-invented-social-text",
+      "modeId": "email",
+      "sourceItems": [
+        "Could you review the attached outline when you have time? I have updated the examples, but the cost estimate is still provisional. If the scope changes, please send comments by Thursday. I can also discuss the draft on Friday."
+      ],
+      "context": {
+        "scene": "email",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "Email body",
+          "beforeText": "",
+          "selectedText": "",
+          "afterText": "\nSent from the team mailbox."
+        }
+      },
+      "expectation": "Courteous complete email paragraphs preserving the request, completed example update, provisional estimate, conditional Thursday deadline and separate Friday availability. Do not add recipient, subject, thanks, signature, attachment content or Friday commitment.",
+      "baseline": false
+    },
+    {
+      "id": "technical-literals-and-conditional-scope",
+      "modeId": "technical",
+      "sourceItems": [
+        "嗯，先保留字段 `userID`，不要改成 `userId`。",
+        "如果请求超过500毫秒，再记录一次告警；日志采样间隔保持200毫秒。请把这两个约束分开列点。"
+      ],
+      "context": {
+        "scene": "technical",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "Code review comment",
+          "beforeText": "The API review is discussing identifier compatibility.\n",
+          "selectedText": "",
+          "afterText": ""
+        }
+      },
+      "expectation": "Preserve both quoted identifiers and the real negative contrast. The 500 ms alert condition must not govern the independent 200 ms sampling interval. Respect explicit line-separated constraints without inventing code, implementation steps or executing the instructions.",
+      "baseline": false
+    },
+    {
+      "id": "fresh-english-format-request",
+      "modeId": "technical",
+      "sourceItems": [
+        "Uh, keep the key `traceID` exactly as it is. Do not rename it to `traceId`.",
+        "If the retry takes more than three seconds, record a warning. The polling interval should stay at two hundred milliseconds regardless of that retry.",
+        "Please list these constraints as separate bullet points."
+      ],
+      "context": {
+        "scene": "technical",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "Code review comment",
+          "beforeText": "Compatibility review notes.",
+          "selectedText": "",
+          "afterText": ""
+        }
+      },
+      "expectation": "Preserve exact identifiers and negative contrast, warning only after more than three seconds, independent 200 ms polling interval, and the spoken request to list the constraints. Use readable separate constraints without deleting the request or inventing implementation. Remove only nonsemantic hesitation.",
+      "baseline": false
+    },
+    {
+      "id": "fresh-email-update-and-request",
+      "modeId": "email",
+      "sourceItems": [
+        "I have reviewed the schedule, and the training session is still planned for Monday. The room booking has not been confirmed.",
+        "Could you check the room availability? If a change is needed, please let me know by Friday. I can discuss the alternatives on Thursday, but I cannot promise a different room."
+      ],
+      "context": {
+        "scene": "email",
+        "language": "asSpoken",
+        "input": {
+          "controlLabel": "Email body",
+          "beforeText": "",
+          "selectedText": "",
+          "afterText": "\nTeam operations mailbox."
+        }
+      },
+      "expectation": "Use natural paragraphs separating the completed review/current unconfirmed room status from the request and conditional timing. Preserve planned Monday, not-confirmed booking, availability request, Friday only if change needed, independent Thursday availability, and inability to promise another room. Do not import signature, add a recipient/subject/greeting/thanks, or invent a confirmed room.",
+      "baseline": false
+    }
+  ]
+}

@@ -37,11 +37,18 @@ async fn execute_from(client:&reqwest::Client,config:&ProviderConfig,secret:&str
 }
 async fn execute_until(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>)->Outcome {
+    let context=super::writing_context::for_mode(mode);
+    execute_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context.as_ref()).await
+}
+async fn execute_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
+    context:Option<&crate::core::writing_context::WritingContext>)->Outcome {
     let started=Instant::now();let deadline=execution.deadline;let mut trace=Trace::default();
     let job=async {
         checkpoint(&cancel,deadline)?;
+        if let Some(context)=context {context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?;}
         let mut draft=if let Some(draft)=fixed {draft}else{
-            let request=minimum::prepare(config,mode,source,dictionary,true)?;
+            let request=minimum::prepare_with_writing_context(config,mode,source,dictionary,true,context)?;
             checkpoint(&cancel,deadline)?;trace.calls+=1;
             let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
             minimum::parse(&content,mode,source,&request)?
@@ -49,28 +56,33 @@ async fn execute_until(client:&reqwest::Client,config:&ProviderConfig,secret:&st
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
         trace.draft=Some(draft.clone());
         super::review_admission(source,&draft).map_err(safe_error)?;
+        if context.is_some(){super::writing_context::validate_tense(source,&draft)?;}
         checkpoint(&cancel,deadline)?;
-        let request=semantic_review::prepare_minimum(config,mode,source,&draft).map_err(safe_error)?;
+        let request=semantic_review::prepare_minimum_with_writing_context(config,mode,source,&draft,context).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
-        let review=semantic_review::parse_minimum(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if review.accepted() && local_repair::residue_hint(source,&draft).is_none(){return Ok(draft);}
         if deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejected());}
-        let Some(request)=local_repair::prepare(config,mode,source,&draft,&review)? else{return Err(rejected());};
+        let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{return Err(rejected());};
+        if let Some(context)=context {super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Repair)?;}
         checkpoint(&cancel,deadline)?;trace.calls+=1;trace.repair_attempted=true;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Repair).await?;
         let repaired=local_repair::apply(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        if context.is_some(){super::writing_context::validate_tense(source,&repaired)?;}
         trace.repaired_draft=Some(repaired.clone());checkpoint(&cancel,deadline)?;
         if repaired.blocks[0].text==draft.blocks[0].text{return Err(rejected());}
-        if local_repair::native_deletion_verified(source,&draft,&repaired,&review){
+        if context.is_none() && local_repair::native_deletion_verified(source,&draft,&repaired,&review){
             trace.native_deletion_verified=true;checkpoint(&cancel,deadline)?;return Ok(repaired);
         }
         // No second repair and no reuse of the pre-repair verdict.
-        let request=semantic_review::prepare_minimum(config,mode,source,&repaired).map_err(safe_error)?;
+        let request=semantic_review::prepare_minimum_with_writing_context(config,mode,source,&repaired,context).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::FinalReview).await?;
-        let review=semantic_review::parse_minimum(&content,&request,mode,source,&repaired).map_err(safe_error)?;
+        let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&repaired).map_err(safe_error)?;
+        if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if !review.accepted() || local_repair::residue_hint(source,&repaired).is_some(){return Err(rejected());}
         Ok(repaired)
@@ -83,6 +95,19 @@ async fn execute_until(client:&reqwest::Client,config:&ProviderConfig,secret:&st
 pub(super) async fn run_until(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError>{
     execute_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,None).await.result
+}
+pub(crate) async fn run_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,
+    context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError>{
+    execute_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,None,Some(context)).await.result
+}
+/// Explicit bounded text evaluation. Caller owns the request budget/ledger;
+/// this shares the production context path and never persists or delivers.
+pub async fn experiment_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    context:&crate::core::writing_context::WritingContext,wait:Duration)->Result<Outcome,CloudError>{
+    let endpoint=super::endpoints(config)?.rewrite;
+    Ok(execute_until_with_writing_context(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
+        CancellationToken::new(),&endpoint,RewriteExecution::for_duration(wait),None,Some(context)).await)
 }
 /// Explicit diagnostic entry point; it does not read credentials, persist or input.
 pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,wait:Duration)->Result<Outcome,CloudError>{

@@ -33,7 +33,7 @@ fn reference(context:&ConfirmedContext, source:&SourceRevision)->Result<SourceRe
     Ok(reference)
 }
 
-fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool) {
+fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool, mode:&ModeSnapshot,source:&SourceRevision)->Result<(),CloudError> {
     if context.language==DraftLanguage::English {
         body["messages"][0]["content"]=json!(format!("Protocol: {VERSION}\n{}",if review{language::REVIEW}else{language::GENERATION}));
     }
@@ -42,6 +42,11 @@ fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool) {
     let mut data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
     data["confirmedSpellings"]=json!(context.corrections.iter().map(|c|&c.replacement).collect::<Vec<_>>());
     body["messages"][1]["content"]=json!(serde_json::to_string(&data).unwrap());
+    if let Some(mut writing)=writing_context::for_mode(mode) {
+        writing.language=context.language;
+        writing_context::attach(body,mode,source,&writing,if review {writing_context::Stage::Review}else{writing_context::Stage::Generation})?;
+    }
+    Ok(())
 }
 
 fn confirmations_present(context:&ConfirmedContext,text:&str)->bool {
@@ -72,8 +77,8 @@ async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&Mo
     let timeout=||CloudError::new("rewrite_timeout","rewrite","候选整理超时，请保留当前文本后重试");
     let job=async {
         let reference=reference(context,source)?;
-        let mut request=minimum::prepare(config,mode,&reference,dictionary,false)?;
-        add_context(&mut request.body,context,false);
+        let mut request=minimum::prepare_with_writing_context(config,mode,&reference,dictionary,false,None)?;
+        add_context(&mut request.body,context,false,mode,&reference)?;
         trace.calls+=1;
         let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
         let mut draft=minimum::parse(&content,mode,&reference,&request)?;
@@ -89,8 +94,8 @@ async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&Mo
                 else if error.message.contains("数值"){ManualReviewIssue::ValuesChanged}else{ManualReviewIssue::MeaningChanged});
             trace.review_error=Some(error);
         } else if candidate.review_issues.is_empty() {
-            let mut request=semantic_review::prepare_minimum(config,mode,&reference,&candidate.draft)?;
-            add_context(&mut request.body,context,true);
+            let mut request=semantic_review::prepare_minimum_with_writing_context(config,mode,&reference,&candidate.draft,None)?;
+            add_context(&mut request.body,context,true,mode,&reference)?;
             trace.calls+=1;
             let reviewed=async {
                 let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
