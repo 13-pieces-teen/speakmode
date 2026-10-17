@@ -2,14 +2,14 @@
 .app-main[data-view='settings'] { background: #fff; }
 .settings-page { container: settings / inline-size; min-width: 0; margin: 0; padding: 0 0 8px; --accent-9: var(--sm-accent); --accent-a9: var(--sm-accent); --accent-track: var(--sm-accent); }
 .settings-page .page-heading { margin-bottom: 10px; }
-.settings-page .page-heading h1 { font-size: 28px; letter-spacing: -.6px; }
+.settings-page .page-heading h1 { font-size: 32px; letter-spacing: -.8px; }
 .settings-page .page-heading p { margin-top: 10px; font-size: 14px; }
-.settings-preview-note { margin: 0 0 26px; color: var(--sm-muted); font-size: 12px; line-height: 1.8; }
+.settings-preview-note { margin: 0 0 28px; color: var(--sm-secondary); font-size: 14px; line-height: 1.75; }
 .settings-preview-note p { margin: 0; }
 .settings-sections { display: grid; grid-template-columns: minmax(0,1fr); gap: 24px; }
 .settings-section { min-width: 0; }
-.settings-section-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid #e7ebf0; }
-.settings-section-heading h2 { font-size: 15px; font-weight: var(--sm-font-title-weight); line-height: 26px; margin: 0; color: var(--sm-secondary); }
+.settings-section-heading { display: flex; align-items: center; gap: 10px; padding-bottom: 16px; border-bottom: 0; }
+.settings-section-heading h2 { font-size: 18px; font-weight: var(--sm-font-title-weight); line-height: 28px; margin: 0; color: var(--sm-ink); }
 .settings-section-icon { color: #7d8997; display: grid; place-items: center; flex-shrink: 0; }
 .settings-section-icon svg { width: 19px; height: 19px; }
 .setting-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,320px); align-items: start; gap: 14px 30px; padding: 16px 0; min-width: 0; }

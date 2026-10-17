@@ -1,27 +1,86 @@
+/* The result is a reading sheet; preferences sit in its working margin. */
 .home-hero-copy { min-width: 0; }
-.home-shortcut { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; flex: none; min-width: 138px; max-width: 224px; padding: 10px 12px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--sm-secondary); text-align: left; }
-.home-shortcut-label { display: flex; align-items: center; gap: 18px; color: var(--sm-muted); font-size: 12px; line-height: 18px; }
-.home-shortcut-label svg { width: 13px; height: 13px; color: #8794a6; }
+.home-page .home-hero { align-items: flex-start; gap: 24px; padding: 2px 0 20px; }
+.home-page .home-hero h1 { margin: 0 0 10px; font-size: clamp(28px, 2.8vw, 36px); line-height: 1.3; letter-spacing: -.035em; text-wrap: balance; }
+.home-page .home-hero p { font-size: 15px; line-height: 1.75; color: var(--sm-secondary); }
+.home-page .hero-continuation { margin-top: 4px; font-size: 13px; line-height: 1.6; }
+.home-shortcut { display: inline-flex; align-items: center; vertical-align: middle; gap: 7px; max-width: 100%; padding: 2px 7px 2px 3px; border: 0; border-radius: 4px; background: var(--sm-canvas); color: var(--sm-secondary); text-align: left; transition: transform 140ms ease, background 140ms ease; }
+.home-shortcut > svg { width: 14px; height: 14px; }
 .home-shortcut-keys { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .home-shortcut-key-part { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.home-shortcut-keys .rt-Kbd { min-width: 30px; min-height: 26px; height: auto; padding: 2px 8px; border: 1px solid #dce3eb; border-radius: 6px; background: #fff; box-shadow: 0 1px 1px #263c5710; color: var(--sm-secondary); font-family: var(--sm-font-sans); font-size: 13px; font-weight: 500; line-height: 20px; }
-.home-shortcut-plus { color: #8b97a8; font-size: 12px; line-height: 20px; }
-@media (hover: hover) { .home-shortcut:hover { border-color: var(--sm-line); background: #ffffff80; } .home-shortcut:hover .home-shortcut-label svg { color: var(--sm-accent); } }
-@media (max-width: 740px) {
-  .home-page .home-hero { flex-wrap: wrap; }
-  .home-hero-copy { flex-basis: 100%; }
-  .home-shortcut { flex-direction: row; align-items: center; gap: 12px; min-width: 0; max-width: 100%; padding: 6px 0; }
-  .home-shortcut-label { gap: 8px; }
-}
-.home-page .home-empty { display: flex; align-items: center; gap: 22px; padding: 34px 6px 22px; }
-.home-empty-copy { min-width: 0; max-width: 330px; }
-.home-empty-copy > strong { color: var(--sm-ink); font-size: 17px; font-weight: var(--sm-font-title-weight); line-height: 1.5; }
-.home-page .home-empty-copy p { margin: 9px 0 18px; color: var(--sm-muted); font-size: 13px; line-height: 1.9; text-wrap: pretty; }
-.home-empty-copy .rt-Kbd { min-height: 21px; padding: 0 5px; font-size: 11px; vertical-align: 1px; }
+.home-shortcut-keys .rt-Kbd { min-width: 30px; min-height: 26px; height: auto; padding: 2px 8px; border: 0; border-radius: 4px; background: var(--sm-paper); box-shadow:none; color: var(--sm-ink); font-family: var(--sm-font-sans); font-size: 13px; font-weight: 500; line-height: 22px; }
+.home-shortcut-plus { font-size: 13px; line-height: 22px; }
+.home-shortcut:active { transform: translateY(1px); }
+
+.home-page .home-grid { grid-template-columns: minmax(0, 1fr) 268px; gap: 28px; }
+.home-page .home-records { gap: 16px; }
+.home-page .home-controls { gap: 24px; padding-top: 4px; }
+.home-page .latest-card { --card-padding: 26px; }
+.home-page .latest-card .section-heading time { font-size: 13px; }
+.home-page .latest-title-row { align-items: flex-start; gap: 10px; margin-top: 16px; }
+.home-page .latest-title-row h3 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 23px; line-height: 1.5; letter-spacing: -.025em; text-wrap: balance; }
+.home-page .latest-card .record-text { color: var(--sm-ink); font-size: 16px; line-height: 1.85; }
+.home-page .latest-preview { margin: 16px 0 18px; }
+.home-page .latest-preview-viewport { --latest-preview-height: 152px; }
+.home-page .latest-preview-footer > span { font-size: 13px; }
+.home-page .latest-actions { padding-top: 4px; border-top: 0; }
+.home-page .rt-Button.rt-r-size-2 { height: 40px; padding: 0 16px; border-radius: 6px; }
+.home-page .modified-label { font-size: 13px; }
+.home-page .recent-section { --card-background-color: transparent; }
+.home-page .recent-section .muted { margin-bottom: 0; font-size: 14px; line-height: 1.75; }
+.home-page .recent-item { gap: 12px; padding: 14px 0; border-bottom: 0; }
+.home-page .recent-icon { width: 32px; height: 36px; background: var(--sm-canvas); border-radius: 4px; color: var(--sm-secondary); }
+.home-page .recent-copy strong { font-size: 15px; line-height: 24px; }
+.home-page .recent-copy > span, .home-page .recent-item time { font-size: 13px; }
+
+.home-page .default-mode-card { --card-padding: 0px; --card-background-color: transparent; }
+.home-page .default-mode-card .mode-selector { max-height: 380px; margin-top: 16px; }
+.home-page .mode-option.rt-RadioCardsItem { min-height: 64px; padding: 10px 12px; gap: 10px; border-radius: 6px; background: var(--sm-paper); box-shadow:none; transition: background 140ms ease, transform 140ms ease; }
+.home-page .mode-option.rt-RadioCardsItem[data-state=checked] { background: var(--sm-selected); box-shadow:none; }
+.home-page .mode-option-copy strong { font-size: 15px; line-height: 23px; }
+.home-page .mode-option-copy > span { font-size: 13px; line-height: 20px; color: var(--sm-secondary); }
+.home-page .mode-option-icon { color: var(--sm-secondary); }
+.home-page .mode-option[data-state=checked] .mode-option-icon { color: var(--sm-accent); }
+.home-page .mode-footnote { margin-top: 14px; font-size: 13px; line-height: 1.7; }
+.home-page .quick-settings { --card-padding: 20px; --card-background-color: var(--sm-canvas); }
+.home-page .quick-settings dl > div { min-height: 38px; font-size: 13px; }
+.home-page .quick-settings dt { color: var(--sm-secondary); }
+
+.home-page .home-empty { display: flex; align-items: center; gap: 24px; padding: 30px 0 20px; }
+.home-empty-copy { min-width: 0; max-width: 340px; }
+.home-empty-copy > strong { color: var(--sm-ink); font-size: 21px; font-weight: var(--sm-font-title-weight); line-height: 1.5; }
+.home-page .home-empty-copy p { margin: 10px 0 20px; color: var(--sm-secondary); font-size: 15px; line-height: 1.8; text-wrap: pretty; }
+.home-empty-copy .rt-Kbd { min-height: 23px; padding: 0 5px; font-size: 13px; vertical-align: 1px; }
 .home-empty-copy .rt-Button { gap: 7px; }
-@media (max-width: 800px) { .home-page .home-empty { gap: 18px; padding-inline: 0; } }
+
+@media (hover: hover) {
+  .home-shortcut:hover { background: var(--sm-hover); }
+  .home-shortcut:hover > svg { color: var(--sm-accent); }
+  .home-page .mode-option.rt-RadioCardsItem:hover { background: var(--sm-hover); }
+  .home-page .recent-item:hover { background: var(--sm-canvas); }
+}
+@media (max-width: 1120px) {
+  .home-page .home-grid { grid-template-columns: minmax(0, 1fr) 250px; gap: 22px; }
+  .home-page .latest-card { --card-padding: 22px; }
+}
+@media (max-width: 970px) {
+  .home-page .home-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-page .home-controls { grid-template-columns: minmax(0, 1fr); padding-top: 0; }
+  .home-page .default-mode-card { --card-padding: 20px; --card-background-color: var(--sm-canvas); }
+  .home-page .default-mode-card .mode-selector { max-height: none; }
+  .home-page .mode-option.rt-RadioCardsItem { min-height: 64px; }
+}
+@media (max-width: 740px) {
+  .home-page .home-hero { flex-wrap: wrap; gap: 14px; padding-bottom: 22px; }
+  .home-hero-copy { flex-basis: 100%; }
+  .home-page .home-hero h1 { font-size: 28px; max-width: 18em; }
+}
 @media (max-width: 520px) {
-  .home-page .home-empty { flex-direction: column; align-items: flex-start; gap: 18px; padding: 26px 0 14px; }
+  .home-page .latest-card { --card-padding: 20px; }
+  .home-page .home-empty { flex-direction: column; align-items: flex-start; gap: 18px; padding: 24px 0 10px; }
   .home-empty .empty-state-note { align-self: center; }
   .home-empty-copy { max-width: none; }
+  .home-page .latest-title-row h3 { font-size: 21px; }
+  .home-page .recent-section { --card-padding: 20px; }
 }
+@media (prefers-reduced-motion: reduce) { .home-shortcut, .home-page .mode-option.rt-RadioCardsItem { transition: none; transform: none; } }
