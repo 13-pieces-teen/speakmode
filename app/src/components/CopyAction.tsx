@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Button, TextArea } from '@radix-ui/themes';
-import { CheckIcon, CopyIcon } from '@radix-ui/react-icons';
+import { LucianCopyMark } from './LucianCopyMark';
 import { serializeRecord, type Dictation } from '../model';
 import { useDesktop } from '../services/DesktopProvider';
 
@@ -10,6 +10,7 @@ export function CopyAction({ record, label = '复制', children }: {
 }) {
   const desktop = useDesktop();
   const [copied, setCopied] = useState(false);
+  const [instantFeedback, setInstantFeedback] = useState(true);
   const [manual, setManual] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -28,17 +29,19 @@ export function CopyAction({ record, label = '复制', children }: {
     textRef.current?.select();
     textRef.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   }, [manual]);
-  async function copy() {
+  async function copy(immediate: boolean) {
     const current = generation.current;
     clearTimeout(timer.current);
     try {
       await desktop.command('result.copy', { resultId: record.id, sessionId: record.id, outputRevisionId: record.revision || null, sourceRevisionId: record.sourceRevisionId, sourceOnly: !record.detail?.output });
       if (current !== generation.current) return;
+      setInstantFeedback(immediate);
       setManual(false);
       setCopied(true);
       timer.current = setTimeout(() => setCopied(false), 3000);
     } catch {
       if (current !== generation.current) return;
+      setInstantFeedback(immediate);
       setCopied(false);
       setManual(true);
     }
@@ -50,8 +53,8 @@ export function CopyAction({ record, label = '复制', children }: {
   }
   return <div className="copy-action">
     <div className="copy-actions-row">
-      <Button ref={buttonRef} onClick={copy} disabled={!desktop.available || record.previewOnly} className="copy-primary" aria-label={label}>
-        {copied ? <CheckIcon /> : <CopyIcon />}<span>{copied ? '已复制' : label}</span>
+      <Button ref={buttonRef} onClick={event => void copy(event.detail === 0)} disabled={!desktop.available || record.previewOnly} className="copy-primary" aria-label={label}>
+        <LucianCopyMark copied={copied} instant={instantFeedback} /><span>{copied ? '已复制' : label}</span>
       </Button>
       {children}
       <span className="sr-only" role="status" aria-live="polite">{copied ? '已复制当前结果。' : ''}</span>

@@ -1,0 +1,15 @@
+/* Lucian UX/UI Prompt #047 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#047 */
+/* The actual two ledger ranges replace the example's four periods. */
+.u047.u047-seg { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 120px; max-width: 100%; padding: 4px; border-radius: 16px; background: var(--ux-surface-2); }
+.u047 .u047-knob { position: absolute; top: 4px; bottom: 4px; left: var(--l, 4px); right: var(--r, calc(50% + 0px)); border-radius: 12px; background: var(--ux-surface); box-shadow: 0 4px 12px -6px var(--ux-shadow-strong), 0 0 0 1px var(--ux-line); pointer-events: none; }
+.u047.go-r .u047-knob { transition: right .3s var(--ux-ease), left .5s var(--ux-spring) .07s; }
+.u047.go-l .u047-knob { transition: left .3s var(--ux-ease), right .5s var(--ux-spring) .07s; }
+.u047 .u047-opt { position: relative; height: 38px; border: 0; padding: 0; border-radius: 12px; background: none; font-size: 14px; font-weight: 680; color: var(--ux-ink-3); transition: color .3s, transform .3s var(--ux-spring); }
+.u047 .u047-opt:hover { color: var(--ux-ink-2); }
+.u047 .u047-opt:active:not(:focus-visible) { transform: scale(.94); }
+.u047 .u047-opt[aria-pressed='true'] { color: var(--ux-ink); }
+.u047 .u047-opt:focus-visible { outline: 2px solid var(--ux-accent); outline-offset: 1px; }
+.u047[data-motion='instant'] .u047-knob, .u047[data-motion='instant'] .u047-opt { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .u047 .u047-knob, .u047 .u047-opt { transition: none; transform: none; }
+}

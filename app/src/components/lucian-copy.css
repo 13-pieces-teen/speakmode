@@ -1,0 +1,46 @@
+/* Lucian UX/UI Prompt #008 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#008 */
+.u008 {
+  --ux-ease: cubic-bezier(.2,.8,.2,1);
+  --ux-spring: cubic-bezier(.34,1.45,.64,1);
+  position: relative;
+  display: inline-block;
+  flex: 0 0 21px;
+  width: 21px;
+  height: 21px;
+  box-sizing: border-box;
+  font-family: inherit;
+  color: inherit;
+}
+.u008.ux { color: inherit; }
+.u008 > .u008-cp,
+.u008 > .u008-ok {
+  position: absolute;
+  inset: 0;
+  width: 21px;
+  height: 21px;
+  box-sizing: border-box;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: opacity .25s var(--ux-ease), transform .5s var(--ux-spring);
+}
+.u008 .u008-ok { opacity: 0; transform: scale(.4) rotate(-30deg); }
+.u008 .u008-ok path {
+  stroke-width: 2.6;
+  stroke-dasharray: 22;
+  stroke-dashoffset: 22;
+  transition: stroke-dashoffset .4s var(--ux-ease) .1s;
+}
+.u008.is-copied .u008-cp { opacity: 0; transform: scale(.4) rotate(30deg); }
+.u008.is-copied .u008-ok { opacity: 1; transform: none; }
+.u008.is-copied .u008-ok path { stroke-dashoffset: 0; }
+.u008[data-motion='instant'] > .u008-cp,
+.u008[data-motion='instant'] > .u008-ok,
+.u008[data-motion='instant'] .u008-ok path { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .u008 > .u008-cp,
+  .u008 > .u008-ok,
+  .u008 .u008-ok path { animation: none !important; transition: none !important; }
+}
