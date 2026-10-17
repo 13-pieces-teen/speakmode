@@ -26,14 +26,10 @@ fn numeric_sets(source: &SourceRevision, blocks: &[OutputBlock], spans: &[super:
     // Whole-source extraction is essential here: clause splitting would turn
     // "in twenty thirty.\nTwo." into a false 2030 before seeing its suffix.
     let text=source.text();
-    // Explicit correction resolution is outside this bounded English parser.
-    // Abstain on those sources and retain the existing semantic review.
-    if !english_years::has_correction(&text) {
-        let expected=english_years::keys(&text);
-        output_numbers.extend(blocks.iter().flat_map(|block| english_years::retained_keys(&block.text))
-            .filter(|key|expected.contains(key)));
-        source_numbers.extend(expected);
-    }
+    let expected=english_years::source_keys(&text);
+    output_numbers.extend(blocks.iter().flat_map(|block| english_years::retained_keys(&block.text))
+        .filter(|key|expected.contains(key)));
+    source_numbers.extend(expected);
     (source_numbers, output_numbers)
 }
 

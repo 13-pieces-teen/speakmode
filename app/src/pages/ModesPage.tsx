@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge, Button, IconButton, RadioCards, Select, TextArea, TextField } from '@radix-ui/themes';
 import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, CheckCircledIcon, FileTextIcon, Pencil2Icon, PlusIcon, TrashIcon, UpdateIcon } from '@radix-ui/react-icons';
 import type { Dictation, ResolvedMode, Mode } from '../model';
-import { allBuiltinModes, builtinModes, instructionTemplates, projectSample, type PersonalMode } from '../modes';
+import { allBuiltinModes, builtinModes, instructionTemplates, layoutInstructionTemplates, withLayoutInstruction, projectSample, type PersonalMode } from '../modes';
 import { useModes, type ModeDraft as Draft } from '../hooks/useModes';
 import { useDesktop } from '../services/DesktopProvider';
 import { ModeIcon, OutputBlocks, PageHeading } from '../components/ui';
@@ -153,10 +153,7 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
   }
 
   function setBase(base: ResolvedMode) {
-    changeDraft({ ...draft, base,
-      instructions: instructionTemplates.slice(0, 2).some(template => template.text === draft.instructions)
-        ? instructionTemplates[base === '轻整理' ? 0 : 1].text : draft.instructions,
-    });
+    changeDraft({ ...draft, base, instructions: withLayoutInstruction(draft.instructions, base) });
   }
   function chooseSample(id: string) {
     invalidatePreview();
@@ -263,15 +260,28 @@ function ModeEditor({ initial, records, isNew, onSave, onClose, onDirtyChange, l
         <div className="mode-field">
           <span id="mode-base-label" className="mode-field-label">组织方式</span>
           <RadioCards.Root className="mode-base-options" aria-labelledby="mode-base-label" value={draft.base} onValueChange={value => setBase(value as ResolvedMode)} columns="2" size="1">
-            {(['轻整理', '结构'] as const).map(base => <RadioCards.Item key={base} value={base} disabled={saving}><ModeIcon mode={base} /><span>{base === '轻整理' ? '自然段' : '主题分点'}</span>{draft.base === base && <CheckIcon />}</RadioCards.Item>)}
+            {(['轻整理', '结构'] as const).map(base => <RadioCards.Item key={base} value={base} disabled={saving || scalarCount(withLayoutInstruction(draft.instructions, base)) > 4000}><ModeIcon mode={base} /><span>{base === '轻整理' ? '自然段' : '主题分点'}</span>{draft.base === base && <CheckIcon />}</RadioCards.Item>)}
           </RadioCards.Root>
           <p className="mode-field-hint">{draft.base === '轻整理' ? '让口语更自然，保留叙述顺序。' : '把同一主题的补充和条件放在一起。'}</p>
         </div>
         <div className="mode-field">
           <ExpressionPreferences value={draft.instructions} disabled={saving} onChange={instructions => changeDraft({ ...draft, instructions })} />
           <label htmlFor="personal-mode-instructions">整理要求</label>
-          <TextArea ref={instructionsRef} id="personal-mode-instructions" className="mode-instructions" value={draft.instructions} disabled={saving} onChange={event => changeDraft({ ...draft, instructions: event.target.value })} placeholder="说清楚希望的格式、语气，以及需要保留什么。" aria-invalid={triedSubmit && Boolean(instructionError)} aria-describedby="mode-instruction-hint mode-instruction-error" />
-          <p className="mode-field-hint" id="mode-instruction-hint">用自己的话描述格式和语气，1–4000 个字符。</p>
+          <p className="mode-field-hint" id="mode-instruction-boundary">在这里选择怎样整理，口述只需说正文。口述中说出的“请分点”等请求仍作为正文保留，不会自动当成整理命令。</p>
+          <div className="mode-expression-preferences">
+            <div className="mode-preference-options" role="group" aria-label="写入排版要求">
+              {layoutInstructionTemplates.map(template => {
+                const selected=draft.base===template.base&&draft.instructions.split(/\r?\n/).some(line=>line.trim()===template.rule);
+                return <Button key={template.base} type="button" size="1" variant={selected?'soft':'outline'} color={selected?'blue':'gray'} aria-pressed={selected}
+                  disabled={saving || scalarCount(withLayoutInstruction(draft.instructions,template.base))>4000} onClick={()=>setBase(template.base)}>
+                  {selected?<CheckIcon/>:<PlusIcon/>}{template.label}
+                </Button>;
+              })}
+            </div>
+            <p className="mode-field-hint">点选会同步组织方式，并替换已有排版模板；你自己写的其他要求会保留，请检查是否一致。</p>
+          </div>
+          <TextArea ref={instructionsRef} id="personal-mode-instructions" className="mode-instructions" value={draft.instructions} disabled={saving} onChange={event => changeDraft({ ...draft, instructions: event.target.value })} placeholder="例如：按自然段输出，保留中英文术语，不添加标题。" aria-invalid={triedSubmit && Boolean(instructionError)} aria-describedby="mode-instruction-boundary mode-instruction-hint mode-instruction-error" />
+          <p className="mode-field-hint" id="mode-instruction-hint">这里只填写格式、语气与保留要求，正文放在试用样例或录音中。1–4000 个字符。</p>
           <p className="mode-field-error" id="mode-instruction-error" role="alert">{triedSubmit ? instructionError : ''}</p>
         </div>
         <div className="mode-preserve-note"><CheckCircledIcon /><p>整理时应保留事实、条件与否定。</p></div>

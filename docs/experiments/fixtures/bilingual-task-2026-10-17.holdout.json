@@ -1,0 +1,79 @@
+{
+  "scope": "Four fresh synthetic text cases frozen before candidate changes. No original audio or user history. Same source, explicit English, confirmations, mode and deadline in both arms.",
+  "cases": [
+    {
+      "id": "career-split-and-unrelated-correction",
+      "modeId": "document",
+      "baseMode": "auto",
+      "rules": "",
+      "sourceItems": [
+        "I completed an internship at the Harbor Lab last year. Today I",
+        "focus on retrieval evaluation, and I also maintain the test harness. During that internship I worked on data labeling.",
+        "I expect to graduate in twenty thirty.",
+        "Four. I have one paper accepted, not two. 嗯，the second project is still under review.",
+        "Actually, I prefer practical research to competitions."
+      ],
+      "category": "bilingual-task-holdout",
+      "confirmedContext": {
+        "sourceRevisionId": "source-career-split-and-unrelated-correction",
+        "language": "english",
+        "corrections": []
+      }
+    },
+    {
+      "id": "meaningful-chinese-condition",
+      "modeId": "auto",
+      "baseMode": "auto",
+      "rules": "",
+      "sourceItems": [
+        "Um, I can read the dataset, but 我还没有拿到导出权限. I I tested twelve examples, and two were not run because permission was missing.",
+        "If the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available.",
+        "这个结果只是初步的，不能说已经发布了。"
+      ],
+      "category": "bilingual-task-holdout",
+      "confirmedContext": {
+        "sourceRevisionId": "source-meaningful-chinese-condition",
+        "language": "english",
+        "corrections": []
+      }
+    },
+    {
+      "id": "tense-distinct-objects",
+      "modeId": "auto",
+      "baseMode": "auto",
+      "rules": "Write connected natural paragraphs. Keep every distinct fact and qualifier.",
+      "sourceItems": [
+        "I I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year.",
+        "嗯，I have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+      ],
+      "category": "bilingual-task-holdout",
+      "confirmedContext": {
+        "sourceRevisionId": "source-tense-distinct-objects",
+        "language": "english",
+        "corrections": []
+      }
+    },
+    {
+      "id": "unknown-name-and-literals",
+      "modeId": "technical",
+      "baseMode": "auto",
+      "rules": "",
+      "sourceItems": [
+        "The package is called Valen, or maybe Valin; I am not sure. Uh, please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\".",
+        "I currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+      ],
+      "category": "bilingual-task-holdout",
+      "confirmedContext": {
+        "sourceRevisionId": "source-unknown-name-and-literals",
+        "language": "english",
+        "corrections": []
+      }
+    }
+  ],
+  "expectations": {
+    "career-split-and-unrelated-correction": "Preserve current focus/maintain versus past worked, expected 2034, one not two accepted paper, separate project still under review, subjective preference. Join I/focus and year without treating unrelated Actually as a year correction. Natural biography paragraphs.",
+    "meaningful-chinese-condition": "English prose retaining export permission not yet obtained, 12 examples/2 NOT_RUN rather than fail, no assumed success for other ten, conditional Tuesday sharing, independent notes request, preliminary/not released status. No invented approval or publication.",
+    "tense-distinct-objects": "Keep present focus-model-evaluation/manage-current-log and past focused-data-labeling/managed-old-queue with their own objects. Preserve not finished, might, preliminary, conditional presentation and owner unknown. Natural readable English.",
+    "unknown-name-and-literals": "Keep both uncertain names without guessing, exact code and quoted Chinese, current work versus completed 2028 not 2029, benchmark not accepted. English surrounding prose; literal Chinese is intentionally retained."
+  }
+}

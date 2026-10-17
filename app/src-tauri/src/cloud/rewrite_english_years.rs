@@ -27,18 +27,18 @@ fn whitespace(text: &str) -> bool { !text.is_empty() && text.chars().all(char::i
 fn recognition_break(text: &str) -> bool {
     text.contains('\n') && text.chars().all(|c|c.is_whitespace()||c=='.') && text.matches('.').count()==1
 }
-pub(super) fn has_correction(text: &str) -> bool {
-    let lower=text.to_ascii_lowercase();
-    ["sorry", "i mean", "actually", "correction", "不对", "改口", "说错", "更正"].iter().any(|value|lower.contains(value))
+struct YearMention { key: String, start: usize, end: usize }
+fn year_mention(year: u16, context: &Word<'_>, end: usize) -> YearMention {
+    YearMention { key: format!("calendar-year:{year}"), start: context.start, end }
 }
-pub(super) fn keys(text: &str) -> Vec<String> {
+fn mentions(text: &str) -> Vec<YearMention> {
     let tokens=words(text); let mut result=Vec::new();
     for (index, context) in tokens.iter().enumerate() {
         if !context.text.eq_ignore_ascii_case("in") && !context.text.eq_ignore_ascii_case("year") { continue; }
         let Some(first)=tokens.get(index+1) else { continue; };
         if !whitespace(&text[context.end..first.start]) { continue; }
         if first.text.len()==4 && first.text.bytes().all(|c|c.is_ascii_digit()) {
-            if let Ok(year @ 1900..=2099)=first.text.parse::<u16>() { result.push(format!("calendar-year:{year}")); }
+            if let Ok(year @ 1900..=2099)=first.text.parse::<u16>() { result.push(year_mention(year, context, first.end)); }
             continue;
         }
         let (base, tail)=if first.text.eq_ignore_ascii_case("nineteen") { (1900,index+2) }
@@ -49,26 +49,46 @@ pub(super) fn keys(text: &str) -> Vec<String> {
         let thousand=tail==index+3;
         let tail=if thousand && tokens.get(tail).is_some_and(|t|t.text.eq_ignore_ascii_case("and")) { tail+1 } else { tail };
         let Some(second)=tokens.get(tail) else {
-            if thousand {result.push("calendar-year:2000".into());} continue;
+            if thousand {result.push(year_mention(2000, context, tokens[tail-1].end));} continue;
         };
         // The two-part year must be established before any fragmented suffix.
         if !whitespace(&text[tokens[tail-1].end..second.start]) { continue; }
         let value=tens(second.text).or_else(||teen(second.text)).or_else(||if thousand {digit(second.text)} else {None});
         let Some(value)=value else {
-            if thousand { result.push("calendar-year:2000".into()); } continue;
+            if thousand { result.push(year_mention(2000, context, tokens[tail-1].end)); } continue;
         };
-        let mut year=base+value;
+        let mut year=base+value; let mut end=second.end;
         if let Some(third)=tokens.get(tail+1).filter(|_|value>=20 && value%10==0) {
             let gap=&text[second.end..third.start];
             let after=&text[third.end..];
             let isolated_suffix=after.trim_start().chars().next().is_none_or(|c|matches!(c,'.'|','|'!'|'?'|';'));
             if whitespace(gap) || (recognition_break(gap) && isolated_suffix) {
-                if let Some(value)=digit(third.text) { year+=value; }
+                if let Some(value)=digit(third.text) { year+=value; end=third.end; }
             }
         }
-        result.push(format!("calendar-year:{year}"));
+        result.push(year_mention(year, context, end));
     }
     result
+}
+
+pub(super) fn keys(text: &str) -> Vec<String> {
+    mentions(text).into_iter().map(|year| year.key).collect()
+}
+
+/// Resolve only a direct year-to-year spoken repair. An apology, discourse
+/// marker or different claim elsewhere in the source cannot waive any year.
+pub(super) fn source_keys(text: &str) -> Vec<String> {
+    let years=mentions(text);
+    years.iter().enumerate().filter(|(index, year)| {
+        let Some(next)=years.get(index+1) else { return true; };
+        let gap=&text[year.end..next.start];
+        // A separate sentence may start with another year's circumstance.
+        // This restriction concerns repairs only, not recognition_break above.
+        if gap.chars().any(|c|matches!(c,'.'|'!'|'?'|'。'|'！'|'？')) { return true; }
+        let marker=gap.trim_matches(|c:char| c.is_whitespace() || matches!(c,','|';'|':'|'，'|'；'|'：'))
+            .split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+        !["sorry", "i mean", "actually", "correction", "不对", "改口", "说错", "更正"].contains(&marker.as_str())
+    }).map(|(_,year)|year.key.clone()).collect()
 }
 
 /// Output lookup also accepts four-digit spelling without an added preposition.

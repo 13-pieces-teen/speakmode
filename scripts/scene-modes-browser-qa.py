@@ -257,6 +257,55 @@ def run(browser, args, rows, errors, external):
         return {'existingNameAndIdPreserved': True, 'renamedBuiltinCollisionBlocked': True, 'newBuiltinAndPersonalDuplicatesBlocked': True}
     case('11-existing-personal-scene-name', existing_name, personal_collision=True)
 
+    def explicit_layout(page):
+        original_history = page.evaluate('JSON.stringify(window.__speakmodeQA.fixture.details)')
+        page.get_by_role('navigation', name='主导航').get_by_role('button', name='场合', exact=True).click()
+        page.get_by_role('button', name='新建自定义场合', exact=True).click()
+        page.get_by_role('textbox', name='名称', exact=True).fill('中英技术记录')
+        rules = page.get_by_role('textbox', name='整理要求', exact=True)
+        old_template = rules.input_value()
+        own_rules = '保留 API 和中文解释。\n不添加收件人。'
+        rules.fill(old_template + '\n' + own_rules)
+        sample = page.locator('#mode-sample')
+        spoken = 'The API is ready，呃，延迟还没确认。请把这些要求分点发给小陈。'
+        sample.fill(spoken)
+        expect(page.locator('#mode-instruction-boundary')).to_contain_text('仍作为正文保留')
+        choices = page.get_by_role('group', name='写入排版要求', exact=True)
+        points = choices.get_by_role('button', name='独立约束分点', exact=True)
+        paragraphs = choices.get_by_role('button', name='自然段', exact=True)
+        points.click()
+        expect(page.get_by_role('radio', name='主题分点', exact=True)).to_be_checked()
+        point_rules = rules.input_value()
+        assert '彼此独立的约束或步骤' in point_rules and point_rules.endswith(own_rules)
+        assert old_template not in point_rules
+        points.click()
+        expect(rules).to_have_value(point_rules)
+        paragraphs.click()
+        paragraph_rules = rules.input_value()
+        assert '真实话题变化处换段' in paragraph_rules and paragraph_rules.endswith(own_rules)
+        assert '彼此独立的约束或步骤' not in paragraph_rules
+        expect(page.get_by_role('radio', name='自然段', exact=True)).to_be_checked()
+        paragraphs.click()
+        expect(rules).to_have_value(paragraph_rules)
+        page.get_by_role('radio', name='主题分点', exact=True).check()
+        expect(rules).to_have_value(point_rules)
+        rules.fill('保留' * 2000)
+        expect(points).to_be_disabled()
+        expect(paragraphs).to_be_disabled()
+        rules.fill(point_rules)
+        expect(sample).to_have_value(spoken)
+        page.screenshot(path=str(args.out / '12-layout-editor.png'), full_page=True)
+        page.get_by_role('button', name='保存场合', exact=True).click()
+        expect(page.get_by_role('heading', name='使用场合', exact=True)).to_be_visible()
+        saved = qa.calls(page, 'mode.save')[-1]['payload']['draft']
+        assert saved['baseMode'] == 'structure' and saved['rules'] == point_rules
+        assert spoken not in saved['rules']
+        assert page.evaluate('JSON.stringify(window.__speakmodeQA.fixture.details)') == original_history
+        assert not qa.calls(page, 'history.rewrite') and not qa.calls(page, 'revision.adopt')
+        return {'mutuallyExclusiveTemplates': True, 'idempotentSwitching': True, 'userRulesPreserved': True,
+                'baseAndTemplateStayAligned': True, 'limitRespected': True, 'spokenRequestsRemainSeparate': True}
+    case('12-explicit-layout-requirements', explicit_layout, width=760)
+
 
 if __name__ == '__main__':
     qa.run = run

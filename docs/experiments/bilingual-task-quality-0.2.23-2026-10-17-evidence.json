@@ -1,0 +1,2087 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-17",
+  "desktopVersion": "0.2.23",
+  "frontendVersion": "0.4.22",
+  "scope": "FROZEN_HISTORY_CANDIDATE_TEXT_EXPERIMENT_NOT_ASR_OR_NATIVE_DELIVERY",
+  "plan": {
+    "date": "2026-10-17",
+    "baseline": "ca82a93 production code; lab-only mode ID/metadata enhancement",
+    "maximumCalls": 32,
+    "pairedPaths": 12,
+    "pairedMaximumCalls": 24,
+    "layoutProbeMaximumCalls": 8,
+    "rules": [
+      "No reopening old ledgers",
+      "Same model/region/source/confirmation/language/mode/deadline within pairs",
+      "No retries on authentication/rate-limit or ambiguous network outcome",
+      "No real-user content committed",
+      "No new ASR or microphone claim",
+      "Candidate frozen before paired responses are inspected; failed cases retained"
+    ],
+    "publicFixtureSha256": "5998d719212cb3279cba0ec9ea1e4d8761a89068700c99014aa5880b7dac2f1c",
+    "pairedFixtureSha256": "2b988a781b0588af7eefc8bc9b39440c165dfaf6b5d8af774787888efd002731",
+    "ledgerState": "preregistered",
+    "layoutFixtureSha256": "f3d625c63bff783d1ebc1ad9771aa5f4c3bc6136fe5971d9f0d2a5d6cc5be09b"
+  },
+  "freeze": {
+    "frozenAtUtc": "2026-10-17T06:24:15.7226141Z",
+    "baselineCommit": "ca82a93988f6a7cb2d37ca30a57bda32cd24e544",
+    "sourceInputsSha256": "43d0bc7e0f77638800b4bd1e376a057393fa198c80528b1055778fd27fba1781",
+    "sourceInputCount": 277,
+    "binaries": {
+      "candidate-minimum_edit_lab.exe": "0047237e8205b777f54a2da32636b093a5b78392fed252eb52bd35e4eaa16e57",
+      "baseline-minimum_edit_lab.exe": "5e0e36cca01f28f916bd2696a1a8e5a3d7233a8d96f97f254d09970fcb4adf60"
+    },
+    "cloudRequestsBeforeFreeze": 0,
+    "tests": "843 passed, 0 failed, 3 ignored"
+  },
+  "model": "qwen3.8-flash",
+  "region": "beijing",
+  "maximumCalls": 32,
+  "actualCalls": 30,
+  "unusedBudgetRetired": 2,
+  "retries": 0,
+  "denominators": {
+    "pairedWorkflows": 6,
+    "privateUserSources": 1,
+    "privateUserWorkflows": 2,
+    "syntheticHoldoutCases": 4,
+    "singleOutputLayoutPaths": 4,
+    "layoutSourceTexts": 2,
+    "warning": "Do not add these denominators as independent users or independent source cases."
+  },
+  "gradingMethod": {
+    "statuses": [
+      "PASS",
+      "FAIL",
+      "UNKNOWN",
+      "N/A"
+    ],
+    "hardGateDimensions": [
+      "fidelity",
+      "bilingual_meaning",
+      "tense_year_numbers",
+      "unknown_names_terms_literals",
+      "request_preservation"
+    ],
+    "contentQualitySuccess": "Available text and every applicable dimension PASS; N/A excluded. This is not pipeline acceptance.",
+    "uncertainty": "An unknown source name or term faithfully retained is acceptable. A missing external intended meaning is not filled from the other workflow.",
+    "paragraphThreshold": "No fixed paragraph count. A short coherent single paragraph is acceptable unless the explicit rule/source demands a different layout; a readability preference alone is not a failure.",
+    "blindLetters": "A/B are bundle-local labels. No mapping to baseline/candidate has been inferred."
+  },
+  "summary": {
+    "baseline": {
+      "paths": 6,
+      "returned": 6,
+      "calls": 11,
+      "modelAccept": 4,
+      "sourceBoundQualityPass": 4,
+      "cleanAndQualityPass": 2,
+      "syntheticSourceBoundQualityPass": 4,
+      "syntheticPaths": 4,
+      "medianElapsedMs": 3176.5,
+      "minElapsedMs": 1640,
+      "maxElapsedMs": 5986
+    },
+    "candidate": {
+      "paths": 6,
+      "returned": 6,
+      "calls": 11,
+      "modelAccept": 4,
+      "sourceBoundQualityPass": 6,
+      "cleanAndQualityPass": 4,
+      "syntheticSourceBoundQualityPass": 4,
+      "syntheticPaths": 4,
+      "medianElapsedMs": 2867.0,
+      "minElapsedMs": 1249,
+      "maxElapsedMs": 5386
+    },
+    "layout": {
+      "paths": 4,
+      "sourceTexts": 2,
+      "calls": 8,
+      "sourceBoundQualityPass": 4,
+      "cleanAndQualityPass": 4,
+      "baselineComparison": "NOT_RUN"
+    }
+  },
+  "pairedSynthetic": [
+    {
+      "arm": "baseline",
+      "caseId": "career-split-and-unrelated-correction",
+      "candidateReturned": true,
+      "reviewIssues": [
+        "reviewRejected"
+      ],
+      "modelDecision": "reject",
+      "calls": 2,
+      "elapsedMs": 3282,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": false,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "1bdd3def-d36f-428e-a950-eeb48c735af9",
+                "sourceRefs": [
+                  "career-split-and-unrelated-correction:0",
+                  "career-split-and-unrelated-correction:1",
+                  "career-split-and-unrelated-correction:2",
+                  "career-split-and-unrelated-correction:3",
+                  "career-split-and-unrelated-correction:4"
+                ],
+                "text": "I completed an internship at the Harbor Lab last year. Today I focus on retrieval evaluation, and I also maintain the test harness. During that internship, I worked on data labeling. I expect to graduate in twenty thirty-four. I have one paper accepted, not two; the second project is still under review. Actually, I prefer practical research to competitions."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": [
+            "reviewRejected"
+          ]
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-career-split-and-unrelated-correction"
+        },
+        "error": null,
+        "id": "career-split-and-unrelated-correction",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "document",
+          "name": "career-split-and-unrelated-correction",
+          "revision": 1,
+          "rules": ""
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "career-split-and-unrelated-correction",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-career-split-and-unrelated-correction",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "I completed an internship at the Harbor Lab last year. Today I"
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "focus on retrieval evaluation, and I also maintain the test harness. During that internship I worked on data labeling."
+            },
+            {
+              "captureOrder": 2,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:2",
+              "providerItemId": "2",
+              "startMs": null,
+              "text": "I expect to graduate in twenty thirty."
+            },
+            {
+              "captureOrder": 3,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:3",
+              "providerItemId": "3",
+              "startMs": null,
+              "text": "Four. I have one paper accepted, not two. 嗯，the second project is still under review."
+            },
+            {
+              "captureOrder": 4,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:4",
+              "providerItemId": "4",
+              "startMs": null,
+              "text": "Actually, I prefer practical research to competitions."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-career-split-and-unrelated-correction"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "1bdd3def-d36f-428e-a950-eeb48c735af9",
+                "sourceRefs": [
+                  "confirmed-628175a5675d495207a9fac6a4f4b5a4e015dcb3d532871e9e35822b79ef824b"
+                ],
+                "text": "I completed an internship at the Harbor Lab last year. Today I focus on retrieval evaluation, and I also maintain the test harness. During that internship, I worked on data labeling. I expect to graduate in twenty thirty-four. I have one paper accepted, not two; the second project is still under review. Actually, I prefer practical research to competitions."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 3282,
+          "review": {
+            "binding": {
+              "draftSha256": "0f6fb7340783cb2513f98ceb6fe4b51e31434d62bd92462f0ba5733475376712",
+              "sourceSha256": "3822b7b834ede536fb48e17c3b4d2c5c2a9c33c707cec0bf9f464094647cf6cb"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "fail",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "reject",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v1"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Current work, past internship, expected graduation, accepted-paper count, separate review status and subjective preference are all retained."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Nonsemantic hesitation is removed and the split clause is joined."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Current versus past work and the split graduation year are preserved; the later Actually is not treated as a year correction."
+          },
+          "unknown_names_terms_literals": {
+            "status": "PASS",
+            "reason": "The lab name is retained without invention."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Coherent grammatical prose; written-out year is valid English."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "One short biography paragraph is acceptable under the no-fixed-paragraph-count rule. It is less segmented than B but is not a wall of text."
+          },
+          "request_preservation": {
+            "status": "N/A",
+            "reason": "No recipient request."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "baseline",
+      "caseId": "meaningful-chinese-condition",
+      "candidateReturned": true,
+      "reviewIssues": [
+        "meaningChanged"
+      ],
+      "modelDecision": null,
+      "calls": 1,
+      "elapsedMs": 1640,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": false,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "ddabbf41-3ad3-49cf-a330-81313355f8fd",
+                "sourceRefs": [
+                  "meaningful-chinese-condition:0",
+                  "meaningful-chinese-condition:1",
+                  "meaningful-chinese-condition:2"
+                ],
+                "text": "I can read the dataset, but I have not yet obtained export permissions. I tested twelve examples, and two were not run because permission was missing. If the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available. This result is only preliminary; it cannot be said to have been published."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": [
+            "meaningChanged"
+          ]
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-meaningful-chinese-condition"
+        },
+        "error": null,
+        "id": "meaningful-chinese-condition",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "auto",
+          "name": "meaningful-chinese-condition",
+          "revision": 1,
+          "rules": ""
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "meaningful-chinese-condition",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-meaningful-chinese-condition",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "meaningful-chinese-condition:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "Um, I can read the dataset, but 我还没有拿到导出权限. I I tested twelve examples, and two were not run because permission was missing."
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "meaningful-chinese-condition:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "If the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available."
+            },
+            {
+              "captureOrder": 2,
+              "endMs": null,
+              "final": true,
+              "id": "meaningful-chinese-condition:2",
+              "providerItemId": "2",
+              "startMs": null,
+              "text": "这个结果只是初步的，不能说已经发布了。"
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-meaningful-chinese-condition"
+        },
+        "trace": {
+          "calls": 1,
+          "draft": {
+            "blocks": [
+              {
+                "id": "ddabbf41-3ad3-49cf-a330-81313355f8fd",
+                "sourceRefs": [
+                  "confirmed-dced678b05bb645022661c89371681fed08b131f938cc742926dd8c52d885b35"
+                ],
+                "text": "I can read the dataset, but I have not yet obtained export permissions. I tested twelve examples, and two were not run because permission was missing. If the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available. This result is only preliminary; it cannot be said to have been published."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 1640,
+          "review": null,
+          "reviewError": {
+            "code": "rewrite_meaning_risk",
+            "message": "语义复核前发现否定、条件或不确定性类别消失",
+            "stage": "rewrite"
+          }
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Same facts, qualifiers, independent request and lack of release/publication are retained without inferring approval or test success."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Meaningful Chinese is translated into faithful English."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Counts, NOT_RUN, conditional Tuesday sharing and preliminary status remain."
+          },
+          "unknown_names_terms_literals": {
+            "status": "N/A",
+            "reason": "No unknown names or protected literal strings."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Coherent English; published is an acceptable rendering of the negative release/publication statement."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "One short connected paragraph remains readable and violates no explicit layout control."
+          },
+          "request_preservation": {
+            "status": "PASS",
+            "reason": "The local-notes request remains independent and is not carried out."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "baseline",
+      "caseId": "tense-distinct-objects",
+      "candidateReturned": true,
+      "reviewIssues": [],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 2670,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": true,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "d3cb17d6-a5b5-41fd-b775-15002665df52",
+                "sourceRefs": [
+                  "tense-distinct-objects:0",
+                  "tense-distinct-objects:1"
+                ],
+                "text": "I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year. I have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-tense-distinct-objects"
+        },
+        "error": null,
+        "id": "tense-distinct-objects",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "auto",
+          "name": "tense-distinct-objects",
+          "revision": 1,
+          "rules": "Write connected natural paragraphs. Keep every distinct fact and qualifier."
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "tense-distinct-objects",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-tense-distinct-objects",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "tense-distinct-objects:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "I I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year."
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "tense-distinct-objects:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "嗯，I have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-tense-distinct-objects"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "d3cb17d6-a5b5-41fd-b775-15002665df52",
+                "sourceRefs": [
+                  "confirmed-ae0ab31b7d26f4edd9b188c965d9d93d13d27c410977ee7f24d8787f88dd0dd8"
+                ],
+                "text": "I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year. I have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 2670,
+          "review": {
+            "binding": {
+              "draftSha256": "38887f9ee1e6d8c2a9e00d5cc9a2e954790cbbe02885b09648d00356c6448f51",
+              "sourceSha256": "cbad9fd4b36b20b4c7070993f800ecf8947af93d22b5cf4ddb0f1d42812e3876"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v1"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Every distinct action/object, current or past role, unfinished work, conditional preliminary presentation and owner need is preserved."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Nonsemantic Chinese hesitation is removed."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Present and past verbs remain attached to their respective objects; not finished, might, preliminary and if remain."
+          },
+          "unknown_names_terms_literals": {
+            "status": "N/A",
+            "reason": "No unknown proper names or protected literals."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Connected grammatical prose; repeated initial words are removed."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "A short connected paragraph satisfies natural prose without imposing a fixed paragraph count."
+          },
+          "request_preservation": {
+            "status": "N/A",
+            "reason": "No substantive recipient request."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "baseline",
+      "caseId": "unknown-name-and-literals",
+      "candidateReturned": true,
+      "reviewIssues": [],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 3071,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": true,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "c53e65e0-2f20-4137-bed4-c24f488434ee",
+                "sourceRefs": [
+                  "unknown-name-and-literals:0",
+                  "unknown-name-and-literals:1"
+                ],
+                "text": "The package is called Valen, or maybe Valin; I am not sure. Please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\".\nI currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-unknown-name-and-literals"
+        },
+        "error": null,
+        "id": "unknown-name-and-literals",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "technical",
+          "name": "unknown-name-and-literals",
+          "revision": 1,
+          "rules": ""
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "unknown-name-and-literals",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-unknown-name-and-literals",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "unknown-name-and-literals:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "The package is called Valen, or maybe Valin; I am not sure. Uh, please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\"."
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "unknown-name-and-literals:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "I currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-unknown-name-and-literals"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "c53e65e0-2f20-4137-bed4-c24f488434ee",
+                "sourceRefs": [
+                  "confirmed-aa0cb7f5142914e9ed1f6640c3e71537f4f2fe3c26b577fdf9ff8ee51d0327af"
+                ],
+                "text": "The package is called Valen, or maybe Valin; I am not sure. Please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\".\nI currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 3071,
+          "review": {
+            "binding": {
+              "draftSha256": "632ee3c33ac0440e0dd9a34869bb04b34cc912d984f35fb467ee3892987f0f76",
+              "sourceSha256": "45b6195a48852dd102b2628004b5eaa5576cef23c1dcf89ffea19e5025387955"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v1"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Identical to A; all distinct facts, uncertainty and qualifiers retained."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Identical to A; protected Chinese quote remains exact."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Identical to A; current/completed status and both years retained."
+          },
+          "unknown_names_terms_literals": {
+            "status": "PASS",
+            "reason": "Identical to A; alternatives, uncertainty and protected strings retained."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Identical to A; clear technical prose."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "Identical actual line break and acceptable layout."
+          },
+          "request_preservation": {
+            "status": "PASS",
+            "reason": "Identical retained code-preservation request."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "candidate",
+      "caseId": "career-split-and-unrelated-correction",
+      "candidateReturned": true,
+      "reviewIssues": [],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 2827,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": true,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "aaa04745-b765-4821-8772-a2d1b88c9648",
+                "sourceRefs": [
+                  "career-split-and-unrelated-correction:0",
+                  "career-split-and-unrelated-correction:1",
+                  "career-split-and-unrelated-correction:2",
+                  "career-split-and-unrelated-correction:3",
+                  "career-split-and-unrelated-correction:4"
+                ],
+                "text": "I completed an internship at the Harbor Lab last year. Today I focus on retrieval evaluation, and I also maintain the test harness. During that internship, I worked on data labeling.\n\nI expect to graduate in 2034. I have one paper accepted, not two; the second project is still under review.\n\nActually, I prefer practical research to competitions."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-career-split-and-unrelated-correction"
+        },
+        "error": null,
+        "id": "career-split-and-unrelated-correction",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "document",
+          "name": "career-split-and-unrelated-correction",
+          "revision": 1,
+          "rules": ""
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "career-split-and-unrelated-correction",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-career-split-and-unrelated-correction",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "I completed an internship at the Harbor Lab last year. Today I"
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "focus on retrieval evaluation, and I also maintain the test harness. During that internship I worked on data labeling."
+            },
+            {
+              "captureOrder": 2,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:2",
+              "providerItemId": "2",
+              "startMs": null,
+              "text": "I expect to graduate in twenty thirty."
+            },
+            {
+              "captureOrder": 3,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:3",
+              "providerItemId": "3",
+              "startMs": null,
+              "text": "Four. I have one paper accepted, not two. 嗯，the second project is still under review."
+            },
+            {
+              "captureOrder": 4,
+              "endMs": null,
+              "final": true,
+              "id": "career-split-and-unrelated-correction:4",
+              "providerItemId": "4",
+              "startMs": null,
+              "text": "Actually, I prefer practical research to competitions."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-career-split-and-unrelated-correction"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "aaa04745-b765-4821-8772-a2d1b88c9648",
+                "sourceRefs": [
+                  "confirmed-628175a5675d495207a9fac6a4f4b5a4e015dcb3d532871e9e35822b79ef824b"
+                ],
+                "text": "I completed an internship at the Harbor Lab last year. Today I focus on retrieval evaluation, and I also maintain the test harness. During that internship, I worked on data labeling.\n\nI expect to graduate in 2034. I have one paper accepted, not two; the second project is still under review.\n\nActually, I prefer practical research to competitions."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 2827,
+          "review": {
+            "binding": {
+              "draftSha256": "b96ebc83a6e582b4c37140c429928c561c1d67968efe2ea36a32152e74bb262f",
+              "sourceSha256": "b7210838b7250fc18c227902ea8216d16c5f4459084e8a75ead00a5ea186aec1"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Same distinct facts and qualifiers are retained."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Hesitation and broken clause boundaries are repaired without losing meaning."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Current/past work, expected year, one/not two and pending project are retained."
+          },
+          "unknown_names_terms_literals": {
+            "status": "PASS",
+            "reason": "The lab name is retained."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Fluent biography prose; ordinary numeric year formatting is accurate."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "Work, academic status and preference are grouped into separate paragraphs."
+          },
+          "request_preservation": {
+            "status": "N/A",
+            "reason": "No recipient request."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "candidate",
+      "caseId": "meaningful-chinese-condition",
+      "candidateReturned": true,
+      "reviewIssues": [
+        "meaningChanged"
+      ],
+      "modelDecision": null,
+      "calls": 1,
+      "elapsedMs": 1249,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": false,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "699bdee2-0589-4553-ae6b-2b358d9505ca",
+                "sourceRefs": [
+                  "meaningful-chinese-condition:0",
+                  "meaningful-chinese-condition:1",
+                  "meaningful-chinese-condition:2"
+                ],
+                "text": "I can read the dataset, but I have not yet obtained export permissions. I tested twelve examples, and two were not run because permission was missing.\n\nIf the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available.\n\nThis result is only preliminary; it cannot be said to have been released."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": [
+            "meaningChanged"
+          ]
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-meaningful-chinese-condition"
+        },
+        "error": null,
+        "id": "meaningful-chinese-condition",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "auto",
+          "name": "meaningful-chinese-condition",
+          "revision": 1,
+          "rules": ""
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "meaningful-chinese-condition",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-meaningful-chinese-condition",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "meaningful-chinese-condition:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "Um, I can read the dataset, but 我还没有拿到导出权限. I I tested twelve examples, and two were not run because permission was missing."
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "meaningful-chinese-condition:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "If the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available."
+            },
+            {
+              "captureOrder": 2,
+              "endMs": null,
+              "final": true,
+              "id": "meaningful-chinese-condition:2",
+              "providerItemId": "2",
+              "startMs": null,
+              "text": "这个结果只是初步的，不能说已经发布了。"
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-meaningful-chinese-condition"
+        },
+        "trace": {
+          "calls": 1,
+          "draft": {
+            "blocks": [
+              {
+                "id": "699bdee2-0589-4553-ae6b-2b358d9505ca",
+                "sourceRefs": [
+                  "confirmed-dced678b05bb645022661c89371681fed08b131f938cc742926dd8c52d885b35"
+                ],
+                "text": "I can read the dataset, but I have not yet obtained export permissions. I tested twelve examples, and two were not run because permission was missing.\n\nIf the owner approves the export, I can share the examples on Tuesday. Separately, please keep the local notes available.\n\nThis result is only preliminary; it cannot be said to have been released."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 1249,
+          "review": null,
+          "reviewError": {
+            "code": "rewrite_meaning_risk",
+            "message": "语义复核前发现否定、条件或不确定性类别消失",
+            "stage": "rewrite"
+          }
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Missing export permission, the exact tested/not-run claims, conditional sharing, separate notes request and preliminary/not-released status are retained. No success for other examples is invented."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Both meaningful Chinese spans are translated; neither is mistaken for hesitation."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Count and NOT_RUN semantics remain; owner approval remains conditional, and publication is not asserted."
+          },
+          "unknown_names_terms_literals": {
+            "status": "N/A",
+            "reason": "No unknown names or protected literal strings."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Readable English. The final translation is somewhat formal but coherent and faithful."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "Permission/testing, conditional sharing/request and result status are visibly separated."
+          },
+          "request_preservation": {
+            "status": "PASS",
+            "reason": "The independent request to keep local notes available remains a request."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "candidate",
+      "caseId": "tense-distinct-objects",
+      "candidateReturned": true,
+      "reviewIssues": [],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 2907,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": true,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "d1f4b2a2-3eee-4c5c-bc30-0ba7abe96573",
+                "sourceRefs": [
+                  "tense-distinct-objects:0",
+                  "tense-distinct-objects:1"
+                ],
+                "text": "I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year.\n\nI have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-tense-distinct-objects"
+        },
+        "error": null,
+        "id": "tense-distinct-objects",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "auto",
+          "name": "tense-distinct-objects",
+          "revision": 1,
+          "rules": "Write connected natural paragraphs. Keep every distinct fact and qualifier."
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "tense-distinct-objects",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-tense-distinct-objects",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "tense-distinct-objects:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "I I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year."
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "tense-distinct-objects:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "嗯，I have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-tense-distinct-objects"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "d1f4b2a2-3eee-4c5c-bc30-0ba7abe96573",
+                "sourceRefs": [
+                  "confirmed-ae0ab31b7d26f4edd9b188c965d9d93d13d27c410977ee7f24d8787f88dd0dd8"
+                ],
+                "text": "I focus on model evaluation now, and I focused on data labeling during my first internship. I manage the current experiment log, and I managed the old annotation queue last year.\n\nI have not finished the comparison. I might present the preliminary results next Wednesday if the checks pass. The glossary still needs an owner."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 2907,
+          "review": {
+            "binding": {
+              "draftSha256": "38081be81ead0a6b95af45e9c80d703f9404ce317b33c023777544294fff7e10",
+              "sourceSha256": "acd1c05a0e3f01bcae194d968582a09c8e498d8d9e6a3cee52d5fc7fe6a09008"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "All distinct facts and qualifiers remain."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Hesitation is removed without deleting meaning."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Action-specific tense, unfinished status, tentative timing and condition remain."
+          },
+          "unknown_names_terms_literals": {
+            "status": "N/A",
+            "reason": "No unknown proper names or protected literals."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Fluent connected prose."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "Current/past responsibilities and upcoming work/status are separated into two natural paragraphs."
+          },
+          "request_preservation": {
+            "status": "N/A",
+            "reason": "No substantive recipient request."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    },
+    {
+      "arm": "candidate",
+      "caseId": "unknown-name-and-literals",
+      "candidateReturned": true,
+      "reviewIssues": [],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 2719,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": true,
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "f84faac0-6935-46f7-b7aa-11fbc7b09fec",
+                "sourceRefs": [
+                  "unknown-name-and-literals:0",
+                  "unknown-name-and-literals:1"
+                ],
+                "text": "The package is called Valen, or maybe Valin; I am not sure. Please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\".\nI currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-unknown-name-and-literals"
+        },
+        "error": null,
+        "id": "unknown-name-and-literals",
+        "mode": {
+          "baseMode": "auto",
+          "modeId": "technical",
+          "name": "unknown-name-and-literals",
+          "revision": 1,
+          "rules": ""
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "unknown-name-and-literals",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-unknown-name-and-literals",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "unknown-name-and-literals:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "The package is called Valen, or maybe Valin; I am not sure. Uh, please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\"."
+            },
+            {
+              "captureOrder": 1,
+              "endMs": null,
+              "final": true,
+              "id": "unknown-name-and-literals:1",
+              "providerItemId": "1",
+              "startMs": null,
+              "text": "I currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-unknown-name-and-literals"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "f84faac0-6935-46f7-b7aa-11fbc7b09fec",
+                "sourceRefs": [
+                  "confirmed-aa0cb7f5142914e9ed1f6640c3e71537f4f2fe3c26b577fdf9ff8ee51d0327af"
+                ],
+                "text": "The package is called Valen, or maybe Valin; I am not sure. Please keep `CacheID` exactly as written. The note says \"嗯，暂时不要发布\".\nI currently work on the adapter. We completed the first pilot in twenty twenty eight, not twenty twenty nine. The benchmark has not been accepted yet."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 2719,
+          "review": {
+            "binding": {
+              "draftSha256": "4eb338f165333164061060d93bc72f6613f75b1f06b577efc5b5489753c905cd",
+              "sourceSha256": "b79470ae58937083c3098157809d0ecc1f430878d0c19dff7aa5faf99270f5e8"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "available": true,
+        "dimensions": {
+          "fidelity": {
+            "status": "PASS",
+            "reason": "Both alternative names and uncertainty, exact code and quote, current work, completed pilot and not-accepted benchmark are retained."
+          },
+          "bilingual_meaning": {
+            "status": "PASS",
+            "reason": "Quoted Chinese is intentionally preserved verbatim within English prose; unquoted hesitation is removed."
+          },
+          "tense_year_numbers": {
+            "status": "PASS",
+            "reason": "Current versus completed work and both asserted/negated years are retained; unaccepted status remains."
+          },
+          "unknown_names_terms_literals": {
+            "status": "PASS",
+            "reason": "Both names and uncertainty are retained; code and quoted Chinese are exact."
+          },
+          "naturalness": {
+            "status": "PASS",
+            "reason": "Clear technical English without unnecessary guessing; written-out years are acceptable."
+          },
+          "actual_layout": {
+            "status": "PASS",
+            "reason": "Actual line break separates naming/literal content from project status; no stronger layout was requested."
+          },
+          "request_preservation": {
+            "status": "PASS",
+            "reason": "The request to keep the code literal exact remains in the text."
+          }
+        },
+        "hardFactsGate": "PASS",
+        "contentQualitySuccess": "PASS",
+        "pipelineAcceptance": "UNKNOWN"
+      }
+    }
+  ],
+  "privateWorkflows": [
+    {
+      "arm": "baseline",
+      "caseId": "confirmed-user-introduction",
+      "candidateReturned": true,
+      "reviewIssues": [
+        "tenseChanged"
+      ],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 5180,
+      "sourceBoundQualityPass": false,
+      "cleanAndQualityPass": false,
+      "dimensionStatuses": {
+        "fidelity": "FAIL",
+        "bilingual_meaning": "PASS",
+        "tense_year_numbers": "FAIL",
+        "unknown_names_terms_literals": "PASS",
+        "naturalness": "PASS",
+        "actual_layout": "PASS",
+        "request_preservation": "N/A"
+      },
+      "note": "Private original/confirmed corrections/draft retained locally; not included in repository. Language-only PASS means preserving unresolved terminology, not verifying intended terms."
+    },
+    {
+      "arm": "baseline",
+      "caseId": "language-only-user-introduction",
+      "candidateReturned": true,
+      "reviewIssues": [
+        "tenseChanged"
+      ],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 5986,
+      "sourceBoundQualityPass": false,
+      "cleanAndQualityPass": false,
+      "dimensionStatuses": {
+        "fidelity": "FAIL",
+        "bilingual_meaning": "PASS",
+        "tense_year_numbers": "FAIL",
+        "unknown_names_terms_literals": "FAIL",
+        "naturalness": "PASS",
+        "actual_layout": "PASS",
+        "request_preservation": "N/A"
+      },
+      "note": "Private original/confirmed corrections/draft retained locally; not included in repository. Language-only PASS means preserving unresolved terminology, not verifying intended terms."
+    },
+    {
+      "arm": "candidate",
+      "caseId": "confirmed-user-introduction",
+      "candidateReturned": true,
+      "reviewIssues": [],
+      "modelDecision": "accept",
+      "calls": 2,
+      "elapsedMs": 4857,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": true,
+      "dimensionStatuses": {
+        "fidelity": "PASS",
+        "bilingual_meaning": "PASS",
+        "tense_year_numbers": "PASS",
+        "unknown_names_terms_literals": "PASS",
+        "naturalness": "PASS",
+        "actual_layout": "PASS",
+        "request_preservation": "N/A"
+      },
+      "note": "Private original/confirmed corrections/draft retained locally; not included in repository. Language-only PASS means preserving unresolved terminology, not verifying intended terms."
+    },
+    {
+      "arm": "candidate",
+      "caseId": "language-only-user-introduction",
+      "candidateReturned": true,
+      "reviewIssues": [
+        "reviewRejected"
+      ],
+      "modelDecision": "reject",
+      "calls": 2,
+      "elapsedMs": 5386,
+      "sourceBoundQualityPass": true,
+      "cleanAndQualityPass": false,
+      "dimensionStatuses": {
+        "fidelity": "PASS",
+        "bilingual_meaning": "PASS",
+        "tense_year_numbers": "PASS",
+        "unknown_names_terms_literals": "PASS",
+        "naturalness": "PASS",
+        "actual_layout": "PASS",
+        "request_preservation": "N/A"
+      },
+      "note": "Private original/confirmed corrections/draft retained locally; not included in repository. Language-only PASS means preserving unresolved terminology, not verifying intended terms."
+    }
+  ],
+  "layout": [
+    {
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "6a8b7a2e-9161-4120-b54c-61d40b9810ae",
+                "sourceRefs": [
+                  "constraints-paragraphs:0"
+                ],
+                "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-constraints-paragraphs"
+        },
+        "error": null,
+        "id": "constraints-paragraphs",
+        "mode": {
+          "baseMode": "light",
+          "modeId": "lab-constraints-paragraphs",
+          "name": "constraints-paragraphs",
+          "revision": 1,
+          "rules": "按口述顺序整理为连贯的自然段，在真实话题变化处换段；同一件事的说明与条件放在一起，不按识别断句逐句分段，不添加标题或总结。"
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "constraints-paragraphs",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-constraints-paragraphs",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "constraints-paragraphs:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-constraints-paragraphs"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "6a8b7a2e-9161-4120-b54c-61d40b9810ae",
+                "sourceRefs": [
+                  "confirmed-014921dc93709f9db4e19f1b496f85f4632f0228d454e845edbd2df348b2b07e"
+                ],
+                "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 2632,
+          "review": {
+            "binding": {
+              "draftSha256": "e40e47aed8a1997978bcf66fd93f941afa3f652e62349f67c9aaa6396d4e0160",
+              "sourceSha256": "ec743ef62e194a4214848e3dd6cde00b56ffe2dd6fca5f43ac47c29beeece641"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "caseId": "constraints-paragraphs",
+        "sourceGroup": "constraints-only",
+        "output": {
+          "available": true,
+          "dimensions": {
+            "fidelity": {
+              "status": "PASS",
+              "reason": "Exact field literal, warning condition/count and unconditional polling interval are retained; no added claims or summary."
+            },
+            "bilingual_meaning": {
+              "status": "N/A",
+              "reason": "Source is monolingual English; the Chinese formatting control is not spoken content and is not copied."
+            },
+            "tense_year_numbers": {
+              "status": "PASS",
+              "reason": "More than two seconds, one warning and 250 milliseconds remain exact; the polling rule does not become conditional."
+            },
+            "unknown_names_terms_literals": {
+              "status": "PASS",
+              "reason": "The protected field literal and its code formatting remain exact."
+            },
+            "naturalness": {
+              "status": "PASS",
+              "reason": "Concise grammatical instructions; no generated answer to recipient requests."
+            },
+            "actual_layout": {
+              "status": "PASS",
+              "reason": "Connected paragraph preserves source order without artificial bullets, headings or a summary."
+            },
+            "request_preservation": {
+              "status": "PASS",
+              "reason": "All original constraint imperatives remain requests/instructions in the output rather than being executed."
+            }
+          },
+          "hardFactsGate": "PASS",
+          "contentQualitySuccess": "PASS",
+          "pipelineAcceptance": "UNKNOWN"
+        },
+        "counterpartEquivalence": "PASS",
+        "counterpartReason": "The same source under the other selected layout retains the same substantive content."
+      }
+    },
+    {
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "c7f8c3b9-4940-4fbe-ba63-56abbacbf645",
+                "sourceRefs": [
+                  "constraints-bullets:0"
+                ],
+                "text": "1. Keep the field `RetryID` unchanged.\n2. If a request takes more than two seconds, record one warning.\n3. Independently, keep the polling interval at 250 milliseconds."
+              }
+            ],
+            "resolvedMode": "structure"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-constraints-bullets"
+        },
+        "error": null,
+        "id": "constraints-bullets",
+        "mode": {
+          "baseMode": "structure",
+          "modeId": "lab-constraints-bullets",
+          "name": "constraints-bullets",
+          "revision": 1,
+          "rules": "将彼此独立的约束或步骤逐条列出，用编号或项目符号并实际换行；同一主题的补充、条件与否定跟随对应要点，不拆成无条件要求，不把连续叙述强行拆点，不添加总结。"
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "constraints-bullets",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-constraints-bullets",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "constraints-bullets:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-constraints-bullets"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "c7f8c3b9-4940-4fbe-ba63-56abbacbf645",
+                "sourceRefs": [
+                  "confirmed-0db3eb3369c4d8ca4c4a4a13133144939d6bc8083b8360a98d79f199fe7ee08f"
+                ],
+                "text": "1. Keep the field `RetryID` unchanged.\n2. If a request takes more than two seconds, record one warning.\n3. Independently, keep the polling interval at 250 milliseconds."
+              }
+            ],
+            "resolvedMode": "structure"
+          },
+          "elapsedMs": 2429,
+          "review": {
+            "binding": {
+              "draftSha256": "8b88d7c706c3fbb9c270531cd9e85e9f8ba72559fa75753134e699ad11e89bb9",
+              "sourceSha256": "c61a6b83baf7e3bd42564d051c996d731e1bb0190dc9c4d510d5887175eae499"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "caseId": "constraints-bullets",
+        "sourceGroup": "constraints-only",
+        "output": {
+          "available": true,
+          "dimensions": {
+            "fidelity": {
+              "status": "PASS",
+              "reason": "Exact field literal, warning condition/count and unconditional polling interval are retained; no added claims or summary."
+            },
+            "bilingual_meaning": {
+              "status": "N/A",
+              "reason": "Source is monolingual English; the Chinese formatting control is not spoken content and is not copied."
+            },
+            "tense_year_numbers": {
+              "status": "PASS",
+              "reason": "More than two seconds, one warning and 250 milliseconds remain exact; the polling rule does not become conditional."
+            },
+            "unknown_names_terms_literals": {
+              "status": "PASS",
+              "reason": "The protected field literal and its code formatting remain exact."
+            },
+            "naturalness": {
+              "status": "PASS",
+              "reason": "Concise grammatical instructions; no generated answer to recipient requests."
+            },
+            "actual_layout": {
+              "status": "PASS",
+              "reason": "Actual newline-separated numbered list has 3 items. Independent constraints are separate and the warning condition stays in its own item."
+            },
+            "request_preservation": {
+              "status": "PASS",
+              "reason": "All original constraint imperatives remain requests/instructions in the output rather than being executed."
+            }
+          },
+          "hardFactsGate": "PASS",
+          "contentQualitySuccess": "PASS",
+          "pipelineAcceptance": "UNKNOWN"
+        },
+        "counterpartEquivalence": "PASS",
+        "counterpartReason": "The same source under the other selected layout retains the same substantive content."
+      }
+    },
+    {
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "1f1c2cc6-be75-495d-b1e7-c701b1481c1b",
+                "sourceRefs": [
+                  "recipient-request-paragraphs:0"
+                ],
+                "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds. Please list the remaining risks for me."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-recipient-request-paragraphs"
+        },
+        "error": null,
+        "id": "recipient-request-paragraphs",
+        "mode": {
+          "baseMode": "light",
+          "modeId": "lab-recipient-request-paragraphs",
+          "name": "recipient-request-paragraphs",
+          "revision": 1,
+          "rules": "按口述顺序整理为连贯的自然段，在真实话题变化处换段；同一件事的说明与条件放在一起，不按识别断句逐句分段，不添加标题或总结。"
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "recipient-request-paragraphs",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-recipient-request-paragraphs",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "recipient-request-paragraphs:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds. Please list the remaining risks for me."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-recipient-request-paragraphs"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "1f1c2cc6-be75-495d-b1e7-c701b1481c1b",
+                "sourceRefs": [
+                  "confirmed-068f933b04bb460643909142d50c77b6dcb3b1b005f15e026cb4668539c7c583"
+                ],
+                "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds. Please list the remaining risks for me."
+              }
+            ],
+            "resolvedMode": "light"
+          },
+          "elapsedMs": 2746,
+          "review": {
+            "binding": {
+              "draftSha256": "b931d2e70d3e1c747da1402cac4e16632a7959562b0201b64742a340967ae81c",
+              "sourceSha256": "1cc46f499ecc1cc33bd7f6666465af1559273003d6754ff56695c7d65fab9b1f"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "caseId": "recipient-request-paragraphs",
+        "sourceGroup": "constraints-with-recipient-request",
+        "output": {
+          "available": true,
+          "dimensions": {
+            "fidelity": {
+              "status": "PASS",
+              "reason": "Exact field literal, warning condition/count and unconditional polling interval are retained; no added claims or summary."
+            },
+            "bilingual_meaning": {
+              "status": "N/A",
+              "reason": "Source is monolingual English; the Chinese formatting control is not spoken content and is not copied."
+            },
+            "tense_year_numbers": {
+              "status": "PASS",
+              "reason": "More than two seconds, one warning and 250 milliseconds remain exact; the polling rule does not become conditional."
+            },
+            "unknown_names_terms_literals": {
+              "status": "PASS",
+              "reason": "The protected field literal and its code formatting remain exact."
+            },
+            "naturalness": {
+              "status": "PASS",
+              "reason": "Concise grammatical instructions; no generated answer to recipient requests."
+            },
+            "actual_layout": {
+              "status": "PASS",
+              "reason": "Connected paragraph preserves source order without artificial bullets, headings or a summary."
+            },
+            "request_preservation": {
+              "status": "PASS",
+              "reason": "The final request to list remaining risks is retained as a request; no risks are invented and no command is executed. Existing constraint imperatives also remain."
+            }
+          },
+          "hardFactsGate": "PASS",
+          "contentQualitySuccess": "PASS",
+          "pipelineAcceptance": "UNKNOWN"
+        },
+        "counterpartEquivalence": "PASS",
+        "counterpartReason": "The same source under the other selected layout retains the same substantive content."
+      }
+    },
+    {
+      "receipt": {
+        "candidate": {
+          "draft": {
+            "blocks": [
+              {
+                "id": "e87e429a-307a-498e-8b44-a16af9556665",
+                "sourceRefs": [
+                  "recipient-request-bullets:0"
+                ],
+                "text": "1. Keep the field `RetryID` unchanged.\n2. If a request takes more than two seconds, record one warning.\n3. Independently, keep the polling interval at 250 milliseconds.\n4. Please list the remaining risks for me."
+              }
+            ],
+            "resolvedMode": "structure"
+          },
+          "reviewIssues": []
+        },
+        "context": {
+          "corrections": [],
+          "language": "english",
+          "sourceRevisionId": "source-recipient-request-bullets"
+        },
+        "error": null,
+        "id": "recipient-request-bullets",
+        "mode": {
+          "baseMode": "structure",
+          "modeId": "lab-recipient-request-bullets",
+          "name": "recipient-request-bullets",
+          "revision": 1,
+          "rules": "将彼此独立的约束或步骤逐条列出，用编号或项目符号并实际换行；同一主题的补充、条件与否定跟随对应要点，不拆成无条件要求，不把连续叙述强行拆点，不添加总结。"
+        },
+        "source": {
+          "adapterVersion": "minimum-edit-lab-v1",
+          "asrAttemptId": "recipient-request-bullets",
+          "complete": true,
+          "createdAt": "2026-10-12T00:00:00Z",
+          "generation": 1,
+          "id": "source-recipient-request-bullets",
+          "items": [
+            {
+              "captureOrder": 0,
+              "endMs": null,
+              "final": true,
+              "id": "recipient-request-bullets:0",
+              "providerItemId": "0",
+              "startMs": null,
+              "text": "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds. Please list the remaining risks for me."
+            }
+          ],
+          "model": "fixed-text",
+          "provider": "synthetic-or-supplied-fixed-text",
+          "sessionId": "fixed-recipient-request-bullets"
+        },
+        "trace": {
+          "calls": 2,
+          "draft": {
+            "blocks": [
+              {
+                "id": "e87e429a-307a-498e-8b44-a16af9556665",
+                "sourceRefs": [
+                  "confirmed-c8f8d28b4484d63b92286004c13eb6a287383bb1a3cb49a9ca9e2ae18382ed04"
+                ],
+                "text": "1. Keep the field `RetryID` unchanged.\n2. If a request takes more than two seconds, record one warning.\n3. Independently, keep the polling interval at 250 milliseconds.\n4. Please list the remaining risks for me."
+              }
+            ],
+            "resolvedMode": "structure"
+          },
+          "elapsedMs": 2921,
+          "review": {
+            "binding": {
+              "draftSha256": "343411005bed2dec9f042fcb63d7241613c60164e03ceb5cf3efeeb85efdf930",
+              "sourceSha256": "9ac69944908f3070b805b86c3106c099c2a0d255fc9fedbd5f8a96c8f75d6923"
+            },
+            "checks": {
+              "cleanup": "pass",
+              "coverage": "pass",
+              "facts": "pass",
+              "intent": "pass",
+              "scope": "pass"
+            },
+            "decision": "accept",
+            "issues": [],
+            "protocolVersion": "confirmed-candidate-v2"
+          },
+          "reviewError": null
+        }
+      },
+      "blindGrade": {
+        "caseId": "recipient-request-bullets",
+        "sourceGroup": "constraints-with-recipient-request",
+        "output": {
+          "available": true,
+          "dimensions": {
+            "fidelity": {
+              "status": "PASS",
+              "reason": "Exact field literal, warning condition/count and unconditional polling interval are retained; no added claims or summary."
+            },
+            "bilingual_meaning": {
+              "status": "N/A",
+              "reason": "Source is monolingual English; the Chinese formatting control is not spoken content and is not copied."
+            },
+            "tense_year_numbers": {
+              "status": "PASS",
+              "reason": "More than two seconds, one warning and 250 milliseconds remain exact; the polling rule does not become conditional."
+            },
+            "unknown_names_terms_literals": {
+              "status": "PASS",
+              "reason": "The protected field literal and its code formatting remain exact."
+            },
+            "naturalness": {
+              "status": "PASS",
+              "reason": "Concise grammatical instructions; no generated answer to recipient requests."
+            },
+            "actual_layout": {
+              "status": "PASS",
+              "reason": "Actual newline-separated numbered list has 4 items. Independent constraints are separate and the warning condition stays in its own item."
+            },
+            "request_preservation": {
+              "status": "PASS",
+              "reason": "The final request to list remaining risks is retained as a request; no risks are invented and no command is executed. Existing constraint imperatives also remain."
+            }
+          },
+          "hardFactsGate": "PASS",
+          "contentQualitySuccess": "PASS",
+          "pipelineAcceptance": "UNKNOWN"
+        },
+        "counterpartEquivalence": "PASS",
+        "counterpartReason": "The same source under the other selected layout retains the same substantive content."
+      }
+    }
+  ],
+  "tests": {
+    "rust": {
+      "passed": 843,
+      "failed": 0,
+      "ignored": 3
+    },
+    "uiScene": {
+      "passed": 12,
+      "failed": 0
+    },
+    "uiTargetedVisual": {
+      "passed": 1,
+      "failed": 0
+    },
+    "nativeMicrophone": "NOT_RUN",
+    "nativeDelivery": "NOT_RUN",
+    "actualUserEditingCost": "NOT_RUN"
+  },
+  "receipts": {
+    "baseline-paired.json": {
+      "sha256": "cb4a217c9ae11f07efb050c05f8487aa5f19b41d16f530b9bfb53e14144239ff",
+      "localOnly": true
+    },
+    "candidate-paired.json": {
+      "sha256": "d97bdfd8df57d600f1255c516e696f7d39896e72674b7cd17a5d6a7f36a9fbf1",
+      "localOnly": true
+    },
+    "candidate-layout.json": {
+      "sha256": "9bbf496609e5dea33d96a48c1f2403b53f9dcd3d22423b4d1fd5d7b564fde3b2",
+      "localOnly": true
+    },
+    "global-ledger.jsonl": {
+      "sha256": "cc543839c695fd50a3a09ee937e0b9f8a3d67ac74ea902bb2d446486f3fe0a75",
+      "localOnly": true
+    },
+    "independent-blind-review.local.json": {
+      "sha256": "ec63e20ad39d8cdd4b4294c028c961b81353334482503ff98a2263224c6fbd3b",
+      "localOnly": true
+    },
+    "candidate-source-inputs.json": {
+      "sha256": "43d0bc7e0f77638800b4bd1e376a057393fa198c80528b1055778fd27fba1781",
+      "localOnly": true
+    },
+    "full-tests.log": {
+      "sha256": "241fd82aa0d4803202d7e2d86b9d5e0500ce9ba555e7475749866ece6b64776b",
+      "localOnly": true
+    },
+    "run-frozen-evaluation.py": {
+      "sha256": "7ccf34950214a20aa1ab712261e2c3c2c52257bf2adcdc7b0808809ce5a47e72",
+      "localOnly": true
+    },
+    "make-blind-review.py": {
+      "sha256": "6e42c3efe9a9fc6c182441feb15fb9f165c34210a545475144bb76b88210a54f",
+      "localOnly": true
+    },
+    "package-verification.json": {
+      "sha256": "a2a1100e083f3b238261524578202893df78f0643bd04abb97ed7391c8fe4327",
+      "localOnly": true
+    },
+    "package.log": {
+      "sha256": "82fe80c977566b40622b760af306fe47ba9a03567be8a1544427e31c33dd6110",
+      "localOnly": true
+    }
+  },
+  "ui": {
+    "receiptSha256": "44fcb07af1b1a675d420a0aa29ace358252dea5d8933f66d8c7747d6ca1ef2d1",
+    "scope": "Production scene UI with isolated synthetic IPC; no native capture or cloud quality claim.",
+    "tests": [
+      {
+        "name": "01-shared-scene-catalog",
+        "status": "PASS"
+      },
+      {
+        "name": "02-context-opt-in-and-language",
+        "status": "PASS"
+      },
+      {
+        "name": "03-context-exclusions-narrow",
+        "status": "PASS"
+      },
+      {
+        "name": "04-app-override-preserved",
+        "status": "PASS"
+      },
+      {
+        "name": "05-legacy-mode-compatibility",
+        "status": "PASS"
+      },
+      {
+        "name": "06-custom-scene-creation",
+        "status": "PASS"
+      },
+      {
+        "name": "07-history-scene-candidate",
+        "status": "PASS"
+      },
+      {
+        "name": "08-recorder-scene-selection",
+        "status": "PASS"
+      },
+      {
+        "name": "09-recorder-context-status",
+        "status": "PASS"
+      },
+      {
+        "name": "10-history-writing-reference",
+        "status": "PASS"
+      },
+      {
+        "name": "11-existing-personal-scene-name",
+        "status": "PASS"
+      },
+      {
+        "name": "12-explicit-layout-requirements",
+        "status": "PASS"
+      }
+    ],
+    "pageErrors": [],
+    "externalRequests": []
+  },
+  "build": {
+    "desktopVersion": "0.2.23",
+    "frontendVersion": "0.4.22",
+    "selectedSourceInputsStable": 277,
+    "thirdPartyResourcesMatched": 15,
+    "artifacts": [
+      {
+        "file": "SpeakMode.exe",
+        "bytes": 19203072,
+        "version": "0.2.23",
+        "sha256": "fc0d8508f3511f7a3bf63d6f682070e1507ce341540a6c605ac07bc285fa0032"
+      },
+      {
+        "file": "SpeakMode_0.2.23_x64-setup.exe",
+        "bytes": 5901204,
+        "version": "0.2.23",
+        "sha256": "20bab36ac06f0cf01c32840e15730933f0a93f5a6bfcc3cf4b615b2e3541d989"
+      }
+    ],
+    "packageLogSha256": "82fe80c977566b40622b760af306fe47ba9a03567be8a1544427e31c33dd6110",
+    "cacheGiB": 11.983,
+    "maxCacheGiB": 12,
+    "installed": false,
+    "launched": false,
+    "runtimeConfigChanged": false,
+    "releaseDirectory": "output/releases/2026-10-17-bilingual-0.2.23",
+    "archivedResourcesReverified": 15
+  }
+}
