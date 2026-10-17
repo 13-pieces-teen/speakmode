@@ -35,10 +35,10 @@ function HomeShortcut({ shortcut, onSettings }: { shortcut: string; onSettings: 
   const keys = shortcut.split(/\s*\+\s*/);
   return <button type="button" className="home-shortcut" onClick={onSettings}
     aria-label={`查看录音快捷键设置，当前为 ${shortcut}`} title="前往设置修改录音快捷键">
-    <span className="home-shortcut-label">录音快捷键<GearIcon aria-hidden="true" /></span>
     <span className="home-shortcut-keys">{keys.map((key, index) => <span className="home-shortcut-key-part" key={`${index}:${key}`}>
       {index > 0 && <span className="home-shortcut-plus" aria-hidden="true">+</span>}<Kbd>{key}</Kbd>
     </span>)}</span>
+    <GearIcon aria-hidden="true" />
   </button>;
 }
 
@@ -48,8 +48,7 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
   return <div className="home-page">
     <header className="home-hero">
       <div className="home-hero-copy"><h1>开口说，按你的方式整理。</h1>
-        <p>按下 <Kbd>{preferences.shortcut}</Kbd> 开始，再按一次结束。<span className="hero-continuation">停顿或查资料时，录音继续。</span></p></div>
-      <HomeShortcut shortcut={preferences.shortcut} onSettings={onSettings} />
+        <p>按下 <HomeShortcut shortcut={preferences.shortcut} onSettings={onSettings} /> 开始，再按一次结束。<span className="hero-continuation">停顿或查资料时，录音继续。</span></p></div>
     </header>
     <UsageOverview />
     <div className="home-grid">
@@ -57,7 +56,7 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
         <HomeSectionCard className="latest-card" titleId="latest-title" title="最近一次口述"
           action={latest ? <time>{latest.temporary ? '临时结果' : latest.group} {latest.time}</time> : undefined}>
           {latest ? <>
-          <div className="latest-title-row"><h3>{latest.title}</h3><ModeBadge mode={latest.mode} resolved={latest.resolved} name={latest.modeName} sourceState={latest.sourceState} receipt={latest.detail?.output?.writingReceipt} /></div>
+          <div className="latest-title-row"><h3 title={latest.title}>{latest.title}</h3><ModeBadge mode={latest.mode} resolved={latest.resolved} name={latest.modeName} sourceState={latest.sourceState} receipt={latest.detail?.output?.writingReceipt} /></div>
           <LatestDictationPreview key={`${latest.id}:${latest.revision}`} record={latest} />
           <div className="latest-actions"><CopyAction record={latest} label="复制结果"><Button variant="soft" color="gray" onClick={() => onOpen(latest.id)}>查看与调整<ArrowRightIcon /></Button>{latest.modified && <span className="modified-label">已在本页修改</span>}</CopyAction></div>
           </> : <div className="home-empty">

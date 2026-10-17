@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="120" viewBox="0 0 144 120" fill="none">
+  <!-- An original illustration: sound meets an ordinary greeting, not a saved result. -->
+  <path d="M51 8H117L136 27V112H51V8Z" fill="#E8EFF8"/>
+  <path d="M58 14H114L130 30V106H58V14Z" fill="#FFFFFF"/>
+  <path d="M114 14L130 30H114V14Z" fill="#F0F3F5"/>
+  <g fill="#316BD6">
+    <rect x="8" y="57" width="5" height="14" rx="2.5"/>
+    <rect x="18" y="48" width="5" height="32" rx="2.5"/>
+    <rect x="28" y="36" width="5" height="56" rx="2.5"/>
+    <rect x="38" y="45" width="5" height="38" rx="2.5"/>
+    <rect x="48" y="53" width="5" height="22" rx="2.5"/>
+    <rect x="58" y="59" width="5" height="10" rx="2.5"/>
+  </g>
+  <text x="72" y="71" fill="#202D40" font-family="Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="22" font-weight="600">你好</text>
+  <path d="M120 51V74" stroke="#316BD6" stroke-width="3"/>
+  <text x="71" y="93" fill="#4F6074" font-family="Segoe UI, sans-serif" font-size="9.5" font-weight="500">SpeakMode</text>
+</svg>

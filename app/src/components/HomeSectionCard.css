@@ -1,9 +1,9 @@
 /* Radix Card, themed with the existing SpeakMode surface tokens. */
 .home-section-card.rt-Card {
-  --card-padding: 22px;
+  --card-padding: 24px;
   --card-border-radius: var(--sm-radius);
   --card-background-color: var(--sm-paper);
-  --base-card-surface-box-shadow: 0 0 0 1px var(--sm-line), var(--sm-shadow);
+  --base-card-surface-box-shadow: none;
   width: 100%;
   min-width: 0;
   overflow: visible;

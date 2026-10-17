@@ -5,6 +5,7 @@ dist/
 gen/
 output/
 .validation/
+.taste-skill/
 .test-data/
 test-data/
 test-results/

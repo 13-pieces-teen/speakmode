@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="120" viewBox="0 0 144 120" fill="none">
+  <!-- An original illustration of a growing vocabulary, with public example words. -->
+  <path d="M29 12H134V99H29V12Z" fill="#E8EFF8"/>
+  <path d="M29 8H55V23H29V8Z" fill="#316BD6"/>
+  <path d="M13 25H124V110H13V25Z" fill="#F0F3F5"/>
+  <path d="M18 20H129V105H18V20Z" fill="#FFFFFF"/>
+  <text x="28" y="58" fill="#202D40" font-family="Segoe UI, sans-serif" font-size="31" font-weight="600" letter-spacing="-1.2">Aa</text>
+  <text x="88" y="57" fill="#316BD6" font-family="Microsoft YaHei UI, Microsoft YaHei, sans-serif" font-size="26" font-weight="600">词</text>
+  <text x="29" y="84" fill="#4F6074" font-family="Segoe UI, sans-serif" font-size="13" font-weight="500">SpeakMode</text>
+  <path d="M113 79V91M107 85H119" stroke="#316BD6" stroke-width="3"/>
+</svg>
