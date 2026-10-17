@@ -70,6 +70,55 @@ fn interrupted_english_year_cannot_pass_as_a_shorter_year_and_orphan_suffix() {
 }
 
 #[test]
+fn unrelated_correction_words_do_not_waive_source_year_preservation() {
+    use crate::{cloud::rewrite::{review_admission, RewriteResult}, core::BaseMode};
+    for aside in ["I actually prefer a short summary.", "Sorry, I lost my place."] {
+        let source = source(&[&format!("The archive opened in twenty forty one. {aside}")]);
+        let original = source.clone();
+        let draft = |text: String| RewriteResult { resolved_mode: BaseMode::Light,
+            blocks: vec![OutputBlock { id: "candidate".into(), text, source_refs: vec!["item-0".into()] }] };
+        assert!(review_admission(&source, &draft(format!("The archive opened in 2041. {aside}"))).is_ok(), "{aside}");
+        for changed in [format!("The archive opened in 2042. {aside}"), format!("The archive opened. {aside}")] {
+            let result = review_admission(&source, &draft(changed.clone()));
+            assert!(result.is_err(), "unrelated aside must not waive the year: {changed}");
+            assert_eq!(result.unwrap_err().code, "rewrite_meaning_risk");
+        }
+        assert_eq!(source, original);
+    }
+}
+
+#[test]
+fn only_a_direct_year_correction_supersedes_the_abandoned_year() {
+    use crate::{cloud::rewrite::{review_admission, RewriteResult}, core::BaseMode};
+    for (input, output, expected) in [
+        ("The archive opened in twenty forty one, sorry, in twenty forty two.", "The archive opened in 2042.", true),
+        ("The archive opened in twenty forty one, sorry, in twenty forty two.", "The archive opened in 2041.", false),
+        ("The archive opened in twenty forty one. Sorry, the newsletter started in twenty forty two.", "The archive opened in 2041. The newsletter started in 2042.", true),
+        ("The archive opened in twenty forty one. Sorry, the newsletter started in twenty forty two.", "The archive opened. The newsletter started in 2042.", false),
+        ("The archive opened in 2041, actually, in 2042. The newsletter started in 2041.", "The archive opened in 2042. The newsletter started in 2041.", true),
+        ("The archive opened in 2041, actually, in 2042. The newsletter started in 2041.", "The archive opened in 2042. The newsletter started.", false),
+    ] {
+        let source = source(&[input]);
+        let draft = RewriteResult { resolved_mode: BaseMode::Light, blocks: vec![OutputBlock {
+            id: "candidate".into(), text: output.into(), source_refs: vec!["item-0".into()],
+        }] };
+        assert_eq!(review_admission(&source, &draft).is_ok(), expected, "{input} -> {output}");
+    }
+}
+
+#[test]
+fn year_first_followup_after_sentence_boundary_is_not_a_correction() {
+    use crate::{cloud::rewrite::{review_admission, RewriteResult}, core::BaseMode};
+    let source = source(&["The archive opened in 2041. Sorry. In 2042 the newsletter started."]);
+    let draft = |text: &str| RewriteResult { resolved_mode: BaseMode::Light,
+        blocks: vec![OutputBlock { id: "candidate".into(), text: text.into(), source_refs: vec!["item-0".into()] }] };
+    assert!(review_admission(&source, &draft("The archive opened in 2041. In 2042 the newsletter started.")).is_ok());
+    let result = review_admission(&source, &draft("The archive opened. In 2042 the newsletter started."));
+    assert!(result.is_err(), "a new sentence's year must not erase the previous sentence's year");
+    assert_eq!(result.unwrap_err().code, "rewrite_meaning_risk");
+}
+
+#[test]
 fn review_admission_rejects_explicit_value_unit_version_or_time_changes() {
     for (input, output) in [
         ("预算3000元。", "预算3500元。"),

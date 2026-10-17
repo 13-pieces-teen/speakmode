@@ -3,7 +3,7 @@ use super::*;
 use crate::core::{ConfirmedContext, DraftLanguage, SourceItem};
 use tokio::time::Instant;
 
-pub const VERSION: &str = "confirmed-candidate-v1";
+pub const VERSION: &str = "confirmed-candidate-v2";
 #[derive(Default, Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct Trace {
@@ -42,9 +42,23 @@ fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool, mode:&Mo
     let mut data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
     data["confirmedSpellings"]=json!(context.corrections.iter().map(|c|&c.replacement).collect::<Vec<_>>());
     body["messages"][1]["content"]=json!(serde_json::to_string(&data).unwrap());
-    if let Some(mut writing)=writing_context::for_mode(mode) {
+    // Explicit English needs the same source-only scene and retention contract
+    // in Auto and personal modes as in a built-in scene. Historical AsSpoken
+    // modes keep their existing contract; this does not infer a language choice.
+    let writing=writing_context::for_mode(mode).or_else(||(context.language==DraftLanguage::English).then(||crate::core::writing_context::WritingContext {
+        scene:crate::core::AppWritingScene::General,language:context.language,input:None,
+    }));
+    if let Some(mut writing)=writing {
         writing.language=context.language;
         writing_context::attach(body,mode,source,&writing,if review {writing_context::Stage::Review}else{writing_context::Stage::Generation})?;
+    }
+    if context.language==DraftLanguage::English {
+        let mut data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        // These are textual boundaries in the already-corrected reference, not
+        // original ASR item identities. Apply every correction before splitting:
+        // a confirmation may replace a span crossing old ASR item boundaries.
+        data["sourceFragments"]=json!(source.text().split('\n').collect::<Vec<_>>());
+        body["messages"][1]["content"]=json!(data.to_string());
     }
     Ok(())
 }

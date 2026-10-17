@@ -7,7 +7,7 @@ use rusqlite::{Connection,OpenFlags};
 use sha2::{Digest,Sha256};
 
 #[derive(Deserialize)]#[serde(deny_unknown_fields,rename_all="camelCase")]
-struct Case{id:String,base_mode:BaseMode,#[serde(default)]rules:String,source_items:Vec<String>,category:String,#[serde(default)]confirmed_context:Option<ConfirmedContext>}
+struct Case{id:String,#[serde(default)]mode_id:Option<String>,base_mode:BaseMode,#[serde(default)]rules:String,source_items:Vec<String>,category:String,#[serde(default)]confirmed_context:Option<ConfirmedContext>}
 fn config(path:&str)->anyhow::Result<ProviderConfig>{
     let db=Connection::open_with_flags(path,OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     let raw:String=db.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|r|r.get(0))?;
@@ -18,7 +18,7 @@ fn source(c:&Case)->SourceRevision{SourceRevision{id:format!("source-{}",c.id),s
     provider:"synthetic-or-supplied-fixed-text".into(),model:"fixed-text".into(),adapter_version:"minimum-edit-lab-v1".into(),complete:true,created_at:"2026-10-12T00:00:00Z".into(),
     items:c.source_items.iter().enumerate().map(|(i,t)|SourceItem{id:format!("{}:{i}",c.id),provider_item_id:i.to_string(),capture_order:i as u64,
         text:t.clone(),is_final:true,start_ms:None,end_ms:None}).collect()}}
-fn mode(c:&Case)->ModeSnapshot{ModeSnapshot{mode_id:format!("lab-{}",c.id),name:c.id.clone(),base_mode:c.base_mode,rules:c.rules.clone(),revision:1}}
+fn mode(c:&Case)->ModeSnapshot{ModeSnapshot{mode_id:c.mode_id.clone().unwrap_or_else(||format!("lab-{}",c.id)),name:c.id.clone(),base_mode:c.base_mode,rules:c.rules.clone(),revision:1}}
 fn text(d:&rewrite::RewriteResult)->String{d.blocks.iter().map(|b|b.text.as_str()).collect::<Vec<_>>().join("\n")}
 async fn judge(config:&ProviderConfig,secret:&str,data:&Value)->anyhow::Result<Value>{
     let mut judge=config.clone();judge.rewrite_model="qwen3.7-plus".into();let url=cloud::endpoints(&judge)?.rewrite;
@@ -61,7 +61,7 @@ async fn main()->anyhow::Result<()>{
     let fixture:Value=serde_json::from_slice(&bytes)?;let cases:Vec<Case>=serde_json::from_value(fixture["cases"].clone())?;
     anyhow::ensure!(!cases.is_empty()&&cases.len()<=16,"1..16 cases");
     let mut ids=std::collections::HashSet::new();for c in &cases{anyhow::ensure!(ids.insert(&c.id)&&!c.id.is_empty()&&c.id.len()<=80&&c.id.bytes().all(|v|v.is_ascii_alphanumeric()||b"-_".contains(&v))
-        &&c.rules.chars().count()<=4000&&!c.source_items.is_empty()&&c.source_items.len()<=32&&c.source_items.iter().all(|t|!t.trim().is_empty())&&c.source_items.iter().map(|t|t.chars().count()).sum::<usize>()<=8000,"invalid case");}
+        &&c.mode_id.as_ref().is_none_or(|id|["auto","light","structure","chat","document","email","technical"].contains(&id.as_str()))&&c.rules.chars().count()<=4000&&!c.source_items.is_empty()&&c.source_items.len()<=32&&c.source_items.iter().all(|t|!t.trim().is_empty())&&c.source_items.iter().map(|t|t.chars().count()).sum::<usize>()<=8000,"invalid case");}
     let config=config(&args[0])?;
     if ["--confirmed-replay","--confirmed-plan","--confirmed-run"].contains(&args[3].as_str()) {
         anyhow::ensure!(cases.len()<=6,"maximum twelve requests per confirmed run");
@@ -75,7 +75,7 @@ async fn main()->anyhow::Result<()>{
             let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
             output.write_all(serde_json::to_string_pretty(&result)?.as_bytes())?;println!("{}",result);return Ok(());
         }
-        let metadata=json!({"scope":"EXPLICIT_HISTORY_CANDIDATE_TEXT_ONLY","maximumCalls":cases.len()*2,"protocol":rewrite::confirmed_candidate::VERSION,"fixtureSha256":format!("{:x}",Sha256::digest(&bytes)),"deliveryAuthorized":false});
+        let metadata=json!({"scope":"EXPLICIT_HISTORY_CANDIDATE_TEXT_ONLY","maximumCalls":cases.len()*2,"protocol":rewrite::confirmed_candidate::VERSION,"fixtureSha256":format!("{:x}",Sha256::digest(&bytes)),"deliveryAuthorized":false,"model":config.rewrite_model,"region":config.region,"waitMs":20000});
         if args[3]=="--confirmed-plan"{println!("{}",serde_json::to_string_pretty(&metadata)?);return Ok(());}
         let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
         let mut journal=OpenOptions::new().write(true).create_new(true).open(format!("{}.jsonl",args[2]))?;
@@ -86,7 +86,7 @@ async fn main()->anyhow::Result<()>{
             let outcome=rewrite::confirmed_candidate::experiment(&config,&secret,&mode(c),&source(c),c.confirmed_context.as_ref().unwrap()).await?;
             calls+=outcome.trace.calls;
             let stop=outcome.result.as_ref().err().is_some_and(|e|matches!(e.code.as_str(),"authentication_failed"|"rate_limited"));
-            let row=json!({"id":c.id,"source":source(c),"context":c.confirmed_context,"candidate":outcome.result.as_ref().ok(),"error":outcome.result.as_ref().err(),"trace":outcome.trace});
+            let row=json!({"id":c.id,"mode":mode(c),"source":source(c),"context":c.confirmed_context,"candidate":outcome.result.as_ref().ok(),"error":outcome.result.as_ref().err(),"trace":outcome.trace});
             writeln!(journal,"{}",row)?;journal.flush()?;rows.push(row);
             if stop{break;}
         }

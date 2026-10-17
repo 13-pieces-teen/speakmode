@@ -80,11 +80,62 @@ async fn generation_and_review_share_corrected_reference_but_output_keeps_real_s
 }
 
 #[tokio::test]
+async fn confirmed_english_context_is_consistent_for_builtin_auto_and_custom_modes() {
+    let (config,_,mut source,mut context)=fixture();
+    source.items[0].text="I work on graph rock. Please put these points into bullet points.".into();
+    source.items[1].text="I have not released the report.".into();
+    let start=source.text().find("graph rock").unwrap();
+    context.corrections=vec![SourceCorrection{start,end:start+"graph rock".len(),expected_text:"graph rock".into(),replacement:"GraphRAG".into()}];
+    let frozen=source.clone();let text=context.reference_text(&source).unwrap();
+    // Exercise the production path shared by generate/experiment; only the
+    // external HTTP boundary is replaced. A built-in scene is the control.
+    for (mode_id,base_mode,rules,scene) in [
+        ("document",BaseMode::Auto,"","document"),
+        ("auto",BaseMode::Auto,"","general"),
+        ("personal-report",BaseMode::Light,"Use natural complete sentences.","general"),
+    ] {
+        let mode=ModeSnapshot{mode_id:mode_id.into(),name:mode_id.into(),base_mode,rules:rules.into(),revision:1};
+        let (endpoint,task)=server(vec![draft(&text),verdict(true)],Duration::ZERO).await;
+        let outcome=run(shared_client().unwrap(),&config,"synthetic",&mode,&source,&DictionarySnapshot::default(),&context,CancellationToken::new(),&endpoint,Duration::from_secs(2)).await;
+        let requests=task.await.unwrap();let candidate=outcome.result.unwrap();
+        assert!(candidate.review_issues.is_empty(),"{mode_id}");assert_eq!(outcome.trace.calls,2,"{mode_id}");
+        assert_eq!(candidate.draft.blocks[0].source_refs,vec!["a","b"]);assert_eq!(source,frozen);
+        assert_eq!(requests.len(),2);
+        for (stage,request) in requests.iter().enumerate() {
+            let data:Value=serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(data["writingContext"],json!({"scene":scene,"language":"english","input":null}),"{mode_id} stage {stage}");
+            assert_eq!(data["sourceText"],text);assert_eq!(data["confirmedSpellings"],json!(["GraphRAG"]));
+            let fragments=data["sourceFragments"].as_array().expect("explicit English needs source-bound fragments");
+            assert!(!fragments.is_empty());
+            assert_eq!(fragments.iter().map(|v|v.as_str().unwrap()).collect::<Vec<_>>().join("\n"),text,"{mode_id} stage {stage}");
+            assert_eq!(data["sourceRetentionAnchors"],json!(["Please put these points into bullet points."]),"{mode_id} stage {stage}");
+            assert_eq!(data["baseMode"],json!(base_mode));assert_eq!(data["formatRules"],rules);
+        }
+    }
+}
+
+#[tokio::test]
 async fn reviewer_accept_cannot_hide_a_detected_tense_change() {
     let (config,mode,source,context)=fixture();let text=context.reference_text(&source).unwrap().replace("I work on","I worked on");
     let (endpoint,task)=server(vec![draft(&text),verdict(true)],Duration::ZERO).await;
     let outcome=run(shared_client().unwrap(),&config,"synthetic",&mode,&source,&DictionarySnapshot::default(),&context,CancellationToken::new(),&endpoint,Duration::from_secs(2)).await;
     assert_eq!(outcome.result.unwrap().review_issues,vec![ManualReviewIssue::TenseChanged]);assert_eq!(outcome.trace.calls,2);assert!(outcome.trace.review.unwrap().accepted());task.await.unwrap();
+}
+
+#[tokio::test]
+async fn reviewer_accept_cannot_hide_fragment_or_object_bound_tense_changes() {
+    for (first,second,changed) in [
+        ("I","focus on research.","I focused on research."),
+        ("I focus on research.","I focused on testing.","I focused on research. I focus on testing."),
+    ] {
+        let (config,mode,mut source,mut context)=fixture();
+        source.items[0].text=first.into();source.items[1].text=second.into();context.corrections.clear();
+        let (endpoint,task)=server(vec![draft(changed),verdict(true)],Duration::ZERO).await;
+        let outcome=run(shared_client().unwrap(),&config,"synthetic",&mode,&source,&DictionarySnapshot::default(),&context,CancellationToken::new(),&endpoint,Duration::from_secs(2)).await;
+        task.await.unwrap();
+        assert_eq!(outcome.trace.calls,2);assert!(outcome.trace.review.unwrap().accepted());
+        assert_eq!(outcome.result.unwrap().review_issues,vec![ManualReviewIssue::TenseChanged],"source: {first} / {second}");
+    }
 }
 
 #[tokio::test]

@@ -1,0 +1,67 @@
+{
+  "scope": "Four candidate-only text paths: two sources each with separately selected paragraphs/bullets rules. Spoken recipient request remains content. No automatic instruction inference.",
+  "cases": [
+    {
+      "id": "constraints-paragraphs",
+      "baseMode": "light",
+      "rules": "按口述顺序整理为连贯的自然段，在真实话题变化处换段；同一件事的说明与条件放在一起，不按识别断句逐句分段，不添加标题或总结。",
+      "sourceItems": [
+        "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds."
+      ],
+      "category": "explicit-format-instruction-versus-dictated-content",
+      "confirmedContext": {
+        "sourceRevisionId": "source-constraints-paragraphs",
+        "language": "english",
+        "corrections": []
+      }
+    },
+    {
+      "id": "constraints-bullets",
+      "baseMode": "structure",
+      "rules": "将彼此独立的约束或步骤逐条列出，用编号或项目符号并实际换行；同一主题的补充、条件与否定跟随对应要点，不拆成无条件要求，不把连续叙述强行拆点，不添加总结。",
+      "sourceItems": [
+        "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds."
+      ],
+      "category": "explicit-format-instruction-versus-dictated-content",
+      "confirmedContext": {
+        "sourceRevisionId": "source-constraints-bullets",
+        "language": "english",
+        "corrections": []
+      }
+    },
+    {
+      "id": "recipient-request-paragraphs",
+      "baseMode": "light",
+      "rules": "按口述顺序整理为连贯的自然段，在真实话题变化处换段；同一件事的说明与条件放在一起，不按识别断句逐句分段，不添加标题或总结。",
+      "sourceItems": [
+        "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds. Please list the remaining risks for me."
+      ],
+      "category": "explicit-format-instruction-versus-dictated-content",
+      "confirmedContext": {
+        "sourceRevisionId": "source-recipient-request-paragraphs",
+        "language": "english",
+        "corrections": []
+      }
+    },
+    {
+      "id": "recipient-request-bullets",
+      "baseMode": "structure",
+      "rules": "将彼此独立的约束或步骤逐条列出，用编号或项目符号并实际换行；同一主题的补充、条件与否定跟随对应要点，不拆成无条件要求，不把连续叙述强行拆点，不添加总结。",
+      "sourceItems": [
+        "Keep the field `RetryID` unchanged. If a request takes more than two seconds, record one warning. Independently, keep the polling interval at 250 milliseconds. Please list the remaining risks for me."
+      ],
+      "category": "explicit-format-instruction-versus-dictated-content",
+      "confirmedContext": {
+        "sourceRevisionId": "source-recipient-request-bullets",
+        "language": "english",
+        "corrections": []
+      }
+    }
+  ],
+  "expectations": [
+    "Same source under different explicit formatRules: stable facts with appropriate layout.",
+    "Two-second warning condition and unconditional 250ms poll remain independent.",
+    "Recipient request is retained whenever present in the source, even when bullet layout is also selected.",
+    "Formatting controls are not copied into output or invented as spoken requests."
+  ]
+}
