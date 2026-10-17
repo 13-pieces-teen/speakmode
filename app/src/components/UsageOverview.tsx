@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useUsageOverview, type UsagePeriod } from '../hooks/useUsageOverview';
+import { UsagePeriodSwitch } from './UsagePeriodSwitch';
 import './UsageOverview.css';
 
 const usageNumber = new Intl.NumberFormat('zh-CN');
@@ -14,16 +15,13 @@ export function UsageOverview() {
     <div className="usage-period">
       <h2>{title}</h2>
       <p>{period === 'today' ? `${dateLabel} · 本机日期` : '此设备已完成的全部口述'}</p>
-      <div className="usage-range" role="group" aria-label="统计范围">
-        <button type="button" aria-pressed={period === 'today'} onClick={() => setPeriod('today')}>今日</button>
-        <button type="button" aria-pressed={period === 'total'} onClick={() => setPeriod('total')}>累计</button>
-      </div>
     </div>
     <dl className="usage-metrics">
       <div className="usage-metric"><dt>口述次数</dt><dd><strong>{usage.value ? usageNumber.format(usage.value.count) : '—'}</strong><span>次</span></dd></div>
       <div className="usage-metric"><dt>口述字数</dt><dd><strong>{usage.value ? usageNumber.format(usage.value.sourceCharCount) : '—'}</strong><span>字</span></dd></div>
       <div className="usage-metric"><dt>口述时长</dt><dd><strong>{seconds === null ? '—' : usageNumber.format(Math.floor(seconds / 60))}</strong><span>分</span><strong>{seconds === null ? '—' : seconds % 60}</strong><span>秒</span></dd></div>
     </dl>
+    <UsagePeriodSwitch value={period} onChange={setPeriod} />
     <div className="usage-read-status" role="status">
       {!usage.available ? '在桌面应用中读取已保存的用量。' : usage.failed ? <>
         <span>{usage.value ? '更新失败，显示上次读取的用量。' : '用量暂时未读到。'}</span>

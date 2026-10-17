@@ -1,0 +1,9 @@
+/* Lucian UX/UI Prompt #288 · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/#288 */
+/* Port the disclosure into the actual dictation; retain its existing preview bound. */
+.u288 .u288-dt { position: relative; overflow: hidden; transition: height .65s cubic-bezier(.3,.8,.25,1); }
+.u288 .u288-mr { display: flex; align-items: center; justify-content: center; gap: 6px; width: calc(100% - 28px); height: 42px; margin: 6px 14px 0; border: 0; border-radius: 12px; background: var(--ux-surface); box-shadow: inset 0 0 0 1.5px var(--ux-ink); color: var(--ux-ink); font: inherit; font-size: 12px; font-weight: 850; cursor: pointer; position: relative; z-index: 1; }
+.u288 .u288-mr:focus-visible { outline: 2px solid var(--ux-accent); outline-offset: 2px; }
+.u288 .u288-mr svg { width: 12px; height: 12px; transition: transform .35s; }
+.u288.is-open .u288-mr svg { transform: rotate(180deg); }
+.u288[data-motion='instant'] .u288-dt, .u288[data-motion='instant'] .u288-mr svg { transition: none; }
+@media (prefers-reduced-motion: reduce) { .u288 .u288-dt, .u288 .u288-mr svg { transition: none; } }

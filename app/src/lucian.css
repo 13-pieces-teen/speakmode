@@ -1,0 +1,32 @@
+/* Lucian UX/UI Prompt theme tokens · MIT License (c) 2026 Seokwoooo · https://lucianlabs.dev/uxui-prompt/ */
+/* Shared base, mapped to SpeakMode's existing theme instead of adding a theme. */
+.ux, .ux *, .ux *::before, .ux *::after { box-sizing: border-box; }
+.ux {
+  --ux-page: var(--sm-workspace);
+  --ux-surface: var(--sm-paper);
+  --ux-surface-2: var(--sm-canvas);
+  --ux-surface-3: var(--sm-hover);
+  --ux-ink: var(--sm-ink);
+  --ux-ink-2: var(--sm-secondary);
+  --ux-ink-3: var(--sm-muted);
+  --ux-line: var(--sm-line);
+  --ux-line-2: var(--sm-control-line);
+  --ux-accent: var(--sm-accent);
+  --ux-accent-soft: var(--sm-accent-wash);
+  --ux-accent-ink: var(--sm-paper);
+  --ux-shadow-strong: color-mix(in srgb, var(--sm-ink) 18%, transparent);
+  --ux-ease: cubic-bezier(.2,.8,.2,1);
+  --ux-spring: cubic-bezier(.34,1.45,.64,1);
+  font-family: var(--sm-font-sans);
+  color: var(--ux-ink);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overflow-wrap: break-word;
+}
+:where(.ux) :is(button, input, textarea, select) { font-family: inherit; }
+:where(.ux) button { cursor: pointer; }
+.ux :focus-visible { outline: 2px solid var(--ux-accent); outline-offset: 3px; }
+.ux [hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .ux, .ux *, .ux *::before, .ux *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
