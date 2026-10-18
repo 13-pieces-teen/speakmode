@@ -1,4 +1,5 @@
 use super::types::*;
+use super::OnboardingProgress;
 use super::{CommitGuard,commit_guard::CommitKind};
 use std::sync::{Arc,Mutex};
 use std::ops::Deref;
@@ -109,6 +110,13 @@ CREATE TABLE dictionary_entries (id TEXT PRIMARY KEY, normalized_term TEXT NOT N
 PRAGMA user_version=2;
 "#;
 
+const MIGRATION_V3: &str = r#"
+CREATE TABLE onboarding (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL CHECK(version>0), data TEXT NOT NULL);
+PRAGMA user_version=3;
+"#;
+
+include!("onboarding_store.rs");
+
 #[derive(Clone)]
 struct MemorySession {
     record: SessionRecord,
@@ -134,7 +142,7 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 2 { return Err(invalid("database schema is newer than this application")); }
+        if version > 3 { return Err(invalid("database schema is newer than this application")); }
         if version == 0 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V1)?;
@@ -145,6 +153,12 @@ impl Store {
         if version < 2 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V2)?;
+            tx.commit()?;
+        }
+        if version < 3 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V3)?;
+            tx.execute("INSERT INTO onboarding(singleton,version,data) VALUES(1,1,?1)", [json(&OnboardingProgress::new_install(version == 0))?])?;
             tx.commit()?;
         }
         Ok(Self { connection, memory_sessions: HashMap::new(), latest_memory_ready: None,commit_guard:None,health })

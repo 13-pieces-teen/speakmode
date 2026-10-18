@@ -781,7 +781,7 @@ async fn model_upgrade_bootstrap_snapshot_persists_and_preserves_manual_revert_o
     assert_eq!(version, reverted.version);
     assert_eq!(serde_json::from_str::<ProviderConfig>(&data).unwrap(), reverted);
     assert_eq!(count(&connection, "app_upgrades"), 1);
-    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 2);
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 3);
 }
 
 #[tokio::test]

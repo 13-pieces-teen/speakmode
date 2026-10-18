@@ -84,6 +84,8 @@ fn recording_limit_remaining(duration_ms:u64)->Option<u64>{
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
 pub struct LiveSession {
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub onboarding_lesson:Option<OnboardingLesson>,
     pub id:String,pub session_id:String,pub generation:u64,pub state:SessionPhase,
     pub mode_snapshot:ModeSnapshot,pub level:f32,pub partial:String,pub error:Option<String>,
     pub delivery_state:Option<DeliveryState>,pub delivery_failure_reason:Option<String>,pub recoverable_content_id:Option<String>,
@@ -104,6 +106,7 @@ pub struct LiveSession {
 #[derive(Clone)]
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
 pub(crate) struct ActiveSession {
+    onboarding_lesson:Option<OnboardingLesson>,
     diagnostic_trace:Option<TraceHandle>,caption_render_token:Option<String>,
     pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,dictionary:DictionarySnapshot,
     started_at:String,ended_at:Option<String>,capture_duration_ms:u64,
@@ -160,7 +163,7 @@ impl ActiveSession {
         let can_retry_save=released&&problem&&self.pending.is_some();
         let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())&&self.cache_created.is_some_and(|t|t.elapsed()<AUDIO_CACHE_RETENTION);
         let can_retry_rewrite=released&&problem&&self.source.is_some()&&self.pending.is_none();
-        LiveSession{writing_language:self.prefs.app_writing.output_language,input_context_status:self.input_context_status,writing_scene:self.writing_scene,rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
+        LiveSession{onboarding_lesson:self.onboarding_lesson,writing_language:self.prefs.app_writing.output_language,input_context_status:self.input_context_status,writing_scene:self.writing_scene,rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
     }
     pub(crate) fn adopt_first_history_result(&mut self,detail:&HistoryDetail) {
         if self.id!=detail.session.seed.id||self.generation!=detail.session.seed.generation||self.source.as_ref().is_none_or(|s|s.id!=detail.source.id){return;}
@@ -286,14 +289,16 @@ impl AppHub {
             if !i.auxiliary_workers.is_empty(){return Err(ApiError::new("processing_busy","session","文字处理任务尚未释放，请稍候"));}
             if !platform::audio::capture_resources_released(){return Err(ApiError::new("capture_busy","session","上一条采音尚未释放，请稍候"));}
             if i.active.as_ref().is_some_and(ActiveSession::busy){return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候"));}
-            let cache=self.db.snapshot();let prefs=cache.preferences;let config=cache.provider_config;let dictionary=cache.dictionary;cloud::endpoints(&config)?;
+            let lesson=self.onboarding_start_lesson(&i)?;
+            let cache=self.db.snapshot();let mut prefs=cache.preferences;
+            if let Some(lesson)=lesson { prefs.delivery_mode=DeliveryMode::Preview;prefs.default_mode_id=lesson.mode_id().into();prefs.app_writing.enabled=false;prefs.app_writing.input_context_enabled=false; }let config=cache.provider_config;let dictionary=cache.dictionary;cloud::endpoints(&config)?;
             if !i.key_configured{return Err(ApiError::new("key_required","configuration","请先在设置中配置云服务 Key"));}
             let mode:ModeSnapshot=cache.modes.into_iter().find(|m|m.id==prefs.default_mode_id).ok_or_else(||ApiError::new("notFound","mode","默认整理方式已删除"))?.into();
             let generation=i.active.as_ref().map(|s|s.generation+1).unwrap_or(1);
             let id=Uuid::new_v4().to_string();
             i.park_retryable_failure()?;
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
@@ -305,7 +310,9 @@ impl AppHub {
         if !self.valid_active(&id,generation){return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));}
         let secret=match credentials::read(&config){Ok(key)=>key,Err(e)=>{self.fail(&id,generation,e.into(),true);return Err(ApiError::new("key_required","credentials","无法读取本应用 Key").for_session(&id,generation));}};
         {let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));};s.worker_released=false;}
-        self.publish_session(); let _=self.native_action("recording",true);
+        self.publish_session();
+        let practice=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some());
+        if !practice { let _=self.native_action("recording",true); }
         let hub=Arc::clone(self);let job_id=id.clone();
         tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secret).await;});
         Ok(json!({"sessionId":id,"generation":generation,"state":"starting"}))
@@ -465,6 +472,7 @@ impl AppHub {
     }
     fn apply_session_mode(&self,p:&Value,mode:ModeSnapshot)->Result<Value> {
         let value={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
+            if s.onboarding_lesson.is_some_and(|lesson|mode.mode_id!=lesson.mode_id()){return Err(ApiError::new("practice_scene_frozen","onboarding","练习使用当前场景，请返回引导切换练习"));}
             if s.cancel.is_cancelled()||!matches!(s.phase,SessionPhase::Starting|SessionPhase::Recording){return Err(ApiError::new("mode_frozen","session","本次整理方式已经固定"));}s.mode=mode;self.diagnostics.mode(s.diagnostic_trace.as_ref(),&s.mode);wire(s.view())?};self.publish_session();Ok(value)
     }
     pub fn select_session_mode(&self,p:&Value)->Result<Value> {
@@ -496,6 +504,7 @@ impl AppHub {
             if matches!(phase,SessionPhase::Starting|SessionPhase::Recording){self.stop_session_at(&p,intent).await.map_err(|e|e.for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()))?;return Ok(());}
             if busy{return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候").for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()));}
         }
+        if self.onboarding_shortcut_check()? { return Ok(()); }
         self.start_session_at(intent,Origin::HotkeyHook).await.map(|_|())
     }
     pub async fn interrupt_session(self:&Arc<Self>,reason:&str)->Result<()> {
@@ -1063,3 +1072,4 @@ fn send_bounded(tx:&mpsc::Sender<AsrInput>,mut input:AsrInput,cancel:&Cancellati
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+include!("onboarding.rs");
