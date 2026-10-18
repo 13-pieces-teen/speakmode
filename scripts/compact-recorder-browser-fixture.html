@@ -33,7 +33,7 @@ window.addEventListener('message',event=>{
  if(p.type==='resizeAck'){inFlight--;pending.get(p.id)?.(null);pending.delete(p.id);report();}
  if(p.type==='modeDelay'){modeDelay=p.value;}
  if(p.type==='caption'){session.captions=[{id:'caption',text:'这是隔离夹具的实时字幕。停顿时录音继续，展开阅读后再切换场合。'.repeat(5),revision:1,final:true,captureOrder:0}];emit();}
- if(p.type==='manyModes'){modes.push(...Array.from({length:18},(_,i)=>({id:'personal-'+i,name:'个人场合 '+(i+1),baseMode:'auto',rules:'fixture',revision:1,builtin:false})));channel?.onmessage({sequence:++snapshot.sequence,kind:'changed',payload:null});}
+ if(p.type==='manyModes'){modes.push(...Array.from({length:18},(_,i)=>({id:'personal-'+i,name:i===0?'研究项目会议记录与跨团队同步专用场合':'个人场合 '+(i+1),baseMode:'auto',rules:'fixture',revision:1,builtin:false})));channel?.onmessage({sequence:++snapshot.sequence,kind:'changed',payload:null});}
  if(p.type==='error'){session.error='合成连接提示：请检查服务地域与网络。';session.recordingLimitRemainingMs=9000;emit();}
  if(p.type==='tray'){channel?.onmessage({sequence:++snapshot.sequence,kind:'recorder.openMode',payload:{sessionId:session.id,generation:7}});}
  if(p.type==='reset'){location.reload();}
