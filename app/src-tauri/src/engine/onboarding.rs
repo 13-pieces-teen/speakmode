@@ -93,6 +93,11 @@ impl AppHub {
                     || detail.output.as_ref().is_none_or(|output|output.blocks.iter().all(|block|block.text.trim().is_empty())) {
                     return Err(ApiError::new("practice_required", "onboarding", "请先完成口述并取得可查看的结果"));
                 }
+                let output=detail.output.as_ref().unwrap();
+                if (output.rewrite_fallback.is_some() || output.kind==RevisionKind::UseSource)
+                    && payload.get("acceptedFallbackRevisionId").and_then(Value::as_str)!=Some(output.id.as_str()) {
+                    return Err(ApiError::new("source_confirmation_required","onboarding","整理尚未完成，请重试整理，或核对并确认当前识别原文后继续"));
+                }
                 if !next.completed_lessons.contains(&lesson) { next.completed_lessons.push(lesson); }
             }
             "onboarding.dismiss" => next.auto_show = false,

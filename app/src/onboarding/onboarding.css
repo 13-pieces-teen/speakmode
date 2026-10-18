@@ -20,3 +20,7 @@
 .ob-window .window-brand{background:transparent}.onboarding-loading{height:100dvh;display:grid;grid-template-rows:52px 1fr;background:#fff}.onboarding-loading>p{align-self:center;text-align:center;color:#607389;font-size:14px}
 
 .ob-transition-instant>.ob-progress>div{transition:none}.ob-setup-scroll .settings-section-heading{padding:0;margin:0 0 12px}.ob-setup-scroll .setting-row-copy h3{font-size:12px}.ob-setup-scroll .setting-row-copy p{font-size:11px;line-height:1.8}.ob-setup-scroll .setting-row-control{width:100%}
+
+.ob-retry-rewrite{border:1px solid #c9d9ef;border-radius:9px;padding:8px 12px;background:#edf4ff;color:#275ca6;font:inherit;font-size:13px;cursor:pointer}.ob-retry-rewrite:disabled{opacity:.6;cursor:wait}.ob-retry-rewrite:focus-visible{outline:2px solid #326ed2;outline-offset:3px}
+/* A multi-paragraph draft must scroll inside its box, never cover the status or controls. */
+.ob-result-label{flex:none}.ob-result-text,.ob-live-text{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}

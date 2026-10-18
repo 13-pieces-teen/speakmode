@@ -479,6 +479,16 @@ impl AppHub {
         let mode=db_mode(self.db_blocking(DbCommand::ModeSnapshot{id:text(p,"modeId")?.into(),revision:p.get("revision").and_then(Value::as_u64)},None,DbPriority::Normal)?)?;self.apply_session_mode(p,mode)
     }
     pub async fn select_session_mode_async(&self,p:&Value)->Result<Value> {
+        let id=text(p,"modeId")?;
+        let revision=p.get("revision").and_then(Value::as_u64);
+        // The published catalog already contains complete immutable snapshots.
+        // A current choice need not queue behind transcript/history SQLite work.
+        // Older personal revisions retain the established storage lookup path.
+        if !self.db.owner_released()&&!self.quitting.load(Ordering::SeqCst) {
+            if let Some(mode)=self.db.snapshot().modes.into_iter().find(|m|m.id==id&&revision.is_none_or(|r|r==m.revision)) {
+                return self.apply_session_mode(p,mode.into());
+            }
+        }
         let mode=db_mode(self.db_read(DbCommand::ModeSnapshot{id:text(p,"modeId")?.into(),revision:p.get("revision").and_then(Value::as_u64)}).await?)?;self.apply_session_mode(p,mode)
     }
     pub fn shutdown(&self)->Result<()> {
@@ -708,7 +718,10 @@ impl AppHub {
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
         let policy={let i=self.inner.lock().unwrap();let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
-            policy.into().unwrap_or_else(||RewriteWaitPolicy::for_source(s.reason,s.source.as_ref().expect("checkpoint before rewrite")))};
+            // A practice is a preview with no host insertion. Let generation and
+            // full review use the normal 20s ceiling instead of the 5s quick paste budget.
+            policy.into().unwrap_or_else(||if s.onboarding_lesson.is_some(){RewriteWaitPolicy::default()}
+                else{RewriteWaitPolicy::for_source(s.reason,s.source.as_ref().expect("checkpoint before rewrite"))})};
         let rewrite_deadline=tokio::time::Instant::now()+policy.deadline;
         // ASR finalization overlaps stop-time capture. Give it a bounded grace
         // inside the existing total rewrite deadline, never an extra budget.

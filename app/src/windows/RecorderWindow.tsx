@@ -38,7 +38,7 @@ export function RecorderWindow(){
  const canCopyRecovery=problem&&session?.canCopyRecovery===true;
  const canCopyReady=phase==='ready'&&session?.workerReleased===true&&(delivery?.canCopyOutput||!delivery);
  const menuOpen=menu&&canStop;
- const {error:resizeError,menuReady}=useRecorderSize(assembly,menuElement,menuOpen,desktop.available,desktop.command);
+ const {error:resizeError,menuReady}=useRecorderSize(assembly,menuElement,menuOpen,desktop.available,desktop.command,identity);
  const presentationError=error||session?.error||desktop.error||resizeError;
  const current=fromModeId(session?.modeSnapshot?.modeId??session?.modeId??'auto');
  const currentLabel=session?.modeSnapshot?.name??catalog.label(current);
@@ -50,7 +50,8 @@ export function RecorderWindow(){
   void desktop.command('session.captionRendered',{sessionId:session?.sessionId??session?.id,expectedGeneration:session?.generation,asrAttemptId,token}).catch(()=>{});
  },[desktop.command,session?.sessionId,session?.id,session?.generation]);
  const scenePhase=session?.writingScene==='chat'?'聊天整理':session?.writingScene==='document'?'文档整理':session?.writingScene==='email'?'邮件整理':session?.writingScene==='technical'?'技术整理':'正在整理';
- const phaseLabel:Record<string,string>={idle:'等待开始',starting:'正在启动',recording:'正在录音',finalizingasr:'正在收齐文字',finalizing_asr:'正在收齐文字',rewriting:scenePhase,ready:delivery?.warning?'未自动输入':delivery?.title??'成稿已就绪',failed:'暂时无法继续',incomplete:'识别未完整',cancelled:'已取消',delivering:'正在交付'};
+ const phaseLabel:Record<string,string>={idle:'等待开始',starting:'正在启动',recording:'正在录音',finalizingasr:'正在收齐文字',finalizing_asr:'正在收齐文字',rewriting:scenePhase,ready:session?.rewriteFallback?'识别原文已保留':delivery?.warning?'未自动输入':delivery?.title??'成稿已就绪',failed:'暂时无法继续',incomplete:'识别未完整',cancelled:'已取消',delivering:'正在交付'};
+ const hasDetails=!!session?.captions?.length||!!session?.partial?.trim()||!!presentationError||!!delivery||canCopyReady||canCopyRecovery||session?.recordingLimitRemainingMs!=null||activeWriting&&session?.inputContextStatus==='available';
  useEffect(()=>{document.documentElement.dataset.surface='recorder';return()=>{delete document.documentElement.dataset.surface;};},[]);
  useEffect(()=>{setMenu(false);setOpenedFromTray(false);setLocalError(null);setBusyIdentity(null);setCopiedIdentity(null);},[identity]);
  useEffect(()=>{if(!canStop)setMenu(false);},[canStop]);
@@ -74,18 +75,26 @@ export function RecorderWindow(){
   const ok=await act(recovery?'recoverable.copy':'result.copy',recovery?{recoverableContentId:session?.recoverableContentId}:{});
   if(ok&&identityRef.current===owner)setCopiedIdentity(owner);
  }
+ function selectMode(modeId:string,revision:number){
+  // Acknowledge the choice immediately. Native confirmation remains authoritative
+  // for the label; a delayed database/IPC receipt must not leave the menu frozen.
+  setMenu(false);
+  void act('session.selectMode',{modeId,revision});
+ }
  const options=scenarioOptions(current,catalog.modes).map(option=>({...option,revision:desktop.modes.find(mode=>mode.id===toModeId(option.id))?.revision??option.revision}));
- return <main className="recorder-surface"><section ref={assembly} className="recorder-assembly" data-mode-open={menuOpen} aria-label="录音浮层">
+ return <main className="recorder-surface"><section ref={assembly} className="recorder-assembly" data-mode-open={menuOpen} data-details={hasDetails} aria-label="录音浮层">
   {!desktop.available&&<p className="recorder-environment" role="status">请在桌面应用中打开，浏览器不会录音或生成字幕。</p>}
   <div className="recorder-toolbar" role="group" aria-label="口述控制">
+   <button className="recorder-action" aria-label={dismissResult?"关闭成稿提示":problem?"放弃本次恢复":"取消本次口述"} title={dismissResult?"关闭提示，成稿仍保留":problem?"放弃本次未完成的文字与音频缓存":"取消本次口述"} disabled={!desktop.available||(!canCancel&&!dismissResult)||busy} onClick={()=>void act('session.cancel')}><Cross2Icon/></button>
    <Popover.Root open={menuOpen} onOpenChange={open=>{setOpenedFromTray(false);setMenu(open);}}>
     <Popover.Trigger>
      <button className="recorder-mode-trigger" data-motion={menuMotion} disabled={!desktop.available||!canStop||busy} aria-label={`本次场合：${contextLabel}`} title={contextLabel}
       onPointerDown={()=>setMenuMotion('pointer')} onKeyDown={()=>setMenuMotion('instant')}>
-      <ModeIcon mode={current}/><span>{contextLabel}</span><ChevronDownIcon/>
+      <span className="sr-only">{contextLabel}，点击切换场合</span>
+      <span className="recorder-level" aria-label={phaseLabel[phase]??phase}>{recording?<RecorderWaveform key={identity} level={session?.level??0} receivedAt={session?.levelReceivedAt}/>:<span className="recorder-phase" role="status">{phaseLabel[phase]??phase}</span>}</span><ChevronDownIcon/>
      </button>
     </Popover.Trigger>
-    <Popover.Content ref={setMenuElement} avoidCollisions={false} side="top" align="start" sideOffset={17}
+    <Popover.Content ref={setMenuElement} avoidCollisions={false} side="top" align="center" sideOffset={10}
      className="recorder-mode-menu" data-motion={menuMotion} aria-label="选择本次场合"
      onFocusCapture={event=>{const target=event.target;if(target instanceof HTMLButtonElement&&target.classList.contains('recorder-mode-option'))focusedChoice.current=target;}}
      onOpenAutoFocus={event=>event.preventDefault()}>
@@ -101,14 +110,14 @@ export function RecorderWindow(){
      }}>
       {options.map(option=><button key={option.id} type="button" className="recorder-mode-option"
        aria-pressed={option.id===current} title={`${option.name} · ${option.caption}`} disabled={busy}
-       onClick={()=>void act('session.selectMode',{modeId:toModeId(option.id),revision:option.revision})}>
+       onClick={()=>selectMode(toModeId(option.id),option.revision)}>
        <ModeIcon mode={option.id}/><span>{option.name}</span>{option.id===current&&<CheckIcon/>}
       </button>)}
      </div>
     </Popover.Content>
    </Popover.Root>
-   <span className="recorder-divider"/><div className="recorder-level" aria-label={phaseLabel[phase]??phase}>{recording?<><RecorderWaveform key={identity} level={session?.level??0} receivedAt={session?.levelReceivedAt}/><span className="sr-only">正在录音。波形表示麦克风音量，静音不会自动结束。</span></>:<span className="recorder-phase" role="status">{phaseLabel[phase]??phase}</span>}</div>
-   <button className="recorder-action" aria-label={dismissResult?"关闭成稿提示":problem?"放弃本次恢复":"取消本次口述"} title={dismissResult?"关闭提示，成稿仍保留":problem?"放弃本次未完成的文字与音频缓存":"取消本次口述"} disabled={!desktop.available||(!canCancel&&!dismissResult)||busy} onClick={()=>void act('session.cancel')}><Cross2Icon/></button><button className="recorder-action recorder-finish" aria-label="结束本次口述" disabled={!desktop.available||!canStop||busy} onClick={()=>void act('session.stop')}><CheckIcon/></button>
+   {recording&&<span className="sr-only">正在录音。波形表示麦克风音量，静音不会自动结束。</span>}
+   <button className="recorder-action recorder-finish" aria-label="结束本次口述" disabled={!desktop.available||!canStop||busy} onClick={()=>void act('session.stop')}><CheckIcon/></button>
   </div>
   {!session?.rewriteFallback&&['recording','finalizingasr','finalizing_asr','rewriting'].includes(phase)&&session?.inputContextStatus==='available'&&<p className="recorder-context-note" role="status">已获取当前输入框上下文</p>}
   <CaptionStrip key={identity} identity={identity} session={session} reportRender={reportCaptionRender}/>

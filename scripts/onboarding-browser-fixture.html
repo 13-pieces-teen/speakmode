@@ -1,11 +1,12 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SpeakMode onboarding · synthetic IPC fixture</title></head><body><div id="root"></div>
-<details style="position:fixed;bottom:5px;left:240px;z-index:10000;background:#fff7df;border:1px solid #e8d199;border-radius:5px;padding:3px 8px;font:11px sans-serif;color:#674b14"><summary>QA · 合成 IPC 夹具 · 勿输入真实 Key</summary><button id="qa-shortcut">模拟原生快捷键信号</button><button id="qa-start-failure">下次录音启动失败</button><button id="qa-asr-failure">下次识别失败</button><button id="qa-fallback">下次使用原文回退</button><button id="qa-no-device">切换无麦克风</button><button id="qa-no-key">切换无 Key</button><button id="qa-reset">重置夹具</button><button id="qa-legacy">已有用户夹具</button></details>
+<details style="position:fixed;bottom:5px;left:240px;z-index:10000;background:#fff7df;border:1px solid #e8d199;border-radius:5px;padding:3px 8px;font:11px sans-serif;color:#674b14"><summary>QA · 合成 IPC 夹具 · 勿输入真实 Key</summary><button id="qa-shortcut">模拟原生快捷键信号</button><button id="qa-start-failure">下次录音启动失败</button><button id="qa-asr-failure">下次识别失败</button><button id="qa-fallback">下次使用原文回退</button><button id="qa-review-failure">下次整理复核失败</button><button id="qa-no-device">切换无麦克风</button><button id="qa-no-key">切换无 Key</button><button id="qa-reset">重置夹具</button><button id="qa-legacy">已有用户夹具</button><button id="qa-ledger">查看合成命令摘要</button><pre id="qa-ledger-output" style="max-height:160px;overflow:auto;max-width:700px"></pre></details>
 <script type="module">
 const copy=x=>structuredClone(x), key='speakmode-onboarding-owned-fixture-v1';
 const modes=[['auto','自动'],['chat','聊天消息'],['document','文档写作'],['email','邮件沟通'],['technical','技术沟通'],['light','轻整理'],['structure','结构']].map(([id,name])=>({id,name,baseMode:id==='light'?'light':id==='structure'?'structure':'auto',rules:'',revision:1,builtin:true}));
 const initial=()=>({sequence:1,preferences:{version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',softVoiceEnabled:false,appWriting:{enabled:true,inputContextEnabled:false,outputLanguage:'asSpoken',overrides:[]},keepHistory:true,launchAtLogin:false},onboarding:{active:false,shortcutPresses:0,progress:{version:1,autoShow:true,step:'welcome',completedLessons:[],completedAt:null}},modes,dictionary:{version:1,entries:[]},usage:{date:'2026-10-18',count:0,sourceCharCount:0,captureDurationMs:0},provider:{configured:true,credentialConfigured:true,status:'configuredUnverified',config:{version:1,provider:'aliyun',region:'beijing',workspace:null,asrModel:'qwen3-asr-flash-realtime',rewriteModel:'qwen3.8-flash',adapterVersion:'qwen-realtime-v1'},modelCatalog:{asr:[{id:'qwen3-asr-flash-realtime',label:'Qwen3 实时识别',implemented:true,adapterVersion:'qwen-realtime-v1',recognitionLanguages:['zh','en']}],rewrite:[{id:'qwen3.8-flash',label:'Qwen3.8 Flash',implemented:true,jsonSchema:true}]}},session:null,recovery:null,temporaryResult:null,capabilities:{recording:true,history:true,dictionary:true,customModes:true}});
 const q=window.__onboardingQA={snapshot:JSON.parse(localStorage.getItem(key)||'null')||initial(),ledger:[],details:{},channel:null,startFailure:false,asrFailure:false,fallback:false,noDevice:false};
 q.snapshot.session=null;q.snapshot.onboarding.active=false;
+const qaStep=new URLSearchParams(location.search).get('qaStep');if(['chat','document'].includes(qaStep)){q.snapshot=initial();q.snapshot.onboarding.progress.step=qaStep;if(qaStep==='document')q.snapshot.onboarding.progress.completedLessons=['chat'];}
 const devices=()=>q.noDevice?[]:[{id:'fixture-mic',name:'QA 虚拟麦克风',available:true,isDefault:true}];
 const save=()=>localStorage.setItem(key,JSON.stringify(q.snapshot));
 const emit=(kind='changed',payload=null)=>{q.snapshot.sequence++;save();q.channel?.onmessage({sequence:q.snapshot.sequence,kind,payload:copy(payload),sessionId:q.snapshot.session?.sessionId,generation:q.snapshot.session?.generation});};
@@ -36,7 +37,7 @@ window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:
  if(name.startsWith('onboarding.')){
   if(p.expectedVersion!==o.progress.version)throw Error('夹具进度冲突');
   if(name==='onboarding.step')o.progress.step=p.step;
-  if(name==='onboarding.acceptLesson'){if(q.snapshot.session?.state!=='ready')throw Error('请先完成口述');if(!o.progress.completedLessons.includes(q.snapshot.session.onboardingLesson))o.progress.completedLessons.push(q.snapshot.session.onboardingLesson);}
+  if(name==='onboarding.acceptLesson'){const out=q.details[p.sessionId]?.output;if(out?.rewriteFallback&&p.acceptedFallbackRevisionId!==out.id)throw Error('请确认当前原文');if(q.snapshot.session?.state!=='ready')throw Error('请先完成口述');if(!o.progress.completedLessons.includes(q.snapshot.session.onboardingLesson))o.progress.completedLessons.push(q.snapshot.session.onboardingLesson);}
   if(name==='onboarding.dismiss'){o.active=false;o.progress.autoShow=false;}
   if(name==='onboarding.finish'){if(o.progress.completedLessons.length!==2)throw Error('请先完成两次练习');o.active=false;o.progress.autoShow=false;o.progress.completedAt='2026-10-18T14:01:00+08:00';o.progress.step='ready';}
   o.progress.version++;emit();return copy(o);
@@ -56,6 +57,16 @@ window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:
  if(name==='session.cancel'){session({state:'cancelled',workerReleased:true,partial:'',level:0,sourceRevisionId:null,error:null});return null;}
  if(name==='asr.retry'){session({state:'finalizingAsr',workerReleased:false,generation:q.snapshot.session.generation+1,error:null});setTimeout(finish,350);return copy(q.snapshot.session);}
  if(['rewrite.retry','result.retrySave','result.useSource'].includes(name)){finish();return copy(q.snapshot.session);}
+ if(name==='history.rewrite'){
+  const d=q.details[p.sessionId];if(d.source.id!==p.sourceRevisionId||d.output.id!==p.baseRevisionId)throw Error('来源或版本已变化');
+  await new Promise(resolve=>setTimeout(resolve,500));
+  q.candidate={...copy(d.output),id:p.runId,baseRevisionId:p.baseRevisionId,rewriteFallback:null,kind:'adopt',creationReason:'history',reviewIssues:q.reviewFailure?['reviewRejected']:[],blocks:[{...d.output.blocks[0],text:'项目进展（重试夹具）\n\n登录页已完成。支付联调预计周五结束。\n\n回归测试通过后再上线。'}]};q.reviewFailure=false;return copy(q.candidate);
+ }
+ if(name==='revision.adopt'){
+  const d=q.details[p.sessionId];if(d.output.id!==p.expectedCurrentRevisionId||q.candidate?.id!==p.candidateId)throw Error('候选版本已变化');
+  d.output=copy(q.candidate);d.session.currentOutputId=d.output.id;q.candidate=null;session({rewriteFallback:null});return copy(d);
+ }
+ if(name==='history.cancelCandidate'){q.candidate=null;return null;}
  if(name==='shortcut.capture.begin')return {captureId:p.captureId};
  if(name==='shortcut.capture.cancel')return null;
  if(name==='result.copy')return fail('夹具不接触系统剪贴板');
@@ -65,8 +76,10 @@ document.getElementById('qa-shortcut').onclick=()=>{q.snapshot.onboarding.shortc
 document.getElementById('qa-start-failure').onclick=()=>q.startFailure=true;
 document.getElementById('qa-asr-failure').onclick=()=>q.asrFailure=true;
 document.getElementById('qa-fallback').onclick=()=>q.fallback=true;
+document.getElementById('qa-review-failure').onclick=()=>q.reviewFailure=true;
 document.getElementById('qa-no-device').onclick=()=>{q.noDevice=!q.noDevice;emit();};
 document.getElementById('qa-no-key').onclick=()=>{q.snapshot.provider.configured=!q.snapshot.provider.configured;q.snapshot.provider.credentialConfigured=q.snapshot.provider.configured;emit();};
+document.getElementById('qa-ledger').onclick=()=>{const d=q.details[q.snapshot.session?.sessionId];document.getElementById('qa-ledger-output').textContent=JSON.stringify({commands:q.ledger.map(({name,payload})=>({name,sessionId:payload.sessionId,sourceRevisionId:payload.sourceRevisionId,baseRevisionId:payload.baseRevisionId,candidateId:payload.candidateId,acceptedFallbackRevisionId:payload.acceptedFallbackRevisionId})),source:d?.source,output:d?.output},null,2);};
 document.getElementById('qa-reset').onclick=()=>{localStorage.removeItem(key);location.reload();};
 document.getElementById('qa-legacy').onclick=()=>{const snap=initial();snap.onboarding.progress.autoShow=false;localStorage.setItem(key,JSON.stringify(snap));location.reload();};
 await import('/src/main.tsx');

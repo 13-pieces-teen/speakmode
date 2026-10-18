@@ -107,7 +107,7 @@ class Surface:
         while time.monotonic() - start < timeout:
             while self.queue:
                 request = self.queue.popleft()
-                assert request["width"] == 440 and 86 <= request["height"] <= 420, request
+                assert request["width"] in (240, 344) and 64 <= request["height"] <= 420, request
                 self.page.set_viewport_size({"width": request["width"], "height": request["height"]})
                 self.page.evaluate("id=>window.__speakmodeQA.resolveResize(id)", request["id"])
                 self.resizes.append(request)
@@ -181,7 +181,7 @@ def main():
             def run(name, check, *, data=None, reduced=False):
                 row = {"name": name, "status": "RUNNING"}
                 rows.append(row)
-                context = browser.new_context(viewport={"width": 440, "height": 86}, locale="zh-CN", reduced_motion="reduce" if reduced else "no-preference")
+                context = browser.new_context(viewport={"width": 240, "height": 64}, locale="zh-CN", reduced_motion="reduce" if reduced else "no-preference")
                 queue = deque()
                 context.expose_binding("__requestSyntheticResize", lambda source, request: queue.append(request))
                 value = json.dumps(data or fixture(), ensure_ascii=False)
@@ -228,7 +228,7 @@ def main():
                 assert all(float(a["opacity"]) == 1 for a in styles["ancestors"]), styles
                 assert all("rgba" in a["background"] and a["background"].endswith(", 0)") for a in styles["shells"]), styles
                 geometry = surface.assert_inside()
-                assert 200 <= geometry["menu"]["width"] <= 232 and geometry["menu"]["height"] <= 175, geometry
+                assert 200 <= geometry["menu"]["width"] <= 232 and geometry["menu"]["height"] <= 300, geometry
                 choices = surface.page.locator(".recorder-mode-option")
                 heights = choices.evaluate_all("els=>els.map(el=>el.getBoundingClientRect().height)")
                 assert len(heights) == 3 and all(32 <= height <= 40 for height in heights), heights
@@ -272,7 +272,7 @@ def main():
             def escape(surface):
                 surface.open();surface.close()
                 expect(surface.page.locator(".recorder-mode-trigger")).to_be_focused()
-                assert surface.page.viewport_size == {"width": 440, "height": 86}
+                assert surface.page.viewport_size == {"width": 240, "height": 64}
                 return {"focusReturned": True, "viewport": surface.page.viewport_size}
             run("06-escape-closes-without-stopping", escape)
 

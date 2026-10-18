@@ -300,7 +300,7 @@ fn on_ui<T:Send+'static>(app: &AppHandle, state: &DesktopState, work: impl FnOnc
 struct Rect { x: i32, y: i32, width: u32, height: u32 }
 fn recorder_rect(width: f64, height: f64, scale: f64, area: Rect) -> Result<Rect> {
     if !width.is_finite() || !height.is_finite() || !scale.is_finite() || scale <= 0.0 ||
-        !(320.0..=640.0).contains(&width) || !(80.0..=420.0).contains(&height) || area.width == 0 || area.height == 0 {
+        !(240.0..=640.0).contains(&width) || !(64.0..=420.0).contains(&height) || area.width == 0 || area.height == 0 {
         return Err(native_error("invalid_geometry", "浮层尺寸或显示器信息无效"));
     }
     let w = ((width * scale).round() as u32).min(area.width).max(1);
@@ -386,7 +386,7 @@ mod win {
         let mut recorder = state.recorder.lock().map_err(|_| window_error("lock"))?;
         // Hiding may be part of dispatch, so it MUST NOT restore a former target.
         close_menu(handle, &mut recorder, false)?;
-        if show { place(window, 440.0, 86.0, true)?; }
+        if show { place(window, 240.0, 64.0, true)?; }
         // All recorder visibility/style/size changes are Win32-only after creation.
         // Mixing Tauri/Tao .show()/set_focusable() here would reapply Tao's cached
         // VISIBLE flags and may reactivate or hide a native-shown overlay.
@@ -413,7 +413,7 @@ mod win {
             // A stale intent may never leave the native surface activated just
             // because the frontend rejected it before opening its DOM menu.
             close_menu(handle, &mut recorder, true)?;
-            if recorder.visible { place(window, 440.0, 86.0, false)?; }
+            if recorder.visible { place(window, 240.0, 64.0, false)?; }
         }
         Ok(())
     }
@@ -970,6 +970,16 @@ mod tests {
     }
     #[test] fn work_area_excludes_taskbar() {
         assert_eq!(recorder_rect(440.0, 86.0, 1.0, Rect{x:0,y:0,width:1920,height:1040}).unwrap(), Rect{x:740,y:942,width:440,height:86});
+    }
+    #[test] fn compact_recorder_and_details_share_a_dpi_safe_bottom_anchor() {
+        for scale in [1.0,1.25,1.5,2.0] {
+            let area=Rect{x:-1920,y:-100,width:1920,height:1080};
+            let small=recorder_rect(240.0,64.0,scale,area).unwrap();
+            let details=recorder_rect(344.0,360.0,scale,area).unwrap();
+            assert_eq!(small.y+small.height as i32,details.y+details.height as i32);
+            assert!(small.x>=area.x&&details.x>=area.x);
+        }
+        assert!(recorder_rect(239.0,64.0,1.0,Rect{x:0,y:0,width:1920,height:1080}).is_err());
     }
     #[test] fn mixed_dpi_negative_origin_is_physical() {
         assert_eq!(recorder_rect(440.0, 420.0, 1.5, Rect{x:-1920,y:-100,width:1920,height:1080}).unwrap(), Rect{x:-1290,y:332,width:660,height:630});

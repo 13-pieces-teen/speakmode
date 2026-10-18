@@ -470,9 +470,14 @@ impl AppHub {
             "shortcut.capture.cancel"=>{let hub=Arc::clone(self);tokio::task::spawn_blocking(move||hub.cancel_shortcut_capture(&p)).await.map_err(|_|ApiError::new("native_unavailable","shortcut","快捷键操作未完成"))?},
             "window.resizeRecorder"=>{
                 if window!="recording"{return Err(ApiError::new("forbidden","ipc","此操作仅允许录音窗口"));}
-                let width=p["width"].as_f64().filter(|n|n.is_finite()&&*n>=320.0&&*n<=640.0).ok_or_else(||ApiError::new("invalid_payload","window","浮层宽度无效"))?;
-                let height=p["height"].as_f64().filter(|n|n.is_finite()&&*n>=80.0&&*n<=420.0).ok_or_else(||ApiError::new("invalid_payload","window","浮层高度无效"))?;
-                let control=self.recorder_control.lock().unwrap().clone().ok_or_else(||ApiError::new("desktop_required","window","需要桌面窗口"))?;control(width,height,p["menuOpen"].as_bool().unwrap_or(false))?;Ok(Value::Null)
+                let width=p["width"].as_f64().filter(|n|n.is_finite()&&*n>=240.0&&*n<=640.0).ok_or_else(||ApiError::new("invalid_payload","window","浮层宽度无效"))?;
+                let height=p["height"].as_f64().filter(|n|n.is_finite()&&*n>=64.0&&*n<=420.0).ok_or_else(||ApiError::new("invalid_payload","window","浮层高度无效"))?;
+                let control=self.recorder_control.lock().unwrap().clone().ok_or_else(||ApiError::new("desktop_required","window","需要桌面窗口"))?;
+                let menu=p["menuOpen"].as_bool().unwrap_or(false);
+                // Win32 focus/geometry can wait on the owning UI thread. It must
+                // not occupy a Tokio worker needed for ASR or mode confirmation.
+                tokio::task::spawn_blocking(move||control(width,height,menu)).await
+                    .map_err(|_|ApiError::new("window_unavailable","window","浮层调整未完成"))??;Ok(Value::Null)
             },
             "app.showMain"=>{self.native_action("showMain",true)?;Ok(Value::Null)},
             "app.quit"=>{self.native_action("quit",true)?;Ok(Value::Null)},
