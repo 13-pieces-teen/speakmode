@@ -13,11 +13,12 @@ function draftFrom(config: ProviderConfig): ProviderDraft {
   return { region: config.region, workspace: config.workspace, asrModel: config.asrModel, rewriteModel: config.rewriteModel };
 }
 
-export function ProviderSettings() {
+export function ProviderSettings({onDraftStateChange,compact=false}:{compact?:boolean;onDraftStateChange?:(state:{dirty:boolean;pending:boolean})=>void} = {}) {
   const { available, provider, command, refresh } = useDesktop();
   const [draft, setDraft] = useState(() => draftFrom(provider.config));
   const [draftVersion, setDraftVersion] = useState(provider.config.version);
   const [dirty, setDirty] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const dirtyRef = useRef(false);
   // The secret lives only in this mounted password field and is never read back from native storage.
   const [secret, setSecret] = useState('');
@@ -26,6 +27,8 @@ export function ProviderSettings() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const disabled = !available || pending !== null;
+
+  useEffect(() => { onDraftStateChange?.({dirty:dirty || secret.length > 0,pending:pending !== null}); }, [dirty,secret,pending,onDraftStateChange]);
 
   useEffect(() => {
     if (!dirtyRef.current) {
@@ -117,18 +120,19 @@ export function ProviderSettings() {
   const staleDraft = dirty && provider.config.version !== draftVersion;
 
   return <SettingsSection title="云端服务（BYOK）" icon={<LockClosedIcon />}>
-    <p className="settings-provider-intro">使用你自己的阿里云百炼 API Key。音频发送给语音识别服务，识别文本与 Mode 规则发送给整理模型。本地删除内容不等于删除云端数据。</p>
+    {!compact && <p className="settings-provider-intro">使用你自己的阿里云百炼 API Key。音频发送给语音识别服务，识别文本与 Mode 规则发送给整理模型。本地删除内容不等于删除云端数据。</p>}
     <div className="settings-provider-status" aria-live="polite">
       <span>配置：{configSaved ? '已保存' : '未完成'}</span>
       <span>API Key：{available ? keyStatus : '仅桌面可查询'}</span>
-      <span>已保存的整理模型：{savedRewrite?.label ?? provider.config.rewriteModel}</span>
+      {!compact && <span>已保存的整理模型：{savedRewrite?.label ?? provider.config.rewriteModel}</span>}
       <span>服务连接：尚未验证</span>
     </div>
-    <p className="settings-control-hint">配置与 Key 的保存状态不代表网络或模型已经可用。实际请求仍可能遇到地域、权限、余额或连接错误。</p>
+    <p className="settings-control-hint">{compact ? '先保存账号地域，再保存 API Key。连接将在口述时验证。' : '配置与 Key 的保存状态不代表网络或模型已经可用。实际请求仍可能遇到地域、权限、余额或连接错误。'}</p>
+    {compact && <Button type="button" variant="ghost" size="1" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}>{advanced ? '收起高级配置' : '模型与业务空间 · 高级配置'}</Button>}
     {provider.message && <p className="settings-inline-note">{provider.message}</p>}
 
     <form onSubmit={event => { event.preventDefault(); void saveConfig(); }}>
-      <SettingRow title="整理模型" description="负责口语整理与文字排版。选择型号并保存后，用于下一次口述。" htmlFor="provider-rewrite-model">
+      {(!compact || advanced) && <SettingRow title="整理模型" description="负责口语整理与文字排版。选择型号并保存后，用于下一次口述。" htmlFor="provider-rewrite-model">
         <div className="settings-delivery-control">
           <Select.Root value={draft.rewriteModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('rewriteModel', value)}>
             <Select.Trigger id="provider-rewrite-model" aria-label="整理模型" aria-describedby="provider-rewrite-model-description provider-rewrite-model-id" className="settings-select" variant="surface" />
@@ -141,7 +145,7 @@ export function ProviderSettings() {
             ? `型号：${selectedRewrite.id}${draft.rewriteModel !== provider.config.rewriteModel ? ' · 尚未保存' : ''}`
             : '请选择已接入的整理模型。'}</p>
         </div>
-      </SettingRow>
+      </SettingRow>}
       <SettingRow title="账号地域" description="选择 API Key 所属地域，必须与你的百炼账号配置一致。" htmlFor="provider-region">
         <Select.Root value={draft.region ?? UNSELECTED_REGION} disabled={disabled} onValueChange={value => edit('region', value === UNSELECTED_REGION ? null : value)}>
           <Select.Trigger id="provider-region" aria-label="账号地域" aria-describedby="provider-region-description" className="settings-select" variant="surface" />
@@ -152,11 +156,11 @@ export function ProviderSettings() {
           </Select.Content>
         </Select.Root>
       </SettingRow>
-      <SettingRow title="业务空间" description="可选。使用默认业务空间时留空；否则填写 workspace ID。" htmlFor="provider-workspace">
+      {(!compact || advanced) && <SettingRow title="业务空间" description="可选。使用默认业务空间时留空；否则填写 workspace ID。" htmlFor="provider-workspace">
         <input id="provider-workspace" className="settings-text-input" type="text" value={draft.workspace ?? ''} disabled={disabled}
           onChange={event => edit('workspace', event.target.value)} aria-describedby="provider-workspace-description" placeholder="默认业务空间" autoComplete="off" spellCheck={false} maxLength={80} />
-      </SettingRow>
-      <SettingRow title="语音识别模型" description="更改用于下一次口述，当前录音仍使用开始时的模型。" htmlFor="provider-asr-model">
+      </SettingRow>}
+      {(!compact || advanced) && <SettingRow title="语音识别模型" description="更改用于下一次口述，当前录音仍使用开始时的模型。" htmlFor="provider-asr-model">
         <div className="settings-delivery-control">
         <Select.Root value={draft.asrModel || UNSELECTED_MODEL} disabled={disabled || !catalogReady} onValueChange={value => edit('asrModel', value)}>
           <Select.Trigger id="provider-asr-model" aria-label="语音识别模型" aria-describedby="provider-asr-model-description provider-asr-capability" className="settings-select" variant="surface" />
@@ -171,7 +175,7 @@ export function ProviderSettings() {
             : '使用已有实时识别链路。词典通过旧接口传入，效果因词语与发音而异。'
           : '请选择已接入的实时识别模型。'}</p>
         </div>
-      </SettingRow>
+      </SettingRow>}
       {staleDraft && <p className="settings-inline-note">已保存配置发生变化。当前编辑内容仍保留；请重新载入后再修改，避免覆盖其他更改。</p>}
       <div className="settings-provider-actions">
         <span className="settings-control-hint">{catalogReady ? modelsCompatible ? '模型接口已匹配；保存后仍需实际连接验证。' : '请选择已接入的模型组合。' : available ? '正在读取模型兼容清单。' : '模型清单仅在桌面应用中可用。'}</span>

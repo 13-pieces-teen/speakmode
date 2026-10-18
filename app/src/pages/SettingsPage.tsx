@@ -21,6 +21,7 @@ export interface SettingsPageProps {
   preferences: Preferences;
   onPreferencesChange: (next: Preferences, captureId?: string) => Promise<void>;
   onManageModes: () => void;
+  onOnboarding?: () => void;
 }
 
 const modeDescriptions = Object.fromEntries(allBuiltinModes.map(mode=>[mode.id,mode.detail])) as Record<BuiltinMode,string>;
@@ -52,7 +53,7 @@ function ModeExample({ mode }: { mode: BuiltinMode }) {
   </details>;
 }
 
-export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, onPreferencesChange, onManageModes }: SettingsPageProps) {
+export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, onPreferencesChange, onManageModes, onOnboarding }: SettingsPageProps) {
   const catalog = useModes();
   const { available, devices, devicesStatus, errors, command, refresh } = useDesktop();
   const [feedback, setFeedback] = useState<SaveFeedback | null>(null);
@@ -102,6 +103,7 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
   }
 
   return <div className="settings-page" aria-busy={saving}>
+    {onOnboarding && <div className="environment-banner"><div><strong>重新体验使用引导</strong><p>测试快捷键，练习聊天消息与文档成稿。</p></div><Button variant="soft" disabled={disabled} onClick={onOnboarding}>打开使用引导</Button></div>}
     <PageHeading title="设置" />
     <div className="settings-preview-note"><p id="settings-preview-scope">{available
       ? '设置保存到本机。麦克风、语言与默认场合 的更改用于下一次口述。'

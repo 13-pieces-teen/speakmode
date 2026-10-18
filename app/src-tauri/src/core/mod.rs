@@ -4,6 +4,8 @@ pub mod db_worker;
 pub use commit_guard::{CommitGuard,CancelDecision};
 pub use db_worker::{DbClient,DbCommand,DbValue,DbSnapshot,DbTicket,DbPriority,DbOptions};
 pub mod store;
+pub mod onboarding;
+pub use onboarding::{OnboardingProgress, OnboardingStep, OnboardingLesson};
 pub mod types;
 pub mod app_writing;
 pub mod confirmed_context;

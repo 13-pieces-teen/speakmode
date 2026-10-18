@@ -87,7 +87,11 @@ enum ReplayValue {Safe(Value),Session(String,u64),Mode(String,u64),Detail(String
 struct RequestRecord {fingerprint:String,outcome:Mutex<Option<Result<ReplayValue>>>,completed:tokio::sync::Notify}
 struct RequestOwner(Arc<RequestRecord>);
 impl Drop for RequestOwner {fn drop(&mut self){let mut outcome=self.0.outcome.lock().unwrap();if outcome.is_none(){*outcome=Some(Err(ApiError::new("request_interrupted","ipc","操作已中断，请刷新状态后核对")));}drop(outcome);self.0.completed.notify_waiters();}}
+#[derive(Default)]
+struct OnboardingRuntime { active:bool, focused:bool, shortcut_presses:u64 }
+
 pub(crate) struct Inner {
+    onboarding:OnboardingRuntime,
     guards:HashMap<String,Arc<CommitGuard>>,
     sequence:u64,
     pub(crate) active:Option<session::ActiveSession>,
@@ -156,7 +160,7 @@ struct RevisionIntent {session_id:String,generation:u64,sequence:u64}
 struct SettingsLease {hub:Arc<AppHub>,id:String}
 impl Drop for SettingsLease {fn drop(&mut self){let mut i=self.hub.inner.lock().unwrap();if i.settings_pending.as_deref()==Some(&self.id){i.settings_pending=None;}}}
 fn db_wire(value:DbValue)->Result<Value>{match value{
-    DbValue::Snapshot(v)=>Ok(json!({"revision":v.revision,"preferences":v.preferences,"providerConfig":v.provider_config,"modes":v.modes,"dictionary":v.dictionary,"usage":v.usage,"temporaryResult":v.temporary_result})),DbValue::Preferences(v)=>wire(v),DbValue::ProviderConfig(v)=>wire(v),
+    DbValue::Snapshot(v)=>Ok(json!({"revision":v.revision,"preferences":v.preferences,"providerConfig":v.provider_config,"modes":v.modes,"dictionary":v.dictionary,"usage":v.usage,"temporaryResult":v.temporary_result})),DbValue::Onboarding(v)=>wire(v),DbValue::Preferences(v)=>wire(v),DbValue::ProviderConfig(v)=>wire(v),
     DbValue::Modes(v)=>wire(v),DbValue::Dictionary(v)=>wire(v),DbValue::Correction(v)=>wire(v),DbValue::Mode(v)=>wire(v),DbValue::ModeSnapshot(v)=>wire(v),
     DbValue::Detail(v)=>wire(v),DbValue::Source(v)=>wire(v),DbValue::Output(v)=>wire(v),
     DbValue::HistoryPage(v)=>wire(v),DbValue::Usage(v)=>wire(v),DbValue::UsageTotal(v)=>wire(v),DbValue::UsageEvent(v)=>wire(v),
@@ -231,7 +235,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let key_configured=credentials::configured(&config).unwrap_or(false);
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
@@ -271,7 +275,7 @@ impl AppHub {
         let configuration=cloud::endpoints(&config);let valid=configuration.is_ok();
         let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
         provider["modelCatalog"]=wire(cloud::models::catalog())?;
-        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
+        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"onboarding":{"progress":cache.onboarding,"active":i.onboarding.active,"shortcutPresses":i.onboarding.shortcut_presses},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
     }
 
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
@@ -364,6 +368,7 @@ impl AppHub {
                 if window!="recording"{return Err(ApiError::new("forbidden","ipc","此回执仅允许录音窗口"));}
                 return self.caption_rendered(&p);
             },
+            "onboarding.open"|"onboarding.step"|"onboarding.acceptLesson"|"onboarding.dismiss"|"onboarding.finish"=>self.onboarding_command(&request.name,&p).await,
             "preferences.get"=>wire(self.db.snapshot().preferences),
             "preferences.update" | "preferences.reset"=>self.update_preferences(&p,request.name.ends_with("reset")).await,
             "mode.list"=>wire(self.db.snapshot().modes),

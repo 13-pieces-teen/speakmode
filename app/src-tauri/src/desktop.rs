@@ -108,7 +108,10 @@ fn control_main_window(window: WebviewWindow, action: MainWindowAction) -> Resul
     match action {
         MainWindowAction::State => {},
         MainWindowAction::Drag => window.start_dragging().map_err(window_error)?,
-        MainWindowAction::Minimize => window.minimize().map_err(window_error)?,
+        MainWindowAction::Minimize => {
+            if let Some(state) = current_state(window.app_handle()) { state.hub.onboarding_main_hidden(); }
+            window.minimize().map_err(window_error)?;
+        },
         MainWindowAction::ToggleMaximize => {
             if window.is_maximized().map_err(window_error)? { window.unmaximize().map_err(window_error)?; }
             else { window.maximize().map_err(window_error)?; }
@@ -874,6 +877,7 @@ pub fn run() {
                     api.prevent_close();
                     if window.label() == "main" {
                         cancel_shortcut_capture(window.app_handle().clone(), Arc::clone(&state));
+                        state.hub.onboarding_main_hidden();
                         let _ = window.hide();
                     }
                     else if window.label() == "recording" {
@@ -896,10 +900,15 @@ pub fn run() {
                     }
                 },
                 WindowEvent::Focused(false) if window.label() == "main" => {
+                    state.hub.onboarding_focus_changed(false);
                     cancel_shortcut_capture(window.app_handle().clone(), Arc::clone(&state));
+                },
+                WindowEvent::Resized(_) if window.label() == "main" && window.is_minimized().unwrap_or(false) => {
+                    state.hub.onboarding_main_hidden();
                 },
                 WindowEvent::Focused(true) if window.label() == "main" => {
                     state.hub.shortcut_capture_focus_changed(true);
+                    state.hub.onboarding_focus_changed(true);
                 },
                 WindowEvent::Focused(false) if window.label() == "recording" => {
                     let app = window.app_handle().clone();

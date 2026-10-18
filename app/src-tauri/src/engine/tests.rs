@@ -6,6 +6,9 @@ use super::*;
 mod candidate_review;
 use std::sync::Barrier;
 
+#[path="onboarding_tests.rs"]
+mod onboarding_tests;
+
 #[path="preview_tests.rs"]
 mod preview_tests;
 #[path="rewrite_fallback_tests.rs"]
@@ -63,6 +66,7 @@ pub(super) fn hub() -> Arc<AppHub> {
     Arc::new(AppHub {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
+            onboarding:OnboardingRuntime::default(),
             guards: Default::default(), sequence: 0, active: None, recovery: None,
             candidate: None, preview: None, preview_sources:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, requests: Default::default(),
@@ -83,6 +87,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
     let mode = hub.db.mode_snapshot("auto", None).unwrap();
     let mut i=hub.inner.lock().unwrap();i.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),7)));
     i.active = Some(ActiveSession {
+        onboarding_lesson:None,
         diagnostic_trace:None,caption_render_token:None,
         id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
         started_at: "2026-10-04T10:00:00+08:00".into(),

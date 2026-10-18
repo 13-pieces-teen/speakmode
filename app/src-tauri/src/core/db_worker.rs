@@ -6,10 +6,10 @@ use crossbeam_channel::{Sender,Receiver,bounded,TrySendError};
 use tokio::sync::Notify;
 
 #[derive(Debug,Clone)]
-pub struct DbSnapshot {pub revision:u64,pub preferences:Preferences,pub provider_config:ProviderConfig,pub modes:Vec<ModeRecord>,pub dictionary:DictionarySnapshot,pub usage:DailyUsage,pub temporary_result:Option<HistoryDetail>}
+pub struct DbSnapshot {pub revision:u64,pub onboarding:OnboardingProgress,pub preferences:Preferences,pub provider_config:ProviderConfig,pub modes:Vec<ModeRecord>,pub dictionary:DictionarySnapshot,pub usage:DailyUsage,pub temporary_result:Option<HistoryDetail>}
 #[derive(Debug,Clone,Serialize)]
 pub enum DbCommand {
- ReadSnapshot{date:String},Preferences,ProviderConfig,ListModes,Dictionary,SaveDictionary{draft:DictionaryDraft,expected_version:u64},ImportDictionary{terms:Vec<String>,expected_version:u64},DeleteDictionary{entry_id:String,expected_version:u64},ModeSnapshot{id:String,revision:Option<u64>},
+ ReadSnapshot{date:String},Onboarding,SaveOnboarding{progress:OnboardingProgress,expected_version:u64},Preferences,ProviderConfig,ListModes,Dictionary,SaveDictionary{draft:DictionaryDraft,expected_version:u64},ImportDictionary{terms:Vec<String>,expected_version:u64},DeleteDictionary{entry_id:String,expected_version:u64},ModeSnapshot{id:String,revision:Option<u64>},
  SavePreferences{next:Preferences,expected_version:u64},SaveProviderConfig{config:ProviderConfig,expected_version:u64},SaveMode{draft:ModeDraft},DeleteMode{id:String,expected_revision:u64},SetDefaultMode{id:String,expected_version:u64},
  GetResult{session_id:String},GetSource{source_id:String},GetOutput{revision_id:String},HistoryList{query:String,cursor:u64,limit:u64},UsageToday{date:String},UsageTotal,UsageEvent{session_id:String},
  Checkpoint{seed:SessionSeed,source:SourceRevision},Ready{output:OutputRevision},UseSource{session_id:String,expected_generation:u64,created_at:String},Adopt{session_id:String,expected_current_revision_id:String,candidate:OutputRevision},Edit{session_id:String,expected_current_revision_id:String,blocks:Vec<OutputBlock>,created_at:String},Restore{session_id:String,expected_current_revision_id:String,patch:RestorePatch,created_at:String},Undo{session_id:String,expected_current_revision_id:String,created_at:String},CancelUnfinished{session_id:String},DeleteHistory{session_id:String},PrepareDelivery{attempt:DeliveryAttempt},TransitionDelivery{attempt_id:String,expected:DeliveryState,next:DeliveryState,reason:Option<String>},DeliveryAttempt{attempt_id:String},ClearTemporary,Shutdown,
@@ -18,7 +18,7 @@ pub enum DbCommand {
  #[cfg(test)] TestQueryCount{sql:String},
 }
 #[derive(Debug,Clone)]
-pub enum DbValue {Snapshot(DbSnapshot),Preferences(Preferences),ProviderConfig(ProviderConfig),Modes(Vec<ModeRecord>),Dictionary(DictionarySnapshot),Correction(CorrectionReceipt),Mode(ModeRecord),ModeSnapshot(ModeSnapshot),Detail(HistoryDetail),Source(SourceRevision),Output(OutputRevision),HistoryPage(HistoryPage),Usage(DailyUsage),UsageTotal(UsageTotals),UsageEvent(Option<UsageEvent>),Delivery(DeliveryAttempt),Unit,#[cfg(test)] Count(u64)}
+pub enum DbValue {Snapshot(DbSnapshot),Onboarding(OnboardingProgress),Preferences(Preferences),ProviderConfig(ProviderConfig),Modes(Vec<ModeRecord>),Dictionary(DictionarySnapshot),Correction(CorrectionReceipt),Mode(ModeRecord),ModeSnapshot(ModeSnapshot),Detail(HistoryDetail),Source(SourceRevision),Output(OutputRevision),HistoryPage(HistoryPage),Usage(DailyUsage),UsageTotal(UsageTotals),UsageEvent(Option<UsageEvent>),Delivery(DeliveryAttempt),Unit,#[cfg(test)] Count(u64)}
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub enum DbPriority {Normal,Critical}
 #[derive(Debug,Clone)]
@@ -87,12 +87,12 @@ impl DbClient {
 }
 impl DbCommand {
  fn payload_bytes(&self)->StoreResult<usize>{struct Count(usize);impl std::io::Write for Count{fn write(&mut self,b:&[u8])->std::io::Result<usize>{self.0=self.0.saturating_add(b.len());Ok(b.len())}fn flush(&mut self)->std::io::Result<()>{Ok(())}}let mut count=Count(0);serde_json::to_writer(&mut count,self)?;Ok(count.0)}
- fn writes(&self)->bool {#[cfg(test)] if matches!(self,Self::TestQueryCount{..}){return false;} !matches!(self,Self::ReadSnapshot{..}|Self::Preferences|Self::ProviderConfig|Self::ListModes|Self::Dictionary|Self::ModeSnapshot{..}|Self::GetResult{..}|Self::GetSource{..}|Self::GetOutput{..}|Self::HistoryList{..}|Self::UsageToday{..}|Self::UsageTotal|Self::UsageEvent{..}|Self::DeliveryAttempt{..})}
+ fn writes(&self)->bool {#[cfg(test)] if matches!(self,Self::TestQueryCount{..}){return false;} !matches!(self,Self::ReadSnapshot{..}|Self::Onboarding|Self::Preferences|Self::ProviderConfig|Self::ListModes|Self::Dictionary|Self::ModeSnapshot{..}|Self::GetResult{..}|Self::GetSource{..}|Self::GetOutput{..}|Self::HistoryList{..}|Self::UsageToday{..}|Self::UsageTotal|Self::UsageEvent{..}|Self::DeliveryAttempt{..})}
 }
 // Implementation is kept below the DTOs so engine callers can migrate independently.
 
 fn today()->String {chrono::Local::now().format("%Y-%m-%d").to_string()}
-fn build_snapshot(store:&Store,date:&str,revision:u64)->StoreResult<DbSnapshot>{store.read_consistent(|store|Ok(DbSnapshot{revision,preferences:store.preferences()?,provider_config:store.provider_config()?,modes:store.list_modes()?,dictionary:store.dictionary()?,usage:store.usage_today(date)?,temporary_result:store.latest_temporary_result()?}))}
+fn build_snapshot(store:&Store,date:&str,revision:u64)->StoreResult<DbSnapshot>{store.read_consistent(|store|Ok(DbSnapshot{revision,onboarding:store.onboarding()?,preferences:store.preferences()?,provider_config:store.provider_config()?,modes:store.list_modes()?,dictionary:store.dictionary()?,usage:store.usage_today(date)?,temporary_result:store.latest_temporary_result()?}))}
 fn refresh(store:&Store,shared:&Shared,date:&str)->StoreResult<DbSnapshot>{
  let revision=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_ref().map_or(1,|s|s.revision.saturating_add(1));
  match build_snapshot(store,date,revision){Ok(snapshot)=>{*shared.snapshot.lock().unwrap_or_else(|p|p.into_inner())=Some(snapshot.clone());*shared.cache_error.lock().unwrap_or_else(|p|p.into_inner())=None;Ok(snapshot)},Err(error)=>{*shared.cache_error.lock().unwrap_or_else(|p|p.into_inner())=Some(error.clone());Err(error)}}
@@ -120,6 +120,7 @@ fn execute(store:&mut Store,command:DbCommand,guard:Option<Arc<CommitGuard>>)->S
 fn execute_inner(store:&mut Store,command:DbCommand)->StoreResult<DbValue>{
  use DbCommand as C;use DbValue as V;
  match command{
+  C::Onboarding=>Ok(V::Onboarding(store.onboarding()?)),C::SaveOnboarding{progress,expected_version}=>Ok(V::Onboarding(store.save_onboarding(progress,expected_version)?)),
   C::Preferences=>Ok(V::Preferences(store.preferences()?)),C::ProviderConfig=>Ok(V::ProviderConfig(store.provider_config()?)),C::ListModes=>Ok(V::Modes(store.list_modes()?)),C::Dictionary=>Ok(V::Dictionary(store.dictionary()?)),C::SaveDictionary{draft,expected_version}=>Ok(V::Dictionary(store.save_dictionary_entry(draft,expected_version)?)),C::ImportDictionary{terms,expected_version}=>Ok(V::Dictionary(store.import_dictionary(terms,expected_version)?)),C::DeleteDictionary{entry_id,expected_version}=>Ok(V::Dictionary(store.delete_dictionary_entry(&entry_id,expected_version)?)),C::ModeSnapshot{id,revision}=>Ok(V::ModeSnapshot(store.mode_snapshot(&id,revision)?)),
   C::SavePreferences{next,expected_version}=>Ok(V::Preferences(store.save_preferences(next,expected_version)?)),C::SaveProviderConfig{config,expected_version}=>Ok(V::ProviderConfig(store.save_provider_config(config,expected_version)?)),C::SaveMode{draft}=>Ok(V::Mode(store.save_mode(draft)?)),C::DeleteMode{id,expected_revision}=>{store.delete_mode(&id,expected_revision)?;Ok(V::Unit)},C::SetDefaultMode{id,expected_version}=>Ok(V::Preferences(store.set_default_mode(&id,expected_version)?)),
   C::GetResult{session_id}=>Ok(V::Detail(store.get_result(&session_id)?)),C::GetSource{source_id}=>Ok(V::Source(store.get_source(&source_id)?)),C::GetOutput{revision_id}=>Ok(V::Output(store.get_output(&revision_id)?)),C::HistoryList{query,cursor,limit}=>Ok(V::HistoryPage(store.history_list(&query,cursor,limit)?)),C::UsageToday{date}=>Ok(V::Usage(store.usage_today(&date)?)),C::UsageTotal=>Ok(V::UsageTotal(store.usage_totals()?)),C::UsageEvent{session_id}=>Ok(V::UsageEvent(store.usage_event(&session_id)?)),
@@ -134,7 +135,7 @@ fn execute_inner(store:&mut Store,command:DbCommand)->StoreResult<DbValue>{
 // Queries that assemble multiple tables execute in a consistent read transaction.
 fn execute_read(store:&Store,command:DbCommand)->StoreResult<DbValue>{store.read_consistent(|s|{
  use DbCommand as C;use DbValue as V;match command{
- C::Preferences=>Ok(V::Preferences(s.preferences()?)),C::ProviderConfig=>Ok(V::ProviderConfig(s.provider_config()?)),C::ListModes=>Ok(V::Modes(s.list_modes()?)),C::Dictionary=>Ok(V::Dictionary(s.dictionary()?)),C::ModeSnapshot{id,revision}=>Ok(V::ModeSnapshot(s.mode_snapshot(&id,revision)?)),C::GetResult{session_id}=>Ok(V::Detail(s.get_result(&session_id)?)),C::GetSource{source_id}=>Ok(V::Source(s.get_source(&source_id)?)),C::GetOutput{revision_id}=>Ok(V::Output(s.get_output(&revision_id)?)),C::HistoryList{query,cursor,limit}=>Ok(V::HistoryPage(s.history_list(&query,cursor,limit)?)),C::UsageToday{date}=>Ok(V::Usage(s.usage_today(&date)?)),C::UsageTotal=>Ok(V::UsageTotal(s.usage_totals()?)),C::UsageEvent{session_id}=>Ok(V::UsageEvent(s.usage_event(&session_id)?)),C::DeliveryAttempt{attempt_id}=>Ok(V::Delivery(s.delivery_attempt(&attempt_id)?)),
+ C::Onboarding=>Ok(V::Onboarding(s.onboarding()?)),C::Preferences=>Ok(V::Preferences(s.preferences()?)),C::ProviderConfig=>Ok(V::ProviderConfig(s.provider_config()?)),C::ListModes=>Ok(V::Modes(s.list_modes()?)),C::Dictionary=>Ok(V::Dictionary(s.dictionary()?)),C::ModeSnapshot{id,revision}=>Ok(V::ModeSnapshot(s.mode_snapshot(&id,revision)?)),C::GetResult{session_id}=>Ok(V::Detail(s.get_result(&session_id)?)),C::GetSource{source_id}=>Ok(V::Source(s.get_source(&source_id)?)),C::GetOutput{revision_id}=>Ok(V::Output(s.get_output(&revision_id)?)),C::HistoryList{query,cursor,limit}=>Ok(V::HistoryPage(s.history_list(&query,cursor,limit)?)),C::UsageToday{date}=>Ok(V::Usage(s.usage_today(&date)?)),C::UsageTotal=>Ok(V::UsageTotal(s.usage_totals()?)),C::UsageEvent{session_id}=>Ok(V::UsageEvent(s.usage_event(&session_id)?)),C::DeliveryAttempt{attempt_id}=>Ok(V::Delivery(s.delivery_attempt(&attempt_id)?)),
  #[cfg(test)] C::TestQueryCount{sql}=>Ok(V::Count(s.test_connection().query_row(&sql,[],|r|r.get(0))?)),_=>Err(StoreError::Invalid("write reached read dispatcher".into()))}
 })}
 fn finish_job(shared:&Shared,job:Job,result:StoreResult<DbValue>){
