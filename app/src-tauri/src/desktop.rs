@@ -386,7 +386,7 @@ mod win {
         let mut recorder = state.recorder.lock().map_err(|_| window_error("lock"))?;
         // Hiding may be part of dispatch, so it MUST NOT restore a former target.
         close_menu(handle, &mut recorder, false)?;
-        if show { place(window, 240.0, 64.0, true)?; }
+        if show { place(window, 336.0, 66.0, true)?; }
         // All recorder visibility/style/size changes are Win32-only after creation.
         // Mixing Tauri/Tao .show()/set_focusable() here would reapply Tao's cached
         // VISIBLE flags and may reactivate or hide a native-shown overlay.
@@ -413,7 +413,7 @@ mod win {
             // A stale intent may never leave the native surface activated just
             // because the frontend rejected it before opening its DOM menu.
             close_menu(handle, &mut recorder, true)?;
-            if recorder.visible { place(window, 240.0, 64.0, false)?; }
+            if recorder.visible { place(window, 336.0, 66.0, false)?; }
         }
         Ok(())
     }
@@ -974,7 +974,7 @@ mod tests {
     #[test] fn compact_recorder_and_details_share_a_dpi_safe_bottom_anchor() {
         for scale in [1.0,1.25,1.5,2.0] {
             let area=Rect{x:-1920,y:-100,width:1920,height:1080};
-            let small=recorder_rect(240.0,64.0,scale,area).unwrap();
+            let small=recorder_rect(336.0,66.0,scale,area).unwrap();
             let details=recorder_rect(344.0,360.0,scale,area).unwrap();
             assert_eq!(small.y+small.height as i32,details.y+details.height as i32);
             assert!(small.x>=area.x&&details.x>=area.x);

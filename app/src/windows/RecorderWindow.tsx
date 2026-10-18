@@ -85,16 +85,14 @@ export function RecorderWindow(){
  return <main className="recorder-surface"><section ref={assembly} className="recorder-assembly" data-mode-open={menuOpen} data-details={hasDetails} aria-label="录音浮层">
   {!desktop.available&&<p className="recorder-environment" role="status">请在桌面应用中打开，浏览器不会录音或生成字幕。</p>}
   <div className="recorder-toolbar" role="group" aria-label="口述控制">
-   <button className="recorder-action" aria-label={dismissResult?"关闭成稿提示":problem?"放弃本次恢复":"取消本次口述"} title={dismissResult?"关闭提示，成稿仍保留":problem?"放弃本次未完成的文字与音频缓存":"取消本次口述"} disabled={!desktop.available||(!canCancel&&!dismissResult)||busy} onClick={()=>void act('session.cancel')}><Cross2Icon/></button>
    <Popover.Root open={menuOpen} onOpenChange={open=>{setOpenedFromTray(false);setMenu(open);}}>
     <Popover.Trigger>
      <button className="recorder-mode-trigger" data-motion={menuMotion} disabled={!desktop.available||!canStop||busy} aria-label={`本次场合：${contextLabel}`} title={contextLabel}
       onPointerDown={()=>setMenuMotion('pointer')} onKeyDown={()=>setMenuMotion('instant')}>
-      <span className="sr-only">{contextLabel}，点击切换场合</span>
-      <span className="recorder-level" aria-label={phaseLabel[phase]??phase}>{recording?<RecorderWaveform key={identity} level={session?.level??0} receivedAt={session?.levelReceivedAt}/>:<span className="recorder-phase" role="status">{phaseLabel[phase]??phase}</span>}</span><ChevronDownIcon/>
+      <ModeIcon mode={current}/><span>{contextLabel}</span><ChevronDownIcon/>
      </button>
     </Popover.Trigger>
-    <Popover.Content ref={setMenuElement} avoidCollisions={false} side="top" align="center" sideOffset={10}
+    <Popover.Content ref={setMenuElement} avoidCollisions={false} side="top" align="start" sideOffset={10}
      className="recorder-mode-menu" data-motion={menuMotion} aria-label="选择本次场合"
      onFocusCapture={event=>{const target=event.target;if(target instanceof HTMLButtonElement&&target.classList.contains('recorder-mode-option'))focusedChoice.current=target;}}
      onOpenAutoFocus={event=>event.preventDefault()}>
@@ -116,7 +114,9 @@ export function RecorderWindow(){
      </div>
     </Popover.Content>
    </Popover.Root>
-   {recording&&<span className="sr-only">正在录音。波形表示麦克风音量，静音不会自动结束。</span>}
+   <span className="recorder-divider" aria-hidden="true"/>
+   <div className="recorder-level" aria-label={phaseLabel[phase]??phase}>{recording?<><RecorderWaveform key={identity} level={session?.level??0} receivedAt={session?.levelReceivedAt}/><span className="sr-only">正在录音。波形表示麦克风音量，静音不会自动结束。</span></>:<span className="recorder-phase" role="status">{phaseLabel[phase]??phase}</span>}</div>
+   <button className="recorder-action" aria-label={dismissResult?"关闭成稿提示":problem?"放弃本次恢复":"取消本次口述"} title={dismissResult?"关闭提示，成稿仍保留":problem?"放弃本次未完成的文字与音频缓存":"取消本次口述"} disabled={!desktop.available||(!canCancel&&!dismissResult)||busy} onClick={()=>void act('session.cancel')}><Cross2Icon/></button>
    <button className="recorder-action recorder-finish" aria-label="结束本次口述" disabled={!desktop.available||!canStop||busy} onClick={()=>void act('session.stop')}><CheckIcon/></button>
   </div>
   {!session?.rewriteFallback&&['recording','finalizingasr','finalizing_asr','rewriting'].includes(phase)&&session?.inputContextStatus==='available'&&<p className="recorder-context-note" role="status">已获取当前输入框上下文</p>}
