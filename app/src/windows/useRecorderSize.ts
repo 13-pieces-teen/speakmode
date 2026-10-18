@@ -6,10 +6,13 @@ type RecorderSize = {width:number;height:number;menuOpen:boolean};
 const same = (left:RecorderSize|null,right:RecorderSize) => !!left && left.width===right.width && left.height===right.height && left.menuOpen===right.menuOpen;
 
 /** Requests a bounded logical-pixel size; Rust owns the actual recording window and work-area clamp. */
-export function useRecorderSize(assembly:RefObject<HTMLElement|null>,menuElement:HTMLElement|null,menuOpen:boolean,available:boolean,command:Command) {
+export function useRecorderSize(assembly:RefObject<HTMLElement|null>,menuElement:HTMLElement|null,menuOpen:boolean,available:boolean,command:Command,identity:string) {
  const [error,setError]=useState('');
  const [readyFor,setReadyFor]=useState<HTMLElement|null>(null);
  const lastSent=useRef<RecorderSize|null>(null),desired=useRef<RecorderSize|null>(null),sending=useRef(false),mounted=useRef(true);
+ // Native show resets the persistent window to the compact baseline. Reissue
+ // geometry for each session, even when its measured content size is unchanged.
+ useLayoutEffect(()=>{lastSent.current=null;},[identity]);
  useLayoutEffect(()=>{
   mounted.current=true;
   if(!available||!assembly.current)return;
@@ -43,23 +46,26 @@ export function useRecorderSize(assembly:RefObject<HTMLElement|null>,menuElement
     const budget=Math.max(0,Math.min(300,Math.floor(420-baseHeight-10)));
     menuElement.style.setProperty('--recorder-menu-max-height',`${budget}px`);
     menuHeight=menuElement.offsetHeight;
-    // The old 86px native window must grow before the portal is painted. Keep
+    // The compact native window must grow before the portal is painted. Keep
     // layout measurable while hidden, then let the pointer enter transition run.
-    const bounds=menuElement.getBoundingClientRect();
+    // Enter motion belongs to the child. Testing its animated rectangle can
+    // deadlock visibility: a hidden +4px child overlaps the toolbar forever.
+    // Floating UI's wrapper represents the final, unanimated layout bounds.
+    const bounds=(positioner??menuElement).getBoundingClientRect();
     const toolbar=assembly.current.querySelector<HTMLElement>('.recorder-toolbar')?.getBoundingClientRect();
     // Floating UI may update its position one frame after the viewport resize.
     // Do not reveal the old, partly clipped position (including reduced motion).
-    const ready=window.innerHeight+1>=Math.ceil(baseHeight+menuHeight+10)
-     &&bounds.top>=1&&bounds.left>=0&&bounds.right<=window.innerWidth
-     &&!!toolbar&&bounds.bottom<=toolbar.top;
+    const ready=window.innerHeight+1>=Math.ceil(baseHeight+menuHeight+10-.01)
+     &&bounds.top>=0&&bounds.left>=-1&&bounds.right<=window.innerWidth+1
+     &&!!toolbar&&bounds.bottom<=toolbar.top+1;
     menuElement.dataset.sizeReady=String(ready);
     setReadyFor(ready?menuElement:null);
     // Cover a position mutation that happened before the observer attached.
     // This short, bounded settle pass ends as soon as the menu is positioned.
     if(ready)settlingFrames=0;
-    else if(window.innerHeight+1>=Math.ceil(baseHeight+menuHeight+10)&&settlingFrames++<12)schedule();
+    else if(window.innerHeight+1>=Math.ceil(baseHeight+menuHeight+10-.01)&&settlingFrames++<12)schedule();
    }
-   desired.current={width:440,height:Math.min(420,Math.max(86,Math.ceil(baseHeight+(menuHeight?menuHeight+10:0)))),menuOpen};
+   desired.current={width:assembly.current.dataset.details==='true'?344:336,height:Math.min(420,Math.max(66,Math.ceil(baseHeight+(menuHeight?menuHeight+10:0)-.01))),menuOpen};
    void sendLatest();
   }
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(measure);};
@@ -68,7 +74,7 @@ export function useRecorderSize(assembly:RefObject<HTMLElement|null>,menuElement
   const positionObserver=new MutationObserver(schedule);
   window.addEventListener('resize',schedule);schedule();
   return()=>{active=false;mounted.current=false;observer.disconnect();positionObserver.disconnect();cancelAnimationFrame(frame);window.removeEventListener('resize',schedule);};
- },[assembly,menuElement,menuOpen,available,command]);
+ },[assembly,menuElement,menuOpen,available,command,identity]);
  return {error,menuReady:menuOpen&&menuElement!==null&&readyFor===menuElement};
 }
 

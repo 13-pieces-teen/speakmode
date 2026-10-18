@@ -27,3 +27,11 @@ browser fixture flow and production build/package. Browser fixtures and syntheti
 session tests do not establish real microphone or external-app acceptance.
 
 Implementation and validation results: [0.2.24 report](experiments/desktop-onboarding-0.2.24-2026-10-18.md).
+
+In 0.2.25, owned practices use the complete 20-second rewrite ceiling, rather than
+the daily short-dictation 5-second budget. Fallback status, copy actions and the
+continue button consistently identify the source. A saved fallback can be retried
+without recording again through source/base-bound candidate generation and adoption;
+unreviewed candidates are rejected and the original remains available. Continuing
+with source requires acknowledging its exact output revision at the native boundary.
+Long results scroll inside the result box. See the [0.2.25 report](experiments/onboarding-recorder-0.2.25-2026-10-18.md).
