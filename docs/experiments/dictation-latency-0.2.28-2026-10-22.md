@@ -50,7 +50,7 @@
 - Windows desktop 库：861 passed / 0 failed / 4 ignored，包含原有取消、截止时间、来源回退、音频尾段顺序和一次性交付约束。
 - 新数组检查、绑定和兼容性测试通过；真实本地 HTTP 的完整链路仍发生成与复核两次请求，畸形复核不能授权成稿。
 - 最终严格解码器离线重放原来的 26 份云端响应：26/26 解析并保持原判断，零新增云端请求。
-- Windows MSVC / NSIS 构建与前端生产构建：见最终 `package.log` 回执。
+- Windows MSVC / NSIS 与前端生产构建通过，退出码 0，缓存/磁盘预算无违规；EXE ProductVersion / FileVersion 均为 0.2.28。见最终 `package.log` 回执。
 
 入口：`app/src-tauri/examples/dictation_latency_lab.rs`。只读配置路径和新输出路径必须是绝对路径；`--plan-only` 不访问凭据或网络，`--execute-cloud` 才执行固定计划，`--replay-reviews ABS_RECEIPT` 仅重放同计划的本机收据。输出文件独占创建，不能覆盖旧证据。
 
