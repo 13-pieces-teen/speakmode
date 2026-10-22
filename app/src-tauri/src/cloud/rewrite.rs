@@ -161,7 +161,7 @@ pub const FLUENT_PIPELINE_VERSION: &str = "fluent-dictation-v2+protected-long-v3
 pub const MINIMUM_PROTOCOL_PROMOTED: bool = true;
 pub const MINIMUM_PIPELINE_VERSION: &str = if cfg!(feature="experimental-english-dictation") {
     "minimum-edit-v4+minimum-review-v4+residue-hint-v2+local-repair-v2"
-} else { "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2" };
+} else { "minimum-edit-v3+minimum-review-ordered-v1+residue-hint-v2+local-repair-v2" };
 fn uses_minimum_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
     writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
 }

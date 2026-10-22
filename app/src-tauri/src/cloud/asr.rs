@@ -11,6 +11,9 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig}};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+// Audio frames and session.finish are latency-sensitive small writes. Keep the
+// ordered frame/finish protocol while avoiding TCP's small-packet coalescing.
+pub(super) const DISABLE_NAGLE:bool=true;
 
 #[derive(Debug)]
 pub enum AsrInput {
@@ -354,7 +357,7 @@ async fn run_at(config:ProviderConfig, secret:String, language:String, dictionar
     let request=authorized_request(&url,&secret,config.workspace.as_deref())?;
     let mut ws_config=WebSocketConfig::default();
     ws_config.max_message_size=Some(1024*1024); ws_config.max_frame_size=Some(1024*1024);
-    let connect=connect_async_with_config(request,Some(ws_config),false);
+    let connect=connect_async_with_config(request,Some(ws_config),DISABLE_NAGLE);
     let (mut socket,_)=tokio::select! {biased;
         _=cancel.cancelled()=>return Err(CloudError::new("cancelled","asr","已取消识别")),
         r=tokio::time::timeout_at(connect_deadline,connect)=>r.map_err(|_|CloudError::new("asr_connect_timeout","asr","语音服务连接超时"))?.map_err(|_|CloudError::new("asr_connect_failed","asr","语音服务连接失败，请检查地域与 Key"))?,
@@ -459,6 +462,25 @@ mod protocol_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn realtime_transport_enables_nodelay_on_the_actual_socket() {
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url=format!("ws://{}",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move{
+            for _ in 0..2 {
+                let (stream,_)=listener.accept().await.unwrap();
+                let mut socket=tokio_tungstenite::accept_async(stream).await.unwrap();
+                while socket.next().await.is_some_and(|r|r.is_ok_and(|m|!m.is_close())){}
+            }
+        });
+        for disable in [false,DISABLE_NAGLE] {
+            let (mut socket,_)=connect_async_with_config(&url,None,disable).await.unwrap();
+            let tokio_tungstenite::MaybeTlsStream::Plain(stream)=socket.get_ref() else{panic!("owned test is plaintext loopback")};
+            assert_eq!(stream.nodelay().unwrap(),disable);
+            socket.close(None).await.unwrap();
+        }
+        server.await.unwrap();
+    }
     #[test]
     fn partial_revision_does_not_accumulate_and_final_is_immutable() {
         let mut a=Assembler::default();

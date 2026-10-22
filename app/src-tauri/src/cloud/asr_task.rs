@@ -101,7 +101,7 @@ pub(super) async fn run_at(config:ProviderConfig,secret:String,language:String,d
     let connect_deadline=tokio::time::Instant::now()+timeouts.establishment;
     let request=authorized_request(&url,&secret,config.workspace.as_deref())?;
     let mut ws_config=WebSocketConfig::default();ws_config.max_message_size=Some(1024*1024);ws_config.max_frame_size=Some(1024*1024);
-    let connect=connect_async_with_config(request,Some(ws_config),false);
+    let connect=connect_async_with_config(request,Some(ws_config),super::asr::DISABLE_NAGLE);
     let(mut socket,_)=tokio::select!{biased;
         _=cancel.cancelled()=>return Err(cancelled()),
         result=tokio::time::timeout_at(connect_deadline,connect)=>result.map_err(|_|CloudError::new("asr_connect_timeout","asr","语音服务连接超时"))?.map_err(|_|CloudError::new("asr_connect_failed","asr","语音服务连接失败，请检查地域与 Key"))?,
