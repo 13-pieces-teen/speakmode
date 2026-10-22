@@ -35,7 +35,7 @@
 .home-page .recent-copy > span, .home-page .recent-item time { font-size: 13px; }
 
 .home-page .default-mode-card { --card-padding: 0px; --card-background-color: transparent; }
-.home-page .default-mode-card .mode-selector { max-height: 380px; margin-top: 16px; }
+.home-page .default-mode-card .mode-selector { max-height: none; overflow: visible; margin-top: 16px; }
 .home-page .mode-option.rt-RadioCardsItem { min-height: 64px; padding: 10px 12px; gap: 10px; border-radius: 6px; background: var(--sm-paper); box-shadow:none; transition: background 140ms ease, transform 140ms ease; }
 .home-page .mode-option.rt-RadioCardsItem[data-state=checked] { background: var(--sm-selected); box-shadow:none; }
 .home-page .mode-option-copy strong { font-size: 15px; line-height: 23px; }
@@ -68,7 +68,6 @@
   .home-page .home-grid { grid-template-columns: minmax(0, 1fr); }
   .home-page .home-controls { grid-template-columns: minmax(0, 1fr); padding-top: 0; }
   .home-page .default-mode-card { --card-padding: 20px; --card-background-color: var(--sm-canvas); }
-  .home-page .default-mode-card .mode-selector { max-height: none; }
   .home-page .mode-option.rt-RadioCardsItem { min-height: 64px; }
 }
 @media (max-width: 740px) {
