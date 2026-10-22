@@ -5,6 +5,7 @@ import '@radix-ui/themes/styles.css';
 import { App } from './App';
 import './styles.css';
 import './lucian.css';
+import './scrollbars.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

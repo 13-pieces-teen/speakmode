@@ -1,0 +1,14 @@
+Source Han Sans CN VF, version 2.005, unmodified official regional Simplified Chinese variable font.
+Copyright 2014-2025 Adobe. Distributed under SIL Open Font License 1.1.
+The full license is in SourceHanSans-LICENSE.txt beside this file.
+
+Official source:
+https://raw.githubusercontent.com/adobe-fonts/source-han-sans/release/Variable/WOFF2/TTF/Subset/SourceHanSansCN-VF.ttf.woff2
+Project:
+https://github.com/adobe-fonts/source-han-sans
+
+Asset: SourceHanSansCN-VF.woff2
+Bytes: 7711988
+SHA-256: f971e3bff46f76b49e1d5510556c2297c618ec4b491a295a4e741cdd38257799
+Weight axis: 250-900. Includes the official regional character set; rare Unicode characters may use system fallback.
+The CSS family alias does not modify the original font's internal names or bytes.

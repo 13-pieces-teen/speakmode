@@ -10,6 +10,7 @@ interface DesktopContextValue extends DesktopState {
  command:<T>(name:string,payload?:Record<string,unknown>)=>Promise<T>;refresh:()=>Promise<void>;
  searchHistory:(query:string)=>Promise<void>;loadMore:()=>Promise<void>;loadRecord:(id:string)=>Promise<Dictation>;acceptDetail:(detail:HistoryDetail)=>void;
  acceptDictionary:(snapshot:DictionarySnapshot)=>void;
+ acceptPreferences:(preferences:NativePreferences)=>void;
 }
 const Context=createContext<DesktopContextValue|null>(null);
 const emptyUsage:DailyUsage={date:'',count:0,sourceCharCount:0,captureDurationMs:0};
@@ -59,6 +60,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
  },[]);
  const command=useCallback(<T,>(name:string,payload:Record<string,unknown>={})=>desktopCommand<T>(name,payload),[]);
  const acceptDictionary=useCallback((dictionary:DictionarySnapshot)=>{setState(prev=>prev.dictionary&&prev.dictionary.version>dictionary.version?prev:{...prev,dictionary});},[]);
+ const acceptPreferences=useCallback((preferences:NativePreferences)=>{if(alive.current)setState(prev=>preferences.version<prev.preferences.version?prev:{...prev,preferences});},[]);
  const acceptDetail=useCallback((detail:HistoryDetail)=>{const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');if(!record.temporary)details.current.set(record.id,record);setRecords(prev=>prev.map(r=>r.id===record.id?record:r));setState(prev=>prev.temporaryResult?.session.id===record.id?{...prev,temporaryResult:detail}:prev);},[]);
  const loadRecord=useCallback(async(id:string)=>{const detail=await command<HistoryDetail>('history.get',{sessionId:id});const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');acceptDetail(detail);return record;},[command,acceptDetail]);
  const fetchHistory=useCallback(async(search:string,cursor:number|null=null)=>{
@@ -74,7 +76,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   if(!snap||typeof snap!=='object')return;if(typeof snap.sequence==='number'&&snap.sequence<sequence.current)return;
   sequence.current=Math.max(sequence.current,snap.sequence??0);
   const updateSession='session'in snap&&acceptSession(snap.session??null,true);
-  setState(prev=>{const next={...prev,...(snap.onboarding?{onboarding:snap.onboarding}:{}),...(snap.preferences?{preferences:snap.preferences}:{}),...(snap.modes?{modes:snap.modes}:{}),...(snap.dictionary&&(!prev.dictionary||snap.dictionary.version>=prev.dictionary.version)?{dictionary:snap.dictionary}:{}),...(snap.usage?{usage:snap.usage}:{}),...(snap.provider?{provider:snap.provider}:{}),...(snap.devices?{devices:snap.devices}:{}),...('recovery'in snap?{recovery:snap.recovery??null}:{}),...('temporaryResult'in snap?{temporaryResult:snap.temporaryResult??null}:{}),...(snap.capabilities?{capabilities:snap.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,snap.session??null):next;});
+  setState(prev=>{const next={...prev,...(snap.onboarding?{onboarding:snap.onboarding}:{}),...(snap.preferences&&snap.preferences.version>=prev.preferences.version?{preferences:snap.preferences}:{}),...(snap.modes?{modes:snap.modes}:{}),...(snap.dictionary&&(!prev.dictionary||snap.dictionary.version>=prev.dictionary.version)?{dictionary:snap.dictionary}:{}),...(snap.usage?{usage:snap.usage}:{}),...(snap.provider?{provider:snap.provider}:{}),...(snap.devices?{devices:snap.devices}:{}),...('recovery'in snap?{recovery:snap.recovery??null}:{}),...('temporaryResult'in snap?{temporaryResult:snap.temporaryResult??null}:{}),...(snap.capabilities?{capabilities:snap.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,snap.session??null):next;});
  },[acceptSession]);
  const readFailed=useCallback((operation:string,error:unknown)=>{if(alive.current)setState(prev=>putError(prev,{scope:'transport',operation,message:errorMessage(error)}));},[]);
  const refresh=useCallback(async()=>{
@@ -123,7 +125,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   return()=>{active=false;alive.current=false;clearTimeout(refreshTimer.current);document.removeEventListener('visibilitychange',visible);};
  },[available,recorderSurface,command,applySnapshot,refresh,acceptSession,readFailed]);
  const searchHistory=useCallback(async(search:string)=>{queryRef.current=search;setQuery(search);await fetchHistory(search);},[fetchHistory]);
- return <Context.Provider value={{...state,records,historyTotal,nextCursor,historyLoading,query,command,refresh,searchHistory,loadMore:()=>fetchHistory(queryRef.current,nextCursor),loadRecord,acceptDetail,acceptDictionary}}>{children}</Context.Provider>;
+ return <Context.Provider value={{...state,records,historyTotal,nextCursor,historyLoading,query,command,refresh,searchHistory,loadMore:()=>fetchHistory(queryRef.current,nextCursor),loadRecord,acceptDetail,acceptDictionary,acceptPreferences}}>{children}</Context.Provider>;
 }
 export function useDesktop(){const value=useContext(Context);if(!value)throw new Error('DesktopProvider is required');return value;}
 

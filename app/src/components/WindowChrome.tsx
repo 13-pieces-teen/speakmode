@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useRef,useState,type MouseEvent} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {Cross2Icon,MinusIcon,SquareIcon,CopyIcon,MixerHorizontalIcon} from '@radix-ui/react-icons';
+import {Cross2Icon,MinusIcon,SquareIcon,CopyIcon} from '@radix-ui/react-icons';
+import {VoiceMark} from './VoiceMark';
 import {errorMessage} from '../services/bridge';
 
 type WindowAction='state'|'drag'|'minimize'|'toggleMaximize'|'close';
@@ -26,7 +27,7 @@ export function WindowChrome({available}:{available:boolean}) {
  const maximize=()=>void control('toggleMaximize');
  return <header className="window-titlebar" aria-label="窗口标题栏">
   <div className="window-brand window-drag-region" onMouseDown={drag} onDoubleClick={maximize}>
-   <div className="brand"><span className="brand-mark"><MixerHorizontalIcon aria-hidden="true"/></span><span>Speak<span className="brand-mode">Mode</span></span></div>
+   <div className="brand"><span className="brand-mark"><VoiceMark/></span><span>Speak<span className="brand-mode">Mode</span></span></div>
   </div>
   <div className="window-drag-space window-drag-region" onMouseDown={drag} onDoubleClick={maximize}>
    {error&&<span className="window-error" role="alert">{error}</span>}
