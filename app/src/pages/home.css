@@ -1,7 +1,9 @@
-/* One reading surface. Preferences and secondary information stay compact. */
+/* A prominent overview above the writing surface; preferences stay compact. */
 .home-page { max-width: 1020px; margin-inline: auto; }
 .home-page .home-hero { align-items: center; gap: 20px; padding: 0 0 24px; }
-.home-page .home-hero h1 { margin: 0; font-size: 34px; line-height: 1.45; letter-spacing: 0; font-weight: 500; }
+.home-page .home-hero h1 { min-width: 0; margin: 0; font-size: 32px; line-height: 1.4; letter-spacing: 0; font-weight: 500; }
+.home-page .home-hero h1 > span { display: inline-block; }
+.home-shortcut { flex-shrink: 0; }
 .home-shortcut { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--sm-muted); text-align: left; font-size: 12px; }
 .home-shortcut > svg { width: 14px; height: 14px; }
 .home-shortcut-keys, .home-shortcut-key-part { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; }
@@ -48,6 +50,7 @@
 }
 @media (max-width: 520px) {
   .home-page .home-hero { flex-wrap: wrap; gap: 8px; padding-bottom: 18px; }
+  .home-page .home-hero h1 { flex-basis: 100%; font-size: 26px; line-height: 1.55; }
   .home-shortcut { padding-left: 0; }
   .home-preferences { grid-template-columns: minmax(0,1fr); gap: 8px; margin-bottom: 16px; }
   .home-page .latest-card { --card-padding: 20px; }

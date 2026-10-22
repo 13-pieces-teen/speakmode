@@ -14,7 +14,8 @@ export function UsageOverview() {
   const dateLabel = usage.date.replace(/^(\d{4})-(\d{2})-(\d{2})$/, '$1 年 $2 月 $3 日');
   return <section className="usage-overview" aria-label={title} aria-busy={usage.loading}>
     <div className="usage-period">
-      <h2>口述用量</h2>
+      <h2>{title}</h2>
+      <p>{period === 'today' ? dateLabel : '此设备已完成的口述'}</p>
     </div>
     <dl className="usage-metrics">
       <div className="usage-metric"><dt>口述次数</dt><dd><strong>{usage.value ? usageNumber.format(usage.value.count) : '—'}</strong><span>次</span></dd></div>

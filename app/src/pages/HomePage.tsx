@@ -52,9 +52,10 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
   const desktop = useDesktop();
   return <div className="home-page">
     <header className="home-hero">
-      <h1>口述</h1>
+      <h1><span>开口说，</span><span>按照你的方式来整理</span></h1>
       <HomeShortcut shortcut={preferences.shortcut} onSettings={onSettings} />
     </header>
+    <UsageOverview />
     <section className="home-preferences" aria-label="口述偏好">
       <HomeModePicker value={defaultMode} onChange={onDefaultModeChange} onManage={onManageModes} />
       <InputPreferences preferences={preferences} onSettings={onSettings} />
@@ -81,7 +82,6 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
         </div>
       </div>}
     </HomeSectionCard>
-    <UsageOverview />
     <RecentDictations records={records} onOpen={onOpen} onHistory={onHistory} />
   </div>;
 }
