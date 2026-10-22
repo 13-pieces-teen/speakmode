@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::time::Duration;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use super::execution::{RequestStage, RewriteExecution};
+use super::execution::{RequestStage, RequestOutcome, RewriteExecution};
 
 const REPAIR_RESERVE_MS:u64=1400;
 #[derive(Default,Serialize)]#[serde(rename_all="camelCase")]
@@ -14,7 +14,10 @@ pub struct Trace {
     pub review:Option<semantic_review::SemanticReview>,pub repair_attempted:bool,
     pub repaired_draft:Option<RewriteResult>,pub final_review:Option<semantic_review::SemanticReview>,
     pub native_deletion_verified:bool,
+    pub requests:Vec<RequestTiming>,
 }
+#[derive(Serialize)]#[serde(rename_all="camelCase")]
+pub struct RequestTiming {pub stage:&'static str,pub duration_ms:f64,pub remaining_budget_ms:u64,pub outcome:&'static str}
 pub struct Outcome {pub result:Result<RewriteResult,CloudError>,pub trace:Trace}
 fn cancelled()->CloudError{CloudError::new("cancelled","rewrite","已取消整理")}
 fn timeout()->CloudError{CloudError::new("rewrite_timeout","rewrite","整理等待已结束，识别稿仍保留")}
@@ -43,6 +46,11 @@ async fn execute_until(client:&reqwest::Client,config:&ProviderConfig,secret:&st
 async fn execute_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
     context:Option<&crate::core::writing_context::WritingContext>)->Outcome {
+    execute_until_with_review_format(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context,None).await
+}
+async fn execute_until_with_review_format(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
+    context:Option<&crate::core::writing_context::WritingContext>,review_format:Option<semantic_review::MinimumReviewFormat>)->Outcome {
     let started=Instant::now();let deadline=execution.deadline;let mut trace=Trace::default();
     let job=async {
         checkpoint(&cancel,deadline)?;
@@ -58,7 +66,8 @@ async fn execute_until_with_writing_context(client:&reqwest::Client,config:&Prov
         super::review_admission(source,&draft).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&draft)?;}
         checkpoint(&cancel,deadline)?;
-        let request=semantic_review::prepare_minimum_with_writing_context(config,mode,source,&draft,context).map_err(safe_error)?;
+        let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&draft,context,
+            review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&draft).map_err(safe_error)?;
@@ -78,7 +87,8 @@ async fn execute_until_with_writing_context(client:&reqwest::Client,config:&Prov
             trace.native_deletion_verified=true;checkpoint(&cancel,deadline)?;return Ok(repaired);
         }
         // No second repair and no reuse of the pre-repair verdict.
-        let request=semantic_review::prepare_minimum_with_writing_context(config,mode,source,&repaired,context).map_err(safe_error)?;
+        let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&repaired,context,
+            review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::FinalReview).await?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&repaired).map_err(safe_error)?;
@@ -108,6 +118,28 @@ pub async fn experiment_with_writing_context(config:&ProviderConfig,secret:&str,
     let endpoint=super::endpoints(config)?.rewrite;
     Ok(execute_until_with_writing_context(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
         CancellationToken::new(),&endpoint,RewriteExecution::for_duration(wait),None,Some(context)).await)
+}
+/// Same generated draft, review, repair and absolute deadline as production.
+/// Only this explicit lab entry records per-request timings and overrides the
+/// reviewer wire format. It never reads history, persists, or inputs text.
+pub async fn experiment_with_review_format(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    format:semantic_review::MinimumReviewFormat,wait:Duration)->Result<Outcome,CloudError>{
+    use std::sync::{Arc,Mutex};
+    let timings=Arc::new(Mutex::new(Vec::new()));let observed=Arc::clone(&timings);
+    let execution=RewriteExecution::observed(Instant::now()+wait,move|event|{
+        if let (Some(end),Some(outcome))=(event.finished_at,event.outcome){
+            let mut timings=observed.lock().unwrap();if timings.len()>=4{return;}
+            timings.push(RequestTiming{
+                stage:match event.stage{RequestStage::Generation=>"generation",RequestStage::Review=>"review",RequestStage::Repair=>"repair",RequestStage::FinalReview=>"finalReview"},
+                duration_ms:end.duration_since(event.started_at).as_secs_f64()*1000.,remaining_budget_ms:event.remaining_budget_ms,
+                outcome:match outcome{RequestOutcome::ResponseReceived=>"responseReceived",RequestOutcome::Failed=>"failed",RequestOutcome::Cancelled=>"cancelled",RequestOutcome::TimedOut=>"timedOut",RequestOutcome::Interrupted=>"interrupted"},
+            });
+        }
+    });
+    let endpoint=super::endpoints(config)?.rewrite;let context=super::writing_context::for_mode(mode);
+    let mut outcome=execute_until_with_review_format(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
+        CancellationToken::new(),&endpoint,execution,None,context.as_ref(),Some(format)).await;
+    outcome.trace.requests=std::mem::take(&mut *timings.lock().unwrap());Ok(outcome)
 }
 /// Explicit diagnostic entry point; it does not read credentials, persist or input.
 pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,wait:Duration)->Result<Outcome,CloudError>{

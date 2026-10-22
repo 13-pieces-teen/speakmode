@@ -86,6 +86,28 @@ async fn test_run(server:&Server,input:&str,wait:Duration)->Outcome{
     let(config,mode,source)=fixture(input);
     execute(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,wait).await
 }
+#[tokio::test]
+async fn ordered_review_runs_through_real_http_without_bypassing_review(){
+    let input="请先检查麦克风，暂时不要发布。";
+    let ordered=r#"{"decision":"accept","checks":["pass","pass","pass","pass","pass"],"issues":[]}"#;
+    let server=Server::new(vec![Reply::draft(input),Reply::new(ordered)]).await;
+    let(config,mode,source)=fixture(input);let before=source.clone();
+    let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
+        CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,None,Some(semantic_review::MinimumReviewFormat::Ordered)).await;
+    assert!(out.result.is_ok());assert_eq!(out.trace.calls,2);assert_eq!(server.count(),2);assert_eq!(source,before);
+    assert_eq!(out.trace.review.unwrap().protocol_version,semantic_review::ORDERED_REVIEW_VERSION);
+}
+#[tokio::test]
+async fn malformed_ordered_review_never_authorizes_a_draft(){
+    let input="请先检查麦克风，暂时不要发布。";
+    for content in [r#"{"decision":"accept","checks":["pass","pass","pass","pass"],"issues":[]}"#,
+        r#"{"decision":"accept","checks":["pass","fail","pass","pass","pass"],"issues":[]}"#] {
+        let server=Server::new(vec![Reply::draft(input),Reply::new(content)]).await;let(config,mode,source)=fixture(input);
+        let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
+            CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,None,Some(semantic_review::MinimumReviewFormat::Ordered)).await;
+        assert!(out.result.is_err());assert_eq!(out.trace.calls,2);assert_eq!(server.count(),2);assert!(!out.trace.repair_attempted);
+    }
+}
 #[test]
 fn all_modes_share_cleanup_and_explicit_layout_cannot_be_rerouted(){
     let(config,mut mode,source)=fixture("嗯，第一点网络，呃，第二点麦克风。");
