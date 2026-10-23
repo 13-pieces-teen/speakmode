@@ -52,6 +52,15 @@
 
 同目录 `artifacts.json` 绑定源码 commit `ff0c1ab663187a93d80d63e6e0cf98bbfd9edf8c` 和 app tree `089903abb15058fc81532a47a3e1ac3e1cedcbcb`。打包包含 TypeScript/Vite 构建，退出 0；未安装或启动新程序。真实录音与用户质量评价仍待执行。
 
+2026-10-24 的 r3 更新了邮件正文合同、冲突偏好复核边界及有限词法回归；本轮试用改用 `output/releases/0.2.31-personalization-2026-10-24-r3/`：
+
+| 文件 | 字节数 | SHA256 |
+| --- | --- | --- |
+| SpeakMode_0.2.31_x64-setup.exe | 15,150,423 | 5891C54EBAC5D6840A4C53718793808057C4967B793766C051262AA918D2EEEC |
+| SpeakMode.exe | 28,902,912 | 262E79E4D373168C11E9FE91C5AE234210A20F6E4C60C20057C049A279543629 |
+
+r3 的 `artifacts.json` 绑定源码 commit `22368c0d43dab593c9bbb38fb7f7ee0cf2c292f5`、app tree `ce5800b4c87ef41dd536aa4e41407ac89cadf3e9`，协议为 `situational-dictation-v4` / `PERSONAL EXPRESSION CONTRACT v2`。`personalization-package-email-r3.log` 确认 TypeScript/Vite、MSVC release 与 NSIS 成功，退出 0；复制后逐文件哈希一致。构建缓存 11.851 GiB，低于 12 GiB 预算。未安装或启动；新版包不代表剩余模型误拒与真人质量已验收。
+
 源代码审阅：[Draft PR #26](https://github.com/13-pieces-teen/speakmode/pull/26)。工程就绪与真实质量验收分别跟踪，不据此合并或安装。
 
 ## 本轮发现并修复的问题
