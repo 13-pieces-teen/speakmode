@@ -11,4 +11,4 @@ app/public/fonts/OFL.txt -text
 *.woff2 -text
 *.crate -text
 # Frozen evaluation manifests retain the exact bytes recorded in their receipts.
-docs/experiments/fixtures/personalization*.json -text
+docs/experiments/fixtures/personalization*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
