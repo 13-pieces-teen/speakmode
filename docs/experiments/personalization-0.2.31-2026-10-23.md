@@ -23,10 +23,10 @@
 | 检查 | 当前结果 | 证据与边界 |
 | --- | --- | --- |
 | Windows desktop 编译 | PASS | `personalization-check-r2.log`；使用现有 MSVC 工具链及共享缓存 |
-| 完整 Rust library 测试 | PASS：948 passed，0 failed，4 ignored | `personalization-test-r2.log`；包含真实 SQLite、协调器、mock HTTP；不使用麦克风或真实模型 |
-| TypeScript 与 Vite 构建 | PASS | `personalization-frontend-build-20261023.log`；前端版本 0.4.28 |
+| 完整 Rust library 测试 | PASS：950 passed，0 failed，4 ignored | `personalization-test-final.log`；包含真实 SQLite、协调器、mock HTTP；不使用麦克风或真实模型 |
+| TypeScript 与 Vite 构建 | PASS | `personalization-integrated-build.log`；前端版本 0.4.28，含主分支最新统计切换修复 |
 | 前端配置校验 | PASS：11/11 | `personalization-helper-20261023.json` |
-| 隔离 Edge 行为检查 | PASS：17/17 | `personalization-ui-20261023-complete/receipt.json`；合成 IPC，无外部请求、pageErrors 为 0 |
+| 隔离 Edge 行为检查 | PASS：17/17 | `personalization-ui-20261023-integrated/receipt.json`；合成 IPC，无外部请求、pageErrors 为 0 |
 | 窗口与键盘 | PASS | 1280、800、430 宽度，键盘页签、减少动态效果；已查看截图 |
 | 安装包与 EXE | PASS | `personalization-package.log`，退出 0；文件版本均为 0.2.31。未安装或启动 |
 | 职业／习惯消融的真实模型质量 | NOT_RUN | 尚无质量胜率或修改量改善结论 |
@@ -49,6 +49,7 @@
 2. 重放完成事件可能覆盖用户已保存的显式评价。完成事件现保留已有评价，显式改评价仍可生效；取消对照会退出有效评价分母。
 3. 历史确认纠错的本次语言选择原先可能与 receipt 不一致，现统一冻结后传给生成与回执。
 4. 试写期间可以立即停用画像，前后端均拒绝取消后迟到的成功结果。
+5. 三阶段除校验实际请求内容，还校验本地画像版本，即使两个版本传给模型的文字相同，也不能交叉使用回执。金额标签识别只检查就近有界窗口，避免长文中每个数字重复复制整段前文。
 
 金额守卫仍是有限数值检查，不证明金额归属或一般语义保真，也不覆盖无单位的英文拼写数词。职业背景不能替代原始内容和独立复核。
 

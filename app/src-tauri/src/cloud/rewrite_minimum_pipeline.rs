@@ -59,6 +59,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
             let request=minimum::prepare_with_writing_context(config,mode,source,dictionary,true,context)?;
             checkpoint(&cancel,deadline)?;trace.calls+=1;
             let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
+            request.validate_personalization(context)?;
             minimum::parse(&content,mode,source,&request)?
         };
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
@@ -71,6 +72,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
+        request.validate_personalization(context)?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&draft).map_err(safe_error)?;
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
@@ -81,6 +83,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         request.bind_personalization(context);
         checkpoint(&cancel,deadline)?;trace.calls+=1;trace.repair_attempted=true;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Repair).await?;
+        request.validate_personalization(context)?;
         let mut repaired=local_repair::apply(&content,&request,mode,source,&draft).map_err(safe_error)?;
         super::format_draft_spoken(&mut repaired,super::spoken_english(source,context));
         super::review_admission(source,&repaired).map_err(safe_error)?;
@@ -95,6 +98,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::FinalReview).await?;
+        request.validate_personalization(context)?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&repaired).map_err(safe_error)?;
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(&cancel,deadline)?;

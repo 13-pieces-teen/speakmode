@@ -112,6 +112,7 @@ pub(super) async fn run_with_writing_context(client:&reqwest::Client,config:&Pro
         request.bind_personalization(writing);
         trace.calls+=1;
         let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
+        request.validate_personalization(writing)?;
         let mut draft=minimum::parse(&content,mode,&reference,&request)?;
         normalize_draft_dictionary(&reference,dictionary,&mut draft);
         format_draft_spoken(&mut draft,context.language==DraftLanguage::English||spoken_english(&reference,None));
@@ -132,6 +133,7 @@ pub(super) async fn run_with_writing_context(client:&reqwest::Client,config:&Pro
             trace.calls+=1;
             let reviewed=async {
                 let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
+                request.validate_personalization(writing)?;
                 semantic_review::parse_minimum(&content,&request,mode,&reference,&candidate.draft)
             }.await;
             match reviewed {

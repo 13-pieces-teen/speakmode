@@ -53,6 +53,26 @@ fn changing_personalization_after_preparation_cannot_reuse_generation_or_review(
     assert_eq!(semantic_review::parse_minimum(ACCEPT,&review,&mode,&source,&draft).err().unwrap().code,"stale_semantic_review");
 }
 
+#[test]
+fn same_provider_preferences_do_not_allow_swapping_profile_revisions_in_any_stage() {
+    let input="我感觉这个方案还没有太能做到。";
+    let (config,mode,source)=fixture(input);let context=personalized_context(AppWritingScene::Technical);
+    let mut changed=context.clone();changed.personalization.as_mut().unwrap().version+=1;
+    assert_eq!(context.personalization.as_ref().unwrap().provider_data(),changed.personalization.as_ref().unwrap().provider_data());
+    let request=minimum::prepare_with_writing_context(&config,&mode,&source,&DictionarySnapshot::default(),false,Some(&context)).unwrap();
+    assert!(request.validate_personalization(Some(&context)).is_ok());assert!(request.validate_personalization(Some(&changed)).is_err());
+    let draft=minimum::parse(&json!({"resolvedMode":"light","text":input}).to_string(),&mode,&source,&request).unwrap();
+    let request=semantic_review::prepare_minimum_with_writing_context(&config,&mode,&source,&draft,Some(&context)).unwrap();
+    assert!(request.validate_personalization(Some(&context)).is_ok());assert!(request.validate_personalization(Some(&changed)).is_err());
+    let content=json!({"decision":"reject","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"fail"},
+        "issues":[{"dimension":"cleanup","sourceQuote":input,"draftQuote":input,"reason":"局部搭配不自然"}]}).to_string();
+    let review=semantic_review::parse_minimum(&content,&request,&mode,&source,&draft).unwrap();
+    let mut repair=local_repair::prepare(&config,&mode,&source,&draft,&review).unwrap().unwrap();
+    crate::cloud::rewrite::writing_context::attach(&mut repair.body,&mode,&source,&context,crate::cloud::rewrite::writing_context::Stage::Repair).unwrap();
+    repair.bind_personalization(Some(&context));
+    assert!(repair.validate_personalization(Some(&context)).is_ok());assert!(repair.validate_personalization(Some(&changed)).is_err());
+}
+
 #[tokio::test]
 async fn occupational_background_does_not_waive_native_fact_checks() {
     let input="预算三千，暂时不发布。";let context=personalized_context(AppWritingScene::Technical);

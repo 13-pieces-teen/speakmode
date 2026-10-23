@@ -182,6 +182,7 @@ pub struct MinimumReviewRequest {
     ordered: bool,
     protocol_version: &'static str,
     personalization_hash: Option<String>,
+    personalization_snapshot_hash: Option<String>,
 }
 pub fn prepare_minimum(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult)->Result<MinimumReviewRequest,CloudError> {
     let context=super::writing_context::for_mode(mode);
@@ -232,7 +233,7 @@ cleanup：无意义卡顿、残句和不自然搭配已修复。“是现在的�
     let mut request=MinimumReviewRequest{body:json!({"model":config.rewrite_model,"messages":[
         {"role":"system","content":prompt},{"role":"user","content":serde_json::to_string(&data).expect("review data serialize")}],
         "response_format":{"type":"json_object"},"enable_thinking":false,"temperature":0,"max_tokens":512,"stream":false}),
-        binding:ReviewBinding{source_sha256:fingerprint(source),draft_sha256:fingerprint(draft)},mode_hash:fingerprint(mode),ordered,protocol_version,personalization_hash:None};
+        binding:ReviewBinding{source_sha256:fingerprint(source),draft_sha256:fingerprint(draft)},mode_hash:fingerprint(mode),ordered,protocol_version,personalization_hash:None,personalization_snapshot_hash:None};
     if let Some(context)=context { super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Review)?; }
     super::spoken_format::attach(&mut request.body,source,super::spoken_english(source,context))?;
     request.bind_personalization(context);
@@ -241,6 +242,13 @@ cleanup：无意义卡顿、残句和不自然搭配已修复。“是现在的�
 impl MinimumReviewRequest {
     pub(super) fn bind_personalization(&mut self,context:Option<&crate::core::writing_context::WritingContext>) {
         self.personalization_hash=context.and_then(|c|c.personalization.as_ref()).map(|_|fingerprint(&self.body["messages"]));
+        self.personalization_snapshot_hash=context.and_then(|c|c.personalization.as_ref()).map(fingerprint);
+    }
+    pub(super) fn validate_personalization(&self,context:Option<&crate::core::writing_context::WritingContext>)->Result<(),CloudError> {
+        if self.personalization_snapshot_hash!=context.and_then(|c|c.personalization.as_ref()).map(fingerprint) {
+            return Err(error("stale_semantic_review","核对画像版本已变化"));
+        }
+        Ok(())
     }
 }
 pub fn parse_minimum(content:&str,request:&MinimumReviewRequest,mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult)->Result<SemanticReview,CloudError> {

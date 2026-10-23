@@ -24,6 +24,7 @@ pub struct MinimumRequest {
     terms: Option<ProtectedTerms>,
     english_format: bool,
     personalization_hash: Option<String>,
+    personalization_snapshot_hash: Option<String>,
 }
 pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision,
     dictionary: &DictionarySnapshot, protect_long: bool) -> Result<MinimumRequest, CloudError> {
@@ -55,11 +56,19 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
     super::format_requests::attach(&mut body,&source.text())?;
     super::spoken_format::attach(&mut body,source,english_format)?;
     let personalization_hash=context.and_then(|c|c.personalization.as_ref()).map(|_|hash(&body["messages"]));
-    Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms,english_format,personalization_hash})
+    let personalization_snapshot_hash=context.and_then(|c|c.personalization.as_ref()).map(hash);
+    Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms,english_format,personalization_hash,personalization_snapshot_hash})
 }
 impl MinimumRequest {
     pub(super) fn bind_personalization(&mut self,context:Option<&crate::core::writing_context::WritingContext>) {
         self.personalization_hash=context.and_then(|c|c.personalization.as_ref()).map(|_|hash(&self.body["messages"]));
+        self.personalization_snapshot_hash=context.and_then(|c|c.personalization.as_ref()).map(hash);
+    }
+    pub(super) fn validate_personalization(&self,context:Option<&crate::core::writing_context::WritingContext>)->Result<(),CloudError> {
+        if self.personalization_snapshot_hash!=context.and_then(|c|c.personalization.as_ref()).map(hash) {
+            return Err(CloudError::new("stale_rewrite","rewrite","整理画像版本已变化"));
+        }
+        Ok(())
     }
 }
 

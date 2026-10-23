@@ -69,7 +69,12 @@ fn grouped_suffix(text: &str) -> bool {
 // are already excluded by the numeric scanner's adjacent-letter rule.
 fn explicit_amount_label(text: &str, start: usize, end: usize) -> bool {
     if text[end..].chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') { return false; }
-    let before = text[..start].trim_end();
+    // Inspect a fixed local suffix before trimming/case folding. A numeric-dense
+    // long dictation must not copy its entire growing prefix for each scalar.
+    const WINDOW_CHARS: usize = 48;
+    let window_start = text[..start].char_indices().rev().nth(WINDOW_CHARS)
+        .map_or(0, |(index, c)| index + c.len_utf8());
+    let before = text[window_start..start].trim_end();
     let before = before.strip_suffix('负').or_else(|| before.strip_suffix('-')).unwrap_or(before).trim_end();
     let before = before.strip_suffix('：').or_else(|| before.strip_suffix(':')).unwrap_or(before).trim_end();
     let chinese = ["是", "为", "先"].iter().find_map(|word| before.strip_suffix(word)).unwrap_or(before).trim_end();
@@ -77,7 +82,9 @@ fn explicit_amount_label(text: &str, start: usize, end: usize) -> bool {
     let lower = before.to_ascii_lowercase();
     let english = lower.strip_suffix(" is").unwrap_or(&lower).trim_end();
     ["budget", "amount", "price", "cost"].iter().any(|label| english.strip_suffix(label)
-        .is_some_and(|prefix| prefix.chars().next_back().is_none_or(|c| !c.is_alphanumeric() && c != '_')))
+        .is_some_and(|prefix| prefix.chars().next_back()
+            .or_else(|| text[..window_start].chars().next_back())
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_')))
 }
 
 // Unit conversions here are deliberately small and exact. Percentage points
@@ -351,5 +358,21 @@ mod amount_tests {
         for (text,key) in [("预算三千元","cny:3000"),("金额3000美元","usd:3000"),("The budget is 30 dollars","usd:30"),("费用3000元","cny:3000"),("预算3个月","month:3")] {
             let facts=extract(text);assert!(facts.iter().any(|fact|fact.key==key),"{text}");assert!(amounts(text).is_empty(),"{text}");
         }
+    }
+    #[test]
+    fn amount_label_window_is_local_utf8_safe_and_handles_dense_long_inputs() {
+        let text=format!("{}预算三千", "记录🙂1234，".repeat(12_000));
+        assert!(text.chars().count()>80_000);
+        for (start,_) in text.match_indices("1234") {assert!(!explicit_amount_label(&text,start,start+4));}
+        let start=text.find("三千").unwrap();assert!(explicit_amount_label(&text,start,text.len()));
+        // A distant label does not acquire a number across an unbounded gap.
+        let distant=format!("budget{}3000", " ".repeat(49));let start=distant.find("3000").unwrap();
+        assert!(!explicit_amount_label(&distant,start,distant.len()));
+        // Clipping the preceding identifier must not invent a word boundary.
+        for prefix in [format!("rebudget{}", " ".repeat(42)),format!("_amount{}", " ".repeat(42))] {
+            let text=format!("{prefix}3000");assert!(!explicit_amount_label(&text,prefix.len(),text.len()));
+        }
+        let text=format!("{} Budget is 3000", "中🙂".repeat(30));let start=text.find("3000").unwrap();
+        assert!(explicit_amount_label(&text,start,text.len()));
     }
 }
