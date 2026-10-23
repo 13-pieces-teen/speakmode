@@ -6,10 +6,11 @@ use serde::Serialize;
 
 pub const QWEN_REALTIME_ADAPTER: &str = "qwen-realtime-v1";
 pub const QWEN_TASK_STREAMING_ADAPTER: &str = "qwen-task-streaming-v1";
+pub const GOOGLE_TRANSCRIBE_ADAPTER: &str = "google-transcribe-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum AsrProtocol { QwenRealtime, TaskStreaming, FileTranscription }
+pub enum AsrProtocol { QwenRealtime, TaskStreaming, FileTranscription, GoogleTranscription }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +50,41 @@ pub struct RewriteModel {
 #[serde(rename_all = "camelCase")]
 pub struct ModelCatalog { pub asr: Vec<AsrModel>, pub rewrite: Vec<RewriteModel> }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDescriptor {
+    pub id: &'static str, pub label: &'static str,
+    pub asr: Vec<AsrModel>, pub rewrite: Vec<RewriteModel>,
+}
+
+/// A protocol compatibility registry, not a claim of account access or quality.
+pub fn providers() -> Vec<ProviderDescriptor> {
+    let aliyun=catalog();
+    let text=|id,label,models:&[(&'static str,&'static str)]|ProviderDescriptor {id,label,asr:vec![],
+        rewrite:models.iter().map(|(id,label)|RewriteModel{id,label,implemented:true,json_schema:false}).collect()};
+    vec![
+        ProviderDescriptor{id:"aliyun",label:"阿里云百炼",asr:aliyun.asr,rewrite:aliyun.rewrite},
+        ProviderDescriptor{id:"google",label:"Google Gemini",asr:vec![AsrModel {
+            id:"gemini-3.5-transcribe",label:"Gemini 3.5 Transcribe（录音后转写）",protocol:AsrProtocol::GoogleTranscription,
+            implemented:true,adapter_version:Some(GOOGLE_TRANSCRIBE_ADAPTER),dictionary_support:DictionarySupport::Vocabulary,
+            timestamps:false,recognition_languages:LANGUAGES,product_audio_limit_seconds:420,
+        }],rewrite:vec![]},
+        text("deepseek","DeepSeek",&[("deepseek-flash","DeepSeek Flash"),("deepseek-v4-pro","DeepSeek V4 Pro")]),
+        text("kimi","Kimi",&[("kimi-k2.6","Kimi K2.6")]),
+        text("zhipu","智谱",&[("glm-4.7","GLM 4.7"),("glm-4.7-flashx","GLM 4.7 FlashX")]),
+        text("openai","OpenAI",&[("gpt-5.4-mini","GPT 5.4 Mini")]),
+        text("custom","自定义 OpenAI 兼容服务",&[]),
+    ]
+}
+
+pub fn catalog_for(config:&ProviderConfig)->ModelCatalog {
+    let registry=providers();
+    ModelCatalog {
+        asr:registry.iter().find(|p|p.id==config.provider).map(|p|p.asr.clone()).unwrap_or_default(),
+        rewrite:registry.iter().find(|p|p.id==config.rewrite_provider).map(|p|p.rewrite.clone()).unwrap_or_default(),
+    }
+}
+
 const LANGUAGES: &[&str] = &["auto", "zh", "en"];
 
 pub fn catalog() -> ModelCatalog {
@@ -79,13 +115,13 @@ pub fn catalog() -> ModelCatalog {
 }
 
 pub fn validate_asr_adapter(config: &ProviderConfig) -> Result<AsrModel, CloudError> {
-    let model = catalog().asr.into_iter().find(|m|m.id == config.asr_model)
-        .ok_or_else(||CloudError::new("unsupported_asr_model", "configuration", "此语音模型尚未列入兼容清单，请选择已接入的实时识别模型"))?;
+    let model = catalog_for(config).asr.into_iter().find(|m|m.id == config.asr_model)
+        .ok_or_else(||CloudError::new("unsupported_asr_model", "configuration", "此语音模型尚未列入该供应商兼容清单，请选择已接入的识别模型"))?;
     if !model.implemented {
-        return Err(CloudError::new("asr_adapter_not_implemented", "configuration", "此模型需要另一套识别接口，当前版本尚未接入；请选择 Qwen3 实时识别模型"));
+        return Err(CloudError::new("asr_adapter_not_implemented", "configuration", "此模型需要另一套识别接口，当前版本尚未接入；请选择已接入的识别模型"));
     }
     if model.adapter_version != Some(config.adapter_version.as_str()) {
-        return Err(CloudError::new("asr_adapter_mismatch", "configuration", "语音模型与接口版本不匹配，请重新选择已接入的实时识别模型"));
+        return Err(CloudError::new("asr_adapter_mismatch", "configuration", "语音模型与接口版本不匹配，请重新选择已接入的识别模型"));
     }
     Ok(model)
 }
@@ -99,7 +135,16 @@ pub fn validate_recognition(config:&ProviderConfig,language:&str)->Result<AsrMod
 }
 
 pub fn validate_rewrite_model(config:&ProviderConfig)->Result<RewriteModel,CloudError> {
-    catalog().rewrite.into_iter().find(|m|m.id == config.rewrite_model && m.implemented)
+    if config.rewrite_provider == "custom" {
+        if config.rewrite_model.is_empty() || config.rewrite_model.len()>100
+            || !config.rewrite_model.bytes().all(|c|c.is_ascii_alphanumeric()||b"-_./:".contains(&c)) {
+            return Err(CloudError::new("invalid_model","configuration","请输入兼容服务的模型 ID"));
+        }
+        // An arbitrary ID has no owned static lifetime. The descriptor is only
+        // capability metadata; the actual model ID stays in ProviderConfig.
+        return Ok(RewriteModel{id:"custom",label:"自定义模型",implemented:true,json_schema:false});
+    }
+    catalog_for(config).rewrite.into_iter().find(|m|m.id == config.rewrite_model && m.implemented)
         .ok_or_else(||CloudError::new("unsupported_rewrite_model", "configuration", "此整理模型尚未验证接口兼容性，请选择兼容清单中的文本模型"))
 }
 

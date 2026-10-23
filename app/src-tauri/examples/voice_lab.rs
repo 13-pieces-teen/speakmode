@@ -1,6 +1,7 @@
 //! Explicit, bounded cloud experiment using only preregistered fixed PCM fixtures.
 //! This bypasses the microphone, app database writes, UI, and cross-app delivery.
 //! No secret, credential account, request header, workspace, or provider body is logged.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use chrono::Utc;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
@@ -157,7 +158,7 @@ fn config(path: &Path) -> Result<ProviderConfig, CloudError> {
     if text.len() > 16 * 1024 { return Err(lab_error("config_invalid", "云端配置超过容量限制")); }
     let config: ProviderConfig = serde_json::from_str(&text)
         .map_err(|_| lab_error("config_invalid", "云端配置格式无效"))?;
-    cloud::endpoints(&config)?;
+    lab_provider_scope::paired_voice(&config)?;
     Ok(config)
 }
 fn config_metadata(config: &ProviderConfig) -> Value {

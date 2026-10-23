@@ -250,6 +250,18 @@ fn provider_configuration_rejects_url_secret_fields_and_invalid_regions() {
     let mut store=Store::in_memory().unwrap();let mut config=store.provider_config().unwrap();config.region=Some("arbitrary-domain".into());assert!(store.save_provider_config(config,1).is_err());assert_eq!(store.provider_config().unwrap().version,1);
 }
 #[test]
+fn legacy_provider_config_keeps_aliyun_scope_and_new_stage_settings_survive_reopen() {
+    let legacy=r#"{"version":7,"provider":"aliyun","region":"beijing","workspace":"old-space","asrModel":"qwen3-asr-flash-realtime","rewriteModel":"qwen3.8-flash","adapterVersion":"qwen-realtime-v1"}"#;
+    let old:ProviderConfig=serde_json::from_str(legacy).unwrap();
+    assert_eq!(old.rewrite_provider,"aliyun");assert_eq!(old.rewrite_endpoint,None);assert_eq!(old.version,7);
+    let mut store=Store::in_memory().unwrap();
+    let mixed=ProviderConfig {provider:"google".into(),asr_model:"gemini-3.5-transcribe".into(),adapter_version:"google-transcribe-v1".into(),
+        rewrite_provider:"custom".into(),rewrite_model:"team/model:v1".into(),rewrite_endpoint:Some("https://team.example/v1".into()),..ProviderConfig::default()};
+    let saved=store.save_provider_config(mixed,1).unwrap();assert_eq!(store.provider_config().unwrap(),saved);
+    let mut bad=saved.clone();bad.rewrite_provider="deepseek".into();assert!(store.save_provider_config(bad,saved.version).is_err());
+    assert_eq!(store.provider_config().unwrap(),saved);
+}
+#[test]
 fn unicode_casefold_and_compatibility_normalization_reject_duplicate_mode_names() {
     let mut store=Store::in_memory().unwrap();store.save_mode(draft("Straße")).unwrap();assert!(store.save_mode(draft("STRASSE")).is_err());
     store.save_mode(draft("ＡＢＣ")).unwrap();assert!(store.save_mode(draft("abc")).is_err());assert!(store.save_mode(draft("自动")).is_err());

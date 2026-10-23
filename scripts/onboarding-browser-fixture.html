@@ -7,6 +7,16 @@ const initial=()=>({sequence:1,preferences:{version:1,shortcut:'alt_right',micro
 const q=window.__onboardingQA={snapshot:JSON.parse(localStorage.getItem(key)||'null')||initial(),ledger:[],details:{},channel:null,startFailure:false,asrFailure:false,fallback:false,noDevice:false};
 q.snapshot.session=null;q.snapshot.onboarding.active=false;
 const qaStep=new URLSearchParams(location.search).get('qaStep');if(['chat','document'].includes(qaStep)){q.snapshot=initial();q.snapshot.onboarding.progress.step=qaStep;if(qaStep==='document')q.snapshot.onboarding.progress.completedLessons=['chat'];}
+q.snapshot.provider.config.rewriteProvider??='aliyun';q.snapshot.provider.config.rewriteEndpoint??=null;
+const fixtureCatalog=[{id:'aliyun',label:'阿里云百炼',...copy(q.snapshot.provider.modelCatalog)},
+ {id:'google',label:'Google（录音后转写）',asr:[{id:'synthetic-google-transcribe',label:'Google 测试转写（合成夹具）',implemented:true,adapterVersion:'synthetic-google-v1'}],rewrite:[]},
+ ...[['deepseek','DeepSeek','deepseek-flash'],['kimi','Kimi','kimi-k2.6'],['zhipu','智谱','glm-4.7'],['openai','OpenAI','gpt-5.4-mini']].map(([id,label,model])=>({id,label,asr:[],rewrite:[{id:model,label:model,implemented:true}]})),
+ {id:'custom',label:'自定义兼容服务',asr:[],rewrite:[]}];
+q.snapshot.provider.providerCatalog=fixtureCatalog;
+const providerScope=stage=>{const c=q.snapshot.provider.config,id=stage==='asr'?c.provider:c.rewriteProvider;return id==='aliyun'?`${id}:${c.region}:${c.workspace||'default'}`:id==='custom'?`${id}:${c.rewriteEndpoint}`:id;};
+q.accounts=new Set(['asr','rewrite'].filter(stage=>q.snapshot.provider[`${stage}CredentialConfigured`]??q.snapshot.provider.credentialConfigured).map(providerScope));
+const updateProviderStatus=()=>{const p=q.snapshot.provider;p.asrCredentialConfigured=q.accounts.has(providerScope('asr'));p.rewriteCredentialConfigured=q.accounts.has(providerScope('rewrite'));p.configured=p.credentialConfigured=p.asrCredentialConfigured&&p.rewriteCredentialConfigured;};
+updateProviderStatus();
 const devices=()=>q.noDevice?[]:[{id:'fixture-mic',name:'QA 虚拟麦克风',available:true,isDefault:true}];
 const save=()=>localStorage.setItem(key,JSON.stringify(q.snapshot));
 const emit=(kind='changed',payload=null)=>{q.snapshot.sequence++;save();q.channel?.onmessage({sequence:q.snapshot.sequence,kind,payload:copy(payload),sessionId:q.snapshot.session?.sessionId,generation:q.snapshot.session?.generation});};
@@ -43,9 +53,8 @@ window.__TAURI_INTERNALS__={transformCallback:()=>++callback,unregisterCallback:
   o.progress.version++;emit();return copy(o);
  }
  if(name==='preferences.update'){Object.assign(q.snapshot.preferences,p.patch);q.snapshot.preferences.version++;emit();return copy(q.snapshot.preferences);}
- if(name==='provider.configure'){q.snapshot.provider.config={...p.config,version:p.expectedVersion+1};emit();return copy(q.snapshot.provider.config);}
- if(name==='credential.set'){q.snapshot.provider.configured=true;q.snapshot.provider.credentialConfigured=true;emit();return {configured:true};}
- if(name==='credential.delete'){q.snapshot.provider.configured=false;q.snapshot.provider.credentialConfigured=false;emit();return {configured:false};}
+ if(name==='provider.configure'){if(p.expectedVersion!==q.snapshot.provider.config.version)throw Error('夹具配置冲突');q.snapshot.provider.config={...p.config,version:p.expectedVersion+1};updateProviderStatus();emit();return copy(q.snapshot.provider.config);}
+ if(name==='credential.set'||name==='credential.delete'){const c=q.snapshot.provider.config;if(p.expectedProviderVersion!==c.version||!['asr','rewrite'].includes(p.stage)||p.providerAccountRef!==(p.stage==='asr'?c.provider:c.rewriteProvider))throw Error('夹具凭据范围冲突');if(name==='credential.set')q.accounts.add(providerScope(p.stage));else q.accounts.delete(providerScope(p.stage));updateProviderStatus();emit();return {configured:q.snapshot.provider.configured};}
  if(name==='session.start'){
   if(q.startFailure){q.startFailure=false;return fail('无法启动麦克风，请检查设备与系统权限。');}
   if(!q.snapshot.provider.configured)return fail('请先配置云服务 Key。');
@@ -78,7 +87,7 @@ document.getElementById('qa-asr-failure').onclick=()=>q.asrFailure=true;
 document.getElementById('qa-fallback').onclick=()=>q.fallback=true;
 document.getElementById('qa-review-failure').onclick=()=>q.reviewFailure=true;
 document.getElementById('qa-no-device').onclick=()=>{q.noDevice=!q.noDevice;emit();};
-document.getElementById('qa-no-key').onclick=()=>{q.snapshot.provider.configured=!q.snapshot.provider.configured;q.snapshot.provider.credentialConfigured=q.snapshot.provider.configured;emit();};
+document.getElementById('qa-no-key').onclick=()=>{if(q.snapshot.provider.configured)q.accounts.clear();else{q.accounts.add(providerScope('asr'));q.accounts.add(providerScope('rewrite'));}updateProviderStatus();emit();};
 document.getElementById('qa-ledger').onclick=()=>{const d=q.details[q.snapshot.session?.sessionId];document.getElementById('qa-ledger-output').textContent=JSON.stringify({commands:q.ledger.map(({name,payload})=>({name,sessionId:payload.sessionId,sourceRevisionId:payload.sourceRevisionId,baseRevisionId:payload.baseRevisionId,candidateId:payload.candidateId,acceptedFallbackRevisionId:payload.acceptedFallbackRevisionId})),source:d?.source,output:d?.output},null,2);};
 document.getElementById('qa-reset').onclick=()=>{localStorage.removeItem(key);location.reload();};
 document.getElementById('qa-legacy').onclick=()=>{const snap=initial();snap.onboarding.progress.autoShow=false;localStorage.setItem(key,JSON.stringify(snap));location.reload();};

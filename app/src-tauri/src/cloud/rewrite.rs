@@ -1,4 +1,4 @@
-use super::{CloudError, endpoints};
+use super::{CloudError, rewrite_endpoint};
 use crate::core::{BaseMode, DictionarySnapshot, ModeSnapshot, OutputBlock, ProviderConfig, SourceRevision};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -9,6 +9,11 @@ use uuid::Uuid;
 #[path="rewrite_execution.rs"]
 pub(crate) mod execution;
 use execution::{RequestStage, RewriteExecution};
+#[path="rewrite_chat_request.rs"]
+mod chat_request;
+#[cfg(test)]
+#[path="rewrite_provider_tests.rs"]
+mod provider_tests;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -163,14 +168,14 @@ pub const MINIMUM_PIPELINE_VERSION: &str = if cfg!(feature="experimental-english
     "minimum-edit-v4+minimum-review-v4+residue-hint-v2+local-repair-v2"
 } else { "minimum-edit-v3+minimum-review-ordered-v1+residue-hint-v2+local-repair-v2" };
 fn uses_minimum_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
-    writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
+    writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_provider=="aliyun" && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
 }
 fn uses_fluent_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
-    config.rewrite_model == "qwen3.8-flash" && config.region.as_deref() == Some("beijing")
+    config.rewrite_provider == "aliyun" && config.rewrite_model == "qwen3.8-flash" && config.region.as_deref() == Some("beijing")
         && mode.base_mode == BaseMode::Auto && mode.rules.trim().is_empty()
 }
 fn uses_automatic_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
-    AUTOMATIC_PROTOCOL_PROMOTED && config.rewrite_model == "qwen3.8-flash"
+    AUTOMATIC_PROTOCOL_PROMOTED && config.rewrite_provider == "aliyun" && config.rewrite_model == "qwen3.8-flash"
         && config.region.as_deref() == Some("beijing")
         && mode.base_mode == BaseMode::Auto && mode.rules.trim().is_empty()
 }
@@ -465,7 +470,7 @@ pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode
 }
 
 pub(crate) async fn rewrite_with_execution(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken, execution: RewriteExecution) -> Result<RewriteResult, CloudError> {
-    let endpoint = endpoints(config)?.rewrite;
+    let endpoint = rewrite_endpoint(config)?;
     rewrite_with_client_execution(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution).await
 }
 
@@ -475,7 +480,7 @@ pub(crate) async fn rewrite_with_writing_context(config:&ProviderConfig,secret:&
     dictionary:&DictionarySnapshot,cancel:CancellationToken,execution:RewriteExecution,
     context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError> {
     execution.checkpoint(&cancel)?;
-    let endpoint=endpoints(config)?.rewrite;
+    let endpoint=rewrite_endpoint(config)?;
     minimum_pipeline::run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,context).await
 }
 

@@ -68,6 +68,10 @@ mod retry_asr_experiment_tests;
 mod quality_foundation_tests;
 
 #[cfg(test)]
+#[path="provider_engine_tests.rs"]
+mod provider_engine_tests;
+
+#[cfg(test)]
 #[path="recovery_retention_tests.rs"]
 mod recovery_retention_tests;
 
@@ -77,8 +81,8 @@ pub enum SessionPhase {Starting,Recording,FinalizingAsr,Rewriting,Ready,Failed,I
 const RECORDING_LIMIT_MS:u64=600_000;
 const RECORDING_WARNING_MS:u64=30_000;
 const AUDIO_CACHE_RETENTION:Duration=Duration::from_secs(1800);
-fn recording_limit_remaining(duration_ms:u64)->Option<u64>{
-    let remaining=RECORDING_LIMIT_MS.saturating_sub(duration_ms);
+fn recording_limit_remaining(duration_ms:u64,limit_ms:u64)->Option<u64>{
+    let remaining=limit_ms.saturating_sub(duration_ms);
     (remaining<=RECORDING_WARNING_MS).then_some(remaining)
 }
 #[derive(Clone,Serialize)]
@@ -110,7 +114,7 @@ pub(crate) struct ActiveSession {
     diagnostic_trace:Option<TraceHandle>,caption_render_token:Option<String>,
     pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,dictionary:DictionarySnapshot,
     started_at:String,ended_at:Option<String>,capture_duration_ms:u64,
-    recording_limit_remaining_ms:Option<u64>,
+    recording_limit_ms:u64,recording_limit_remaining_ms:Option<u64>,
     first_samples:bool,provider_ready:bool,level:f32,captions:Vec<CaptionItem>,error:Option<ApiError>,
     stop:Arc<AtomicBool>,cancel:CancellationToken,worker_released:bool,
     source:Option<SourceRevision>,output:Option<OutputRevision>,
@@ -293,12 +297,13 @@ impl AppHub {
             let cache=self.db.snapshot();let mut prefs=cache.preferences;
             if let Some(lesson)=lesson { prefs.delivery_mode=DeliveryMode::Preview;prefs.default_mode_id=lesson.mode_id().into();prefs.app_writing.enabled=false;prefs.app_writing.input_context_enabled=false; }let config=cache.provider_config;let dictionary=cache.dictionary;cloud::endpoints(&config)?;
             if !i.key_configured{return Err(ApiError::new("key_required","configuration","请先在设置中配置云服务 Key"));}
+            let recording_limit_ms=cloud::models::validate_asr_adapter(&config)?.product_audio_limit_seconds.saturating_mul(1000).min(RECORDING_LIMIT_MS);
             let mode:ModeSnapshot=cache.modes.into_iter().find(|m|m.id==prefs.default_mode_id).ok_or_else(||ApiError::new("notFound","mode","默认整理方式已删除"))?.into();
             let generation=i.active.as_ref().map(|s|s.generation+1).unwrap_or(1);
             let id=Uuid::new_v4().to_string();
             i.park_retryable_failure()?;
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
@@ -308,13 +313,13 @@ impl AppHub {
         // Input position is frozen at the stop intent, so browsing or moving the
         // caret while recording does not invalidate the final delivery.
         if !self.valid_active(&id,generation){return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));}
-        let secret=match credentials::read(&config){Ok(key)=>key,Err(e)=>{self.fail(&id,generation,e.into(),true);return Err(ApiError::new("key_required","credentials","无法读取本应用 Key").for_session(&id,generation));}};
+        let secrets=match credentials::read_session(&config){Ok(keys)=>keys,Err(e)=>{let error=ApiError::from(e).for_session(&id,generation);self.fail(&id,generation,error.clone(),true);return Err(error);}};
         {let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));};s.worker_released=false;}
         self.publish_session();
         let practice=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some());
         if !practice { let _=self.native_action("recording",true); }
         let hub=Arc::clone(self);let job_id=id.clone();
-        tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secret).await;});
+        tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secrets).await;});
         Ok(json!({"sessionId":id,"generation":generation,"state":"starting"}))
     }
     fn begin_stop_target(&self,p:&Value,intent:Instant)->Result<Option<(String,u64)>> {
@@ -587,7 +592,7 @@ impl AppHub {
         let (publish,reached)={let mut i=self.inner.lock().unwrap();
             let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.stop.load(Ordering::SeqCst)&&matches!(s.phase,SessionPhase::Starting|SessionPhase::Recording))else{return false;};
             s.capture_duration_ms=duration_ms;
-            let remaining=recording_limit_remaining(duration_ms);
+            let remaining=recording_limit_remaining(duration_ms,s.recording_limit_ms);
             let publish=remaining.map(|ms|ms.div_ceil(1000))!=s.recording_limit_remaining_ms.map(|ms|ms.div_ceil(1000));
             s.recording_limit_remaining_ms=remaining;
             let reached=remaining==Some(0);
@@ -602,7 +607,7 @@ impl AppHub {
         reached
     }
 
-    async fn record_pipeline(self:Arc<Self>,id:String,generation:u64,config:ProviderConfig,prefs:Preferences,_mode:ModeSnapshot,dictionary:DictionarySnapshot,secret:String) {
+    async fn record_pipeline(self:Arc<Self>,id:String,generation:u64,config:ProviderConfig,prefs:Preferences,_mode:ModeSnapshot,dictionary:DictionarySnapshot,secrets:credentials::SessionCredentials) {
         let trace=self.trace(&id,generation);
         if !self.valid_active(&id,generation){self.fail(&id,generation,ApiError::new("cancelled","session","口述已取消"),platform::audio::capture_resources_released());return;}
         let attempt=Uuid::new_v4().to_string();
@@ -626,7 +631,7 @@ impl AppHub {
             AsrProgress::Diagnostics(metadata)=>event_hub.diagnostics.asr(callback_trace.as_ref(),&metadata),
             progress=>event_hub.accept_asr_progress(&event_id,generation,&event_attempt,progress),
         });
-        let result=asr::run(config.clone(),secret.clone(),prefs.language.clone(),dictionary,attempt.clone(),audio_rx,cancel.clone(),callback).await;
+        let result=asr::run(config.clone(),secrets.asr,prefs.language.clone(),dictionary,attempt.clone(),audio_rx,cancel.clone(),callback).await;
         if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}
         // Any ASR early failure aborts capture; normal finish has already drained it.
         if result.is_err(){let i=self.inner.lock().unwrap();if let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation){s.stop.store(true,Ordering::SeqCst);}}
@@ -647,7 +652,7 @@ impl AppHub {
         self.diagnostics.lengths(trace.as_ref(),summary.duration_ms(),Some(source.text().chars().count()));
         if !self.valid_active(&id,generation){return;}
         if let Err(error)=self.checkpoint_async(&id,generation,source).await{self.fail(&id,generation,error,true);return;}
-        self.finish_rewrite(id,generation,secret).await;
+        self.finish_rewrite(id,generation,secrets.rewrite).await;
     }
 
     fn prepare_checkpoint(&self,id:&str,generation:u64,source:SourceRevision)->Result<(SessionSeed,String,Arc<CommitGuard>)> {
@@ -915,7 +920,7 @@ impl AppHub {
             if text(p,"pendingCommitId")?!=pending_id{return Err(ApiError::new("save_expired","recovery","保存身份已过期"));}
             (s.id.clone(),s.generation,pending_id,pending,s.config.clone())};
         match pending {
-            PendingCommit::Source(_seed,source)=>{cloud::endpoints(&config)?;let secret=credentials::read(&config)?;
+            PendingCommit::Source(_seed,source)=>{cloud::rewrite_endpoint(&config)?;let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
                 {let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
                     if s.id!=id||s.generation!=generation||s.busy()||s.pending.as_ref().is_none_or(|(key,_)|key!=&pending_id){return Err(ApiError::new("save_expired","recovery","保存请求已过期"));}
                     s.cancel=CancellationToken::new();s.reason=CreationReason::Retry;s.processing_worker_released=false;s.error=None;s.caption_render_token=None;
@@ -947,8 +952,8 @@ impl AppHub {
         let (config,generation)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||!s.view().can_retry_rewrite{return Err(ApiError::new("rewrite_unavailable","recovery","这条口述不能直接重试整理，请到记录中操作"));}
             (s.config.clone(),s.generation)};
-        cloud::endpoints(&config)?;
-        let secret=credentials::read(&config)?;
+        cloud::rewrite_endpoint(&config)?;
+        let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
         {let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=generation||!s.view().can_retry_rewrite{return Err(ApiError::new("stale_session","recovery","整理请求已过期"));}
             s.cancel=CancellationToken::new();s.phase=SessionPhase::Rewriting;s.reason=CreationReason::Retry;s.error=None;s.processing_worker_released=false;s.caption_render_token=None;
@@ -965,7 +970,7 @@ impl AppHub {
             if p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","这次识别尝试已经变化"));}
             (s.id.clone(),s.generation,s.config.clone())};
         cloud::endpoints(&config)?;
-        let secret=credentials::read(&config)?;
+        let secrets=credentials::read_session(&config)?;
         let (generation,language,dictionary,cache,cancel,attempt)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=old_generation||!s.view().can_retry_asr||p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","识别请求已过期"));}
             s.generation+=1;s.cancel=CancellationToken::new();s.phase=SessionPhase::FinalizingAsr;s.reason=CreationReason::Retry;s.error=None;s.captions.clear();s.processing_worker_released=false;
@@ -989,7 +994,7 @@ impl AppHub {
             AsrProgress::Diagnostics(metadata)=>hub.diagnostics.asr(callback_trace.as_ref(),&metadata),
             progress=>hub.accept_asr_progress(&event_id,generation,&event_attempt,progress),
         });
-        let result=asr::run(config.clone(),secret.clone(),language,dictionary,attempt.clone(),rx,cancel,callback).await;
+        let result=asr::run(config.clone(),secrets.asr,language,dictionary,attempt.clone(),rx,cancel,callback).await;
         if result.is_ok(){self.diagnostics.mark(trace.as_ref(),Stage::FinalAsrReceived);}producer_stop.cancel();let _=producer.await;
         let rows=match result{Ok(v)=>v,Err(e)=>{self.fail(&id,generation,e.into(),true);drop(processing);return self.scoped_view(&id,generation);}};
         if rows.is_empty(){self.fail(&id,generation,ApiError::new("empty_recording","asr","未识别到有效语音"),true);drop(processing);return self.scoped_view(&id,generation);}
@@ -997,7 +1002,7 @@ impl AppHub {
         let duration=self.inner.lock().unwrap().active.as_ref().filter(|s|s.id==id&&s.generation==generation).map(|s|s.capture_duration_ms).unwrap_or(0);
         self.diagnostics.lengths(trace.as_ref(),duration,Some(source.text().chars().count()));
         if let Err(error)=self.checkpoint_async(&id,generation,source).await{self.fail(&id,generation,error.clone(),true);return Err(error);}
-        self.finish_rewrite(id.clone(),generation,secret).await;drop(processing);
+        self.finish_rewrite(id.clone(),generation,secrets.rewrite).await;drop(processing);
         self.scoped_view(&id,generation)
     }
     fn scoped_view(&self,id:&str,generation:u64)->Result<Value> {

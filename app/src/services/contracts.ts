@@ -21,10 +21,11 @@ export interface HistorySummary { rewriteFallback?:RewriteFallbackReason; sessio
 export interface HistoryPage { items:HistorySummary[]; total:number; nextCursor:number|null }
 export interface UsageTotals { count:number; sourceCharCount:number; captureDurationMs:number }
 export interface DailyUsage extends UsageTotals { date:string }
-export interface ProviderConfig { version:number; provider:string; region:string|null; workspace:string|null; asrModel:string; rewriteModel:string; adapterVersion:string }
+export interface ProviderConfig { version:number; provider:string; rewriteProvider:string; rewriteEndpoint:string|null; region:string|null; workspace:string|null; asrModel:string; rewriteModel:string; adapterVersion:string }
 export interface ProviderModelOption { id:string; label:string; implemented:boolean; adapterVersion?:string|null; dictionarySupport?:string; protocol?:string; timestamps?:boolean; recognitionLanguages?:string[]; productAudioLimitSeconds?:number; jsonSchema?:boolean }
 export interface ProviderModelCatalog { asr:ProviderModelOption[]; rewrite:ProviderModelOption[] }
-export interface ProviderStatus { config:ProviderConfig; configured:boolean; credentialConfigured?:boolean; status?:string; message?:string; modelCatalog?:ProviderModelCatalog }
+export interface ProviderDefinition extends ProviderModelCatalog { id:string; label:string }
+export interface ProviderStatus { config:ProviderConfig; configured:boolean; credentialConfigured?:boolean; asrCredentialConfigured?:boolean; rewriteCredentialConfigured?:boolean; status?:string; message?:string; modelCatalog?:ProviderModelCatalog; providerCatalog?:ProviderDefinition[] }
 export interface AudioDevice { id:string; name:string; isDefault?:boolean; available?:boolean }
 export interface DictionaryEntry { id:string; term:string; createdAt:string; updatedAt:string }
 export interface DictionarySnapshot { version:number; entries:DictionaryEntry[] }
@@ -41,7 +42,7 @@ export interface RestorePatch { blockId:string; start:number; end:number; source
 export interface CorrectionPatch { blockId:string; start:number; end:number; expectedText:string; replacement:string }
 export interface CorrectionReceipt { detail:HistoryDetail; dictionary:DictionarySnapshot|null; dictionaryStatus:'added'|'existing'|'notRequested' }
 export const initialPreferences:NativePreferences={version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',softVoiceEnabled:false,appWriting:defaultAppWriting,keepHistory:true,launchAtLogin:false};
-export const initialProvider:ProviderStatus={configured:false,config:{version:1,provider:'aliyun',region:null,workspace:null,asrModel:'qwen3-asr-flash-realtime',rewriteModel:'qwen3.8-flash',adapterVersion:'qwen-realtime-v1'}};
+export const initialProvider:ProviderStatus={configured:false,config:{version:1,provider:'aliyun',rewriteProvider:'aliyun',rewriteEndpoint:null,region:null,workspace:null,asrModel:'qwen3-asr-flash-realtime',rewriteModel:'qwen3.8-flash',adapterVersion:'qwen-realtime-v1'}};
 
 
 

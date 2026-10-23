@@ -1,5 +1,6 @@
 //! Fixed, paired synthetic-text diagnostic: 4 cases x 3 modes x 2 prompts.
 //! No history/audio access, model changes, retries or automated quality scores.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use chrono::Utc;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -33,7 +34,7 @@ fn read_config(path: &Path) -> Result<ProviderConfig, CloudError> {
         .map_err(|_|error("config_unavailable", "没有有效云端配置"))?;
     if text.len() > 16 * 1024 { return Err(error("config_invalid", "云端配置超过容量限制")); }
     let config: ProviderConfig = serde_json::from_str(&text).map_err(|_|error("config_invalid", "云端配置格式无效"))?;
-    cloud::endpoints(&config)?; Ok(config)
+    lab_provider_scope::rewrite_endpoint(&config)?; Ok(config)
 }
 fn mode(base: BaseMode, rules: &str) -> ModeSnapshot {
     ModeSnapshot {mode_id:format!("lab-{base:?}"),name:format!("{base:?}"),base_mode:base,rules:rules.into(),revision:1}
@@ -107,7 +108,7 @@ impl Evidence {
 }
 async fn request(client: &reqwest::Client, config: &ProviderConfig, secret: &str, body: &Value) -> Result<Value,CloudError> {
     let operation = async {
-        let mut request = client.post(cloud::endpoints(config)?.rewrite).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
+        let mut request = client.post(lab_provider_scope::rewrite_endpoint(config)?).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
         if let Some(workspace) = config.workspace.as_deref().filter(|workspace|!workspace.is_empty()) { request=request.header("X-DashScope-WorkSpace", workspace); }
         let mut response = request.send().await.map_err(|failure|error(if failure.is_timeout(){"rewrite_timeout"}else{"rewrite_network"}, "合成实验请求未完成"))?;
         if !response.status().is_success() {
@@ -159,7 +160,7 @@ async fn run(fixture_path: &Path, baseline_path: &Path, config_path: &Path, out:
     // Durable, immutable-per-run preregistration precedes credential access.
     evidence.write(&json!({"kind":"preregistration","receipt":receipt}), &receipt)?;
     if plan_only {println!("planned_only: 24 calls; no credential access or network");return Ok(());}
-    let secret = match cloud::credentials::read(&config) {
+    let secret = match cloud::credentials::read_for(&config, cloud::credentials::CredentialStage::Rewrite) {
         Ok(secret)=>secret,
         Err(failure)=>{receipt["status"]=json!("halted");receipt["error"]=safe(&failure);evidence.write(&json!({"kind":"credentialFailure","error":safe(&failure)}),&receipt)?;return Ok(());}
     };

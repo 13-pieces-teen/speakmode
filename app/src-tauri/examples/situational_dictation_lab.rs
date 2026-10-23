@@ -1,4 +1,5 @@
 //! Explicit finite text evaluation. Read-only config; no audio/history/host capture.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use speakmode_lib::{cloud::{self,rewrite},core::{BaseMode,ModeSnapshot,ProviderConfig,SourceRevision,SourceItem,writing_context::WritingContext}};
 use serde::Deserialize;
 use serde_json::json;
@@ -39,7 +40,7 @@ async fn main()->anyhow::Result<()> {
     }
     let db=Connection::open_with_flags(&args[0],OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     let raw:String=db.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|r|r.get(0))?;
-    anyhow::ensure!(raw.len()<16*1024,"config too large");let config:ProviderConfig=serde_json::from_str(&raw)?;cloud::endpoints(&config)?;drop(db);
+    anyhow::ensure!(raw.len()<16*1024,"config too large");let config:ProviderConfig=serde_json::from_str(&raw)?;lab_provider_scope::rewrite_endpoint(&config)?;drop(db);
     let metadata=json!({"scope":fixture.scope,"protocol":fixture.protocol,"maximumCalls":paths*4,"maximumPaths":paths,
         "fixtureSha256":format!("{:x}",Sha256::digest(&bytes)),"provider":config.provider,"model":config.rewrite_model,"region":config.region,
         "waitPolicy":"same production source-length deadline for baseline and context","deliveryAuthorized":false});
@@ -48,7 +49,7 @@ async fn main()->anyhow::Result<()> {
     let mut output=OpenOptions::new().write(true).create_new(true).open(&args[2])?;
     let mut journal=OpenOptions::new().write(true).create_new(true).open(format!("{}.jsonl",args[2]))?;
     writeln!(journal,"{}",metadata)?;journal.flush()?;
-    let secret=cloud::credentials::read(&config)?;let mut rows=Vec::new();let mut actual_calls=0;
+    let secret=cloud::credentials::read_for(&config,cloud::credentials::CredentialStage::Rewrite)?;let mut rows=Vec::new();let mut actual_calls=0;
     'cases: for case in &fixture.cases {
         for baseline in [true,false] {
             if baseline&&!case.baseline{continue;}

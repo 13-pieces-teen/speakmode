@@ -3,6 +3,7 @@
 //! Flow reviews every shape-valid, admitted draft; legacy checks are diagnostics.
 //! Credentials/config are read-only. Every call is preregistered and journaled.
 #![recursion_limit="256"]
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use chrono::Utc;
 use rusqlite::{Connection,OpenFlags};
 use serde::Deserialize;
@@ -45,7 +46,7 @@ fn read_config(path:&Path)->Result<ProviderConfig,CloudError>{
         .map_err(|_|error("config_unavailable","没有有效云端配置"))?;
     if text.len()>16*1024{return Err(error("config_invalid","云端配置超过容量限制"));}
     let config:ProviderConfig=serde_json::from_str(&text).map_err(|_|error("config_invalid","云端配置格式无效"))?;
-    cloud::endpoints(&config)?;Ok(config)
+    lab_provider_scope::rewrite_endpoint(&config)?;Ok(config)
 }
 #[derive(Deserialize)]#[serde(deny_unknown_fields,rename_all="camelCase")]
 struct Case{id:String,source_items:Vec<String>,draft:Option<Draft>,expected_decision:Option<String>,reason:Option<String>,category:Option<String>}
@@ -134,7 +135,7 @@ impl Evidence{
 struct RawResponse{status:u16,body:String}
 async fn request(client:&reqwest::Client,config:&ProviderConfig,secret:&str,body:&Value)->Result<RawResponse,CloudError>{
     let operation=async{
-        let mut request=client.post(cloud::endpoints(config)?.rewrite).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
+        let mut request=client.post(lab_provider_scope::rewrite_endpoint(config)?).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
         if let Some(workspace)=config.workspace.as_deref().filter(|value|!value.is_empty()){request=request.header("X-DashScope-WorkSpace",workspace);}
         let mut response=request.send().await.map_err(|e|error(if e.is_timeout(){"rewrite_timeout"}else{"rewrite_network"},"实验请求未完成"))?;
         let status=response.status().as_u16();let mut bytes=Vec::new();
@@ -212,7 +213,7 @@ fn projection(stage:Stage,source:&SourceRevision,accepted:bool,elapsed:u64)->Val
 }
 async fn run(options:Options)->Result<(),CloudError>{
     let (fixture,cases,fixture_hash)=read_fixture(&options.fixture,options.stage)?;
-    let saved=read_config(&options.config)?;let mut config=saved.clone();if let Some(model)=&options.model{config.rewrite_model=model.clone();}cloud::endpoints(&config)?;
+    let saved=read_config(&options.config)?;let mut config=saved.clone();if let Some(model)=&options.model{config.rewrite_model=model.clone();}lab_provider_scope::rewrite_endpoint(&config)?;
     let plans=plan(&cases,options.stage,options.prompt_profile,&config)?;
     let plan_json=cases.iter().zip(&plans).enumerate().map(|(index,(case,planned))|json!({"index":index,"caseId":case.id,"source":planned.source,"draft":planned.draft,
         "requestBody":planned.body,"requestSha256":hash(&serde_json::to_vec(&planned.body).unwrap()),"messagesSha256":hash(&serde_json::to_vec(&planned.body["messages"]).unwrap()),"binding":planned.binding,
@@ -235,7 +236,7 @@ async fn run(options:Options)->Result<(),CloudError>{
         "semanticVerdict":"MODEL_REVIEW_NOT_INDEPENDENT_HUMAN_PROOF","startedAt":Utc::now().to_rfc3339()});
     let mut evidence=Evidence::new(&options.out)?;evidence.write(&json!({"kind":"preregistration","receipt":receipt}),&receipt)?;
     if options.plan_only{println!("planned_only: {} cases, <= {} calls; no credentials or network",cases.len(),options.stage.maximum(cases.len()));return Ok(());}
-    let secret=match cloud::credentials::read(&config){Ok(secret)=>secret,Err(failure)=>{receipt["status"]=json!("halted");receipt["error"]=safe(&failure);evidence.write(&json!({"kind":"credentialFailure","error":safe(&failure)}),&receipt)?;return Err(error("credential_unavailable","未发请求；凭据不可用，实验记录已保留"));}};
+    let secret=match cloud::credentials::read_for(&config,cloud::credentials::CredentialStage::Rewrite){Ok(secret)=>secret,Err(failure)=>{receipt["status"]=json!("halted");receipt["error"]=safe(&failure);evidence.write(&json!({"kind":"credentialFailure","error":safe(&failure)}),&receipt)?;return Err(error("credential_unavailable","未发请求；凭据不可用，实验记录已保留"));}};
     let client=match reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).pool_max_idle_per_host(2).pool_idle_timeout(Duration::from_secs(60)).build(){
         Ok(client)=>client,Err(_)=>{let failure=error("network_setup","不能创建实验客户端");receipt["status"]=json!("halted");receipt["error"]=safe(&failure);evidence.write(&json!({"kind":"networkSetupFailure","error":safe(&failure)}),&receipt)?;return Err(failure);}};
     let mut state=RunState::default();

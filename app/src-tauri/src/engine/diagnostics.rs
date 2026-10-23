@@ -100,7 +100,7 @@ fn rewrite_error_code(code: Option<&str>) -> Option<&'static str> {
 pub struct TraceView {
     pub run_id: String, pub session_id: String, pub generation: u64,
     pub origin: Origin, pub started_at: String, pub provider: String,
-    pub region: Option<String>, pub asr_model: String, pub rewrite_model: String,
+    pub region: Option<String>, pub asr_model: String, pub rewrite_provider: String, pub rewrite_model: String,
     pub mode_id: String, pub mode_revision: u64, pub asr_attempt_id: Option<String>,
     pub capture_duration_ms: Option<u64>, pub source_char_count: Option<usize>,
     pub bridge_queue_peak_frames: usize, pub outcome: Option<&'static str>,
@@ -140,7 +140,7 @@ impl DiagnosticsRecorder {
         let run_id=Uuid::new_v4().to_string();
         let view=TraceView {run_id:run_id.clone(),session_id:session_id.into(),generation,origin,
             started_at:chrono::Utc::now().to_rfc3339(),provider:config.provider.clone(),region:config.region.clone(),
-            asr_model:config.asr_model.clone(),rewrite_model:config.rewrite_model.clone(),mode_id:mode.mode_id.clone(),
+            asr_model:config.asr_model.clone(),rewrite_provider:config.rewrite_provider.clone(),rewrite_model:config.rewrite_model.clone(),mode_id:mode.mode_id.clone(),
             mode_revision:mode.revision,asr_attempt_id:None,capture_duration_ms:None,source_char_count:None,
             bridge_queue_peak_frames:0,outcome:None,error_code:None,
             capture:None,bridge:BridgeView::default(),asr:AsrTelemetryView::default(),rewrite:None,

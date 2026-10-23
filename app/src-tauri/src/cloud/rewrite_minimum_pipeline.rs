@@ -115,7 +115,7 @@ pub(crate) async fn run_until_with_writing_context(client:&reqwest::Client,confi
 /// this shares the production context path and never persists or delivers.
 pub async fn experiment_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     context:&crate::core::writing_context::WritingContext,wait:Duration)->Result<Outcome,CloudError>{
-    let endpoint=super::endpoints(config)?.rewrite;
+    let endpoint=super::rewrite_endpoint(config)?;
     Ok(execute_until_with_writing_context(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
         CancellationToken::new(),&endpoint,RewriteExecution::for_duration(wait),None,Some(context)).await)
 }
@@ -136,20 +136,20 @@ pub async fn experiment_with_review_format(config:&ProviderConfig,secret:&str,mo
             });
         }
     });
-    let endpoint=super::endpoints(config)?.rewrite;let context=super::writing_context::for_mode(mode);
+    let endpoint=super::rewrite_endpoint(config)?;let context=super::writing_context::for_mode(mode);
     let mut outcome=execute_until_with_review_format(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
         CancellationToken::new(),&endpoint,execution,None,context.as_ref(),Some(format)).await;
     outcome.trace.requests=std::mem::take(&mut *timings.lock().unwrap());Ok(outcome)
 }
 /// Explicit diagnostic entry point; it does not read credentials, persist or input.
 pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,wait:Duration)->Result<Outcome,CloudError>{
-    let endpoint=super::endpoints(config)?.rewrite;
+    let endpoint=super::rewrite_endpoint(config)?;
     Ok(execute(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),CancellationToken::new(),&endpoint,wait).await)
 }
 /// Fixed admissible rough draft for explicitly invoked repair diagnostics only.
 /// Production never bypasses generation through this entry point.
 pub async fn experiment_fixed(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,content:&str,wait:Duration)->Result<Outcome,CloudError>{
-    let endpoint=super::endpoints(config)?.rewrite;
+    let endpoint=super::rewrite_endpoint(config)?;
     let request=minimum::prepare(config,mode,source,&DictionarySnapshot::default(),false)?;
     let draft=minimum::parse(content,mode,source,&request)?;
     Ok(execute_from(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),CancellationToken::new(),&endpoint,wait,Some(draft)).await)
@@ -157,7 +157,7 @@ pub async fn experiment_fixed(config:&ProviderConfig,secret:&str,mode:&ModeSnaps
 /// Explicit one-request diagnosis of a frozen draft. Never selected by normal
 /// dictation and never returns a replacement or a delivery permission.
 pub async fn explain_review(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,content:&str)->Result<serde_json::Value,CloudError>{
-    let endpoint=super::endpoints(config)?.rewrite;
+    let endpoint=super::rewrite_endpoint(config)?;
     let request=minimum::prepare(config,mode,source,&DictionarySnapshot::default(),false)?;
     let draft=minimum::parse(content,mode,source,&request)?;
     let mut request=semantic_review::prepare_minimum(config,mode,source,&draft)?;
@@ -175,7 +175,7 @@ pub async fn explain_review(config:&ProviderConfig,secret:&str,mode:&ModeSnapsho
 }
 /// Frozen actual 0.2.18 path, never influenced by a future promotion flag.
 pub async fn frozen_018(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,wait:Duration)->Result<RewriteResult,CloudError>{
-    let endpoint=super::endpoints(config)?.rewrite;let cancel=CancellationToken::new();let client=super::shared_client()?;
+    let endpoint=super::rewrite_endpoint(config)?;let cancel=CancellationToken::new();let client=super::shared_client()?;
     if super::uses_fluent_contract(config,mode){
         super::fluent_pipeline::run(client,config,secret,mode,source,&DictionarySnapshot::default(),cancel,&endpoint,wait).await
     }else{

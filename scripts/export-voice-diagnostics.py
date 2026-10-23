@@ -45,8 +45,9 @@ ORIGINS = frozenset(("uiCommand", "hotkeyHook", "asrRetry", "rewriteRetry", "sav
 MODE_IDS = frozenset(("auto", "light", "structure"))
 REGIONS = frozenset(("beijing", "singapore"))
 # The current MVP models. Other values are redacted, never copied as arbitrary strings.
-ASR_MODELS = frozenset(("qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2025-10-27", "qwen3-asr-flash-realtime-2026-02-10"))
-REWRITE_MODELS = frozenset(("qwen-flash", "qwen-plus", "qwen3.8-flash", "qwen3.7-plus", "qwen3.7-plus-2026-05-26"))
+ASR_MODELS = frozenset(("qwen3-asr-flash-realtime", "qwen3-asr-flash-realtime-2025-10-27", "qwen3-asr-flash-realtime-2026-02-10", "qwen-audio-3.1-asr-flash-streaming", "gemini-3.5-transcribe"))
+REWRITE_PROVIDERS = frozenset(("aliyun", "openai", "deepseek", "kimi", "zhipu", "custom"))
+REWRITE_MODELS = frozenset(("qwen-flash", "qwen-plus", "qwen3.8-flash", "qwen3.7-plus", "qwen3.7-plus-2026-05-26", "deepseek-flash", "deepseek-v4-pro", "kimi-k2.6", "glm-4.7", "glm-4.7-flashx", "gpt-5.4-mini"))
 REWRITE_PROTOCOLS = frozenset(("mode-contract-v1", "mode-contract-v3", "cleanup-contract-v1", "automatic-dictation-v3", "natural-cleanup-v1", "natural-cleanup-v2", "fluent-dictation-v1+semantic-review-compact-v2", "fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3", "minimum-edit-v3+minimum-review-v3+residue-hint-v2+local-repair-v2", "minimum-edit-v4+minimum-review-v4+residue-hint-v2+local-repair-v2"))
 REWRITE_OUTCOMES = frozenset(("validated", "fallback", "failed", "cancelled"))
 REWRITE_FALLBACKS = frozenset(("timeout", "serviceUnavailable", "invalidOutput", "meaningRisk"))
@@ -84,6 +85,8 @@ missing_predecessor unknown_order ambiguous_order unexpected_finish
 unsupported_asr_model unsupported_rewrite_model unsupported_asr_language
 asr_adapter_not_implemented asr_adapter_mismatch audio_capture_stalled
 audio_first_sample_timeout audio_capture_device_error audio_capture_queue_overflow audio_capture_malformed
+asr_auth_failed asr_rate_limited asr_service_unavailable asr_connection_failed asr_transport empty_audio empty_transcript
+unsupported_asr_provider unsupported_rewrite_provider credential_account_mismatch
 """.split())
 
 
@@ -177,7 +180,7 @@ def filter_snapshot(raw):
             "sessionId": identity(row.get("sessionId"), "sessionId"),
             "generation": unsigned(row.get("generation"), "generation"),
             "origin": origin, "startedAt": timestamp(row.get("startedAt")),
-            "provider": choice(row.get("provider"), frozenset(("aliyun",))),
+            "provider": choice(row.get("provider"), frozenset(("aliyun", "google"))),
             "region": choice(row.get("region"), REGIONS),
             "asrModel": choice(row.get("asrModel"), ASR_MODELS),
             "rewriteModel": choice(row.get("rewriteModel"), REWRITE_MODELS),
@@ -191,6 +194,8 @@ def filter_snapshot(raw):
             "marks": clean_marks,
             "durations": {field: elapsed(durations.get(field), field) for field in DURATION_FIELDS},
         })
+        if "rewriteProvider" in row:
+            traces[-1]["rewriteProvider"] = choice(row.get("rewriteProvider"), REWRITE_PROVIDERS)
         if schema == 2:
             traces[-1].update(filter_transport(row))
         # Additive optional metadata: preserve old schema 1/2 receipts without

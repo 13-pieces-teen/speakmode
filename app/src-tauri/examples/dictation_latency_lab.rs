@@ -1,6 +1,7 @@
 //! Fixed synthetic text only. Paired reviewer/flow timing, at most 58 requests.
 //! Only --execute-cloud reads the existing credential. Never reads history/audio,
 //! changes preferences, records a microphone, or delivers text to another app.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use speakmode_lib::{cloud::{self,rewrite::{self,semantic_review::{self,MinimumReviewFormat}}},core::{BaseMode,ModeSnapshot,OutputBlock,ProviderConfig,SourceItem,SourceRevision}};
 use serde_json::{Value,json};
 use sha2::{Digest,Sha256};
@@ -33,14 +34,14 @@ fn config(path:&Path)->anyhow::Result<ProviderConfig>{
  // This is the only query. No dictation/history/audio is read.
  let text:String=db.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|r|r.get(0))?;
  anyhow::ensure!(text.len()<16*1024,"configuration exceeds capacity");
- let config:ProviderConfig=serde_json::from_str(&text)?;cloud::endpoints(&config)?;Ok(config)
+ let config:ProviderConfig=serde_json::from_str(&text)?;lab_provider_scope::rewrite_endpoint(&config)?;Ok(config)
 }
 fn hash(value:&impl serde::Serialize)->String{format!("{:x}",Sha256::digest(serde_json::to_vec(value).unwrap()))}
 fn save(path:&Path,value:&Value)->anyhow::Result<()>{std::fs::write(path,serde_json::to_vec_pretty(value)?)?;Ok(())}
 fn journal(file:&mut File,value:&Value)->anyhow::Result<()>{serde_json::to_writer(&mut *file,value)?;file.write_all(b"\n")?;file.flush()?;Ok(())}
 fn arm(format:MinimumReviewFormat)->&'static str{match format{MinimumReviewFormat::Named=>"named",MinimumReviewFormat::Ordered=>"ordered"}}
 async fn call(client:&reqwest::Client,config:&ProviderConfig,secret:&str,body:&Value)->anyhow::Result<Value>{
- let mut request=client.post(cloud::endpoints(config)?.rewrite).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
+ let mut request=client.post(lab_provider_scope::rewrite_endpoint(config)?).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
  if let Some(workspace)=config.workspace.as_deref().filter(|v|!v.is_empty()){request=request.header("X-DashScope-WorkSpace",workspace);}
  let mut response=request.send().await?;anyhow::ensure!(response.status().is_success(),"HTTP status {}",response.status().as_u16());
  let mut bytes=Vec::new();while let Some(chunk)=response.chunk().await?{anyhow::ensure!(bytes.len()+chunk.len()<=1024*1024,"response capacity exceeded");bytes.extend_from_slice(&chunk);}
@@ -88,7 +89,7 @@ async fn run()->anyhow::Result<()>{
   receipt["status"]=json!("replayed_without_network");receipt["originalReceiptSha256"]=json!(format!("{:x}",Sha256::digest(bytes)));save(out,&receipt)?;
   println!("replayed 26 original responses; no credential/network access");return Ok(());
  }
- let secret=match cloud::credentials::read(&config){Ok(value)=>value,Err(error)=>{receipt["status"]=json!("halted");receipt["errorCode"]=json!(error.code);save(out,&receipt)?;return Ok(());}};
+ let secret=match cloud::credentials::read_for(&config,cloud::credentials::CredentialStage::Rewrite){Ok(value)=>value,Err(error)=>{receipt["status"]=json!("halted");receipt["errorCode"]=json!(error.code);save(out,&receipt)?;return Ok(());}};
  receipt["status"]=json!("running");save(out,&receipt)?;
  let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).pool_max_idle_per_host(2).build()?;
  let mut requests=0;
