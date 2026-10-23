@@ -22,6 +22,7 @@ pub struct MinimumRequest {
     source_hash: String,
     mode_hash: String,
     terms: Option<ProtectedTerms>,
+    english_format: bool,
 }
 pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision,
     dictionary: &DictionarySnapshot, protect_long: bool) -> Result<MinimumRequest, CloudError> {
@@ -35,7 +36,8 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
     let english = super::language::enabled(&source.text());
     let prompt = if english { super::language::GENERATION } else { PROMPT };
     let mut body = super::request_body_with_system(config, mode, source, format!("协议版本：{VERSION}\n{prompt}"))?;
-    let canonical = super::terms::canonicalize(&source.text(), dictionary);
+    let english_format=super::spoken_english(source,context);
+    let canonical = super::spoken_format::normalize(&super::terms::canonicalize(&source.text(), dictionary),english_format);
     let explicit_english = context.is_some_and(|v|v.language==crate::core::DraftLanguage::English);
     let terms = if protect_long && !explicit_english && super::uses_guarded_long(source) { Some(ProtectedTerms::new_guarded(&canonical)?) } else { None };
     let text = terms.as_ref().map_or_else(||source.text(), |p|p.masked_source().to_owned());
@@ -50,7 +52,8 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
     body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("minimum edit data serialize"));
     if let Some(context)=context { super::writing_context::attach(&mut body,mode,source,context,super::writing_context::Stage::Generation)?; }
     super::format_requests::attach(&mut body,&source.text())?;
-    Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms})
+    super::spoken_format::attach(&mut body,source,english_format)?;
+    Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms,english_format})
 }
 
 #[derive(Deserialize)]
@@ -68,6 +71,8 @@ pub fn parse(content: &str, mode: &ModeSnapshot, source: &SourceRevision, reques
         return Err(CloudError::new("invalid_output","rewrite","整理方式或内容无效"));
     }
     let text=match &request.terms {Some(terms)=>terms.restore_checked(&wire.text)?,None=>wire.text};
-    Ok(RewriteResult{resolved_mode:wire.resolved_mode,blocks:vec![OutputBlock{id:Uuid::new_v4().to_string(),text,
-        source_refs:source.items.iter().map(|item|item.id.clone()).collect()}]})
+    let mut draft=RewriteResult{resolved_mode:wire.resolved_mode,blocks:vec![OutputBlock{id:Uuid::new_v4().to_string(),text,
+        source_refs:source.items.iter().map(|item|item.id.clone()).collect()}]};
+    super::format_draft_spoken(&mut draft,request.english_format);
+    Ok(draft)
 }

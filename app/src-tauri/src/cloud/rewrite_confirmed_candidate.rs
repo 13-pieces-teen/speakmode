@@ -60,6 +60,7 @@ fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool, mode:&Mo
         data["sourceFragments"]=json!(source.text().split('\n').collect::<Vec<_>>());
         body["messages"][1]["content"]=json!(data.to_string());
     }
+    spoken_format::attach(body,source,context.language==DraftLanguage::English||spoken_english(source,None))?;
     Ok(())
 }
 
@@ -84,7 +85,7 @@ pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,so
     Ok(run(shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),context,CancellationToken::new(),&endpoint,Duration::from_secs(20)).await)
 }
 
-async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+pub(super) async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,endpoint:&str,wait:Duration)->Outcome {
     let started=Instant::now();let deadline=started+wait;let mut trace=Trace::default();
     let cancelled=||CloudError::new("cancelled","rewrite","候选已取消");
@@ -97,6 +98,7 @@ async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&Mo
         let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
         let mut draft=minimum::parse(&content,mode,&reference,&request)?;
         normalize_draft_dictionary(&reference,dictionary,&mut draft);
+        format_draft_spoken(&mut draft,context.language==DraftLanguage::English||spoken_english(&reference,None));
         // Use the production five-check pipeline's admission, not the legacy
         // standalone integrity guard (which rejects spoken-year normalization).
         // Equivalence still requires the independent full review below.

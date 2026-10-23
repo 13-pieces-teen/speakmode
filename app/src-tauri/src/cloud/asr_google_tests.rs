@@ -86,8 +86,11 @@ async fn incomplete_capture_and_cancel_do_not_send_audio() {
 }
 #[tokio::test]
 async fn timeout_and_late_response_cannot_return_a_source() {
-    let (url,request,task)=server("200 OK",valid(),Duration::from_millis(80)).await;
-    let error=run_at(config(),"key".into(),"auto".into(),DictionarySnapshot::default(),"a".into(),inputs(true).await,CancellationToken::new(),Arc::new(|_|{}),url,Duration::from_millis(20)).await.unwrap_err();
+    // Exercise an in-flight late response, not first-use TLS/client setup on a
+    // loaded test host. The production timeout is unchanged.
+    client().unwrap();
+    let (url,request,task)=server("200 OK",valid(),Duration::from_millis(500)).await;
+    let error=run_at(config(),"key".into(),"auto".into(),DictionarySnapshot::default(),"a".into(),inputs(true).await,CancellationToken::new(),Arc::new(|_|{}),url,Duration::from_millis(200)).await.unwrap_err();
     assert_eq!(error.code,"asr_finish_timeout");assert!(request.await.is_ok());task.await.unwrap();
 }
 #[tokio::test]

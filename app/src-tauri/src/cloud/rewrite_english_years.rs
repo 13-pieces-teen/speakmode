@@ -103,6 +103,9 @@ pub(super) fn retained_keys(text: &str) -> Vec<String> {
     }
     result
 }
+pub(super) fn ranges(text:&str)->Vec<(usize,usize,u16)> {
+    mentions(text).into_iter().filter_map(|m|Some((m.start,m.end,m.key.strip_prefix("calendar-year:")?.parse().ok()?))).collect()
+}
 
 #[cfg(test)]
 mod tests {

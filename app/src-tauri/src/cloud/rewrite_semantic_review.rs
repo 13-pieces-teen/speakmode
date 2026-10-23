@@ -157,7 +157,7 @@ pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevi
     super::super::models::validate_rewrite_model(config)?;
     let binding = ReviewBinding { source_sha256: fingerprint(source), draft_sha256: fingerprint(draft) };
     let data = json!({"sourceText":source.text(), "draftText":draft.blocks[0].text, "resolvedMode":draft.resolved_mode});
-    Ok(ReviewRequest {
+    let mut request=ReviewRequest {
         body: json!({
             "model":config.rewrite_model,
             "messages":[
@@ -168,7 +168,9 @@ pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevi
             "temperature":0,"max_tokens":512,"stream":false
         }),
         binding,
-    })
+    };
+    super::spoken_format::attach(&mut request.body,source,super::spoken_english(source,None))?;
+    Ok(request)
 }
 
 /// Same five fidelity dimensions, with mode-bound naturalness review. This is
@@ -231,6 +233,7 @@ cleanup：无意义卡顿、残句和不自然搭配已修复。“是现在的�
         "response_format":{"type":"json_object"},"enable_thinking":false,"temperature":0,"max_tokens":512,"stream":false}),
         binding:ReviewBinding{source_sha256:fingerprint(source),draft_sha256:fingerprint(draft)},mode_hash:fingerprint(mode),ordered,protocol_version};
     if let Some(context)=context { super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Review)?; }
+    super::spoken_format::attach(&mut request.body,source,super::spoken_english(source,context))?;
     Ok(request)
 }
 pub fn parse_minimum(content:&str,request:&MinimumReviewRequest,mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult)->Result<SemanticReview,CloudError> {
@@ -288,6 +291,8 @@ fn parse_bound(content:&str,binding:&ReviewBinding,source:&SourceRevision,draft:
     }
     if wire.issues.len()>5 {return Err(error("invalid_semantic_review","语义核对问题超过数量限制"));}
     for issue in &wire.issues {check_issue(issue,&source_text,draft_text)?;}
+    // A model's five passes cannot waive native spelling/letter-list guards.
+    if all_pass {super::spoken_format::validate(source,&draft.blocks)?;}
     Ok(SemanticReview { decision:wire.decision,checks,issues:wire.issues,binding:binding.clone(),protocol_version:SEMANTIC_REVIEW_PROMPT_VERSION })
 }
 

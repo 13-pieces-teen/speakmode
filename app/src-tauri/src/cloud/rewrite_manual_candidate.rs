@@ -24,10 +24,12 @@ fn decode(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision,
 }
 fn annotate(source:&SourceRevision,dictionary:&DictionarySnapshot,mut draft:RewriteResult)->Result<ManualCandidate,CloudError> {
     normalize_draft_dictionary(source,dictionary,&mut draft);
+    format_draft_spoken(&mut draft,spoken_english(source,None));
     let mut review_issues = Vec::new();
     if literals::validate(&source.text(),&draft.blocks.iter().map(|b|b.text.as_str()).collect::<Vec<_>>().join("\n")).is_err() {
         review_issues.push(ManualReviewIssue::LiteralsChanged);
     }
+    if spoken_format::validate(source,&draft.blocks).is_err() {review_issues.push(ManualReviewIssue::MeaningChanged);}
     if let Err(error)=integrity::validate_meaning(source,&draft.blocks) {
         review_issues.push(if error.code=="rewrite_meaning_risk" && error.message.contains("数值") {
             ManualReviewIssue::ValuesChanged
@@ -43,7 +45,7 @@ pub async fn rewrite_manual_candidate(config:&ProviderConfig, secret:&str,
     run(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,Duration::from_secs(20)).await
 }
 
-async fn run(client:&reqwest::Client, config:&ProviderConfig, secret:&str,
+pub(super) async fn run(client:&reqwest::Client, config:&ProviderConfig, secret:&str,
     mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot,
     cancel:CancellationToken, endpoint:&str, timeout:Duration)->Result<ManualCandidate,CloudError> {
     let deadline=Instant::now()+timeout;

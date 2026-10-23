@@ -79,7 +79,9 @@ fn matches_for_entry(text: &str, tokens: &[Token<'_>], term: &str) -> Vec<(usize
             if joined.eq_ignore_ascii_case(&compact) {
                 let window = &tokens[start..=last];
                 let exact = window.len() == words.len() && phrase_matches(text, window, &words);
-                if exact || window.iter().all(|token| safe_case(token.text)) {
+                let deliberate_letters = window.len()>1 && window.iter().all(|token|token.text.len()==1)
+                    && super::spoken_format::preserve_letters(text,tokens[start].start,tokens[last].end);
+                if !deliberate_letters && (exact || window.iter().all(|token| safe_case(token.text))) {
                     matches.push((tokens[start].start, tokens[last].end, u8::from(!exact)));
                 }
             }

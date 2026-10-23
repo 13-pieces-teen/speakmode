@@ -284,12 +284,12 @@ fn experimental_task_version_and_selected_mode_require_explicit_diagnostic_build
 }
 
 #[test]
-fn production_requests_retain_exact_pre_experiment_systems_for_all_modes() {
+fn production_requests_retain_frozen_pre_experiment_prefix_before_additive_notation_policy() {
     use sha2::{Digest, Sha256};
     assert_eq!(REWRITE_PROMPT_VERSION, "mode-contract-v1");
     // Frozen system bytes from git 5d5047c, before Mode experiments. No version
-    // prefix is injected into these prompts: ordinary production requests are
-    // identical, including their auto task, to the retained baseline contract.
+    // prefix is injected into those bytes. The original contract, including its
+    // auto task, is retained verbatim before the explicit additive notation policy.
     for (base, expected_sha256) in [
         (BaseMode::Light, "c2bafed8cd416942298a1c05b03d05fb71d569d1b55012bde0e5b84586365802"),
         (BaseMode::Structure, "6b8a02663650957f1d381fd7be6ee5471108c7d35d405888421117e13927b1da"),
@@ -301,7 +301,12 @@ fn production_requests_retain_exact_pre_experiment_systems_for_all_modes() {
         let production = request_body(&config, &mode, &source).unwrap();
         let experiment = experimental_request_body(&config, &mode, &source).unwrap();
         let system = production["messages"][0]["content"].as_str().unwrap();
-        assert_eq!(format!("{:x}", Sha256::digest(system.as_bytes())), expected_sha256);
+        let marker=format!("\n{}\n",spoken_format::VERSION);
+        let (frozen,notation)=system.split_once(&marker).expect("explicit additive notation policy");
+        assert_eq!(format!("{:x}", Sha256::digest(frozen.as_bytes())), expected_sha256);
+        assert_eq!(system.matches(spoken_format::VERSION).count(),1);
+        assert!(notation.starts_with("Spoken notation:"));
+        assert!(notation.contains("Explicit separate letters"));
         assert!(!system.contains(EXPERIMENTAL_REWRITE_PROMPT_VERSION));
         assert_ne!(production["messages"][0]["content"], experiment["messages"][0]["content"]);
         // Experimental isolation changes only the requested system contract;

@@ -1,0 +1,29 @@
+{
+  "scope": "Synthetic notation-only fixtures; raw ASR is immutable. Passing does not establish real audio accuracy or semantic rewriting quality.",
+  "cases": [
+    {"id":"mixed-biography","english":true,"fragments":["Hello, my name is Lin. I will graduate in twenty twenty seven.","I have worked with L L M, 呃, A I agents and R A G systems. I am still learning and would not deploy them without review."],"mustContain":["2027","LLM","AI agents","RAG","would not deploy"],"mustNotContain":["2026","diagnosed"]},
+    {"id":"adhd-zh","english":false,"fragments":["我最近在了解 A D H D 的相关资料，不是在说我已经确诊。计划二零二七年六月三日再讨论，之前先把情况记下来。"],"mustContain":["ADHD","2027年6月3日","不是在说我已经确诊","之前先"],"mustNotContain":["注意缺陷多动障碍","2027年6月4日"]},
+    {"id":"adhd-fragments","english":true,"fragments":["We are comparing A D","H D screening notes, 呃, but the dataset is incomplete and no conclusion has been reached."],"mustContain":["ADHD","dataset is incomplete","no conclusion"],"mustNotContain":["ADHHD","ADHX"]},
+    {"id":"year-fragments","english":true,"fragments":["The archive opened in twenty thirty.","Two. We have not finished the index."],"mustContain":["2032","have not finished"],"mustNotContain":["2030"]},
+    {"id":"lowercase-acronym","english":false,"fragments":["这段主要讨论 a d h d，呃，不是讨论别的病名。我们只是整理记录，不做判断。"],"mustContain":["ADHD","不是讨论别的病名","不做判断"],"mustNotContain":["确诊"]},
+    {"id":"ai-pronoun","english":true,"fragments":["I am using A I to prepare a presentation, and I still want a human review."],"mustContain":["I am using AI","I still want a human review"],"mustNotContain":["IAI"]},
+    {"id":"three-acronyms","english":false,"fragments":["团队先评估 L L M，R A G，A I agent，三个方向都还没有正式上线。"],"mustContain":["LLM，RAG，AI agent","还没有正式上线"],"mustNotContain":["LLMRAGAI"]},
+    {"id":"unknown-letters","english":true,"fragments":["The label is X Q Z. I do not know whether it is one abbreviation or three separate letters."],"mustContain":["X Q Z","do not know whether"],"mustNotContain":["XQZ"]},
+    {"id":"letter-exercise","english":false,"fragments":["孩子练习四个独立字母 A B C D，每个字母写三遍，不要当成一个词。"],"mustContain":["A B C D","每个字母","不要当成一个词"],"mustNotContain":["ABCD"]},
+    {"id":"multiple-choice","english":false,"fragments":["这道题有 A B C D 四个选项，我暂时选 B，还没决定要不要改成 D。"],"mustContain":["A B C D","选 B","改成 D","还没决定"],"mustNotContain":["ABCD"]},
+    {"id":"name-spelling","english":true,"fragments":["His name is Jack. Let me spell it: J A C K, four separate letters."],"mustContain":["name is Jack","J A C K","four separate letters"],"mustNotContain":["spell it: JACK"]},
+    {"id":"literal-spelling-date","english":false,"fragments":["请原样引用“a d h d”，另一个原文标签是“二零二七年六月三日”，引号里的内容不要改。"],"mustContain":["“a d h d”","“二零二七年六月三日”"],"mustNotContain":["ADHD","2027年6月3日"]},
+    {"id":"code-and-prose","english":false,"fragments":["代码保留 `let A = \"D H D\";` 和字段 `a_d_h_d`，说明文字讨论 A D H D，但不要改代码。"],"mustContain":["`let A = \"D H D\";`","`a_d_h_d`","说明文字讨论 ADHD"],"mustNotContain":["`let A = \"DHD\";`"]},
+    {"id":"case-sensitive-label","english":true,"fragments":["Batch IV is different from batch I V. The labels are case sensitive, and I have only checked the first batch."],"mustContain":["Batch IV","batch I V","only checked the first"],"mustNotContain":["batch IV."]},
+    {"id":"two-dates","english":false,"fragments":["提测定在二零二七年六月三日，验收定在二零二七年六月十日。提测可能延后，验收日期暂时不变。"],"mustContain":["提测定在2027年6月3日","验收定在2027年6月10日","提测可能延后","验收日期暂时不变"],"mustNotContain":["提测定在2027年6月10日"]},
+    {"id":"english-calendar","english":true,"fragments":["The meeting is on June third, two thousand and twenty seven. The report is due on June fourth, and I have not booked the room."],"mustContain":["meeting is on 2027-06-03","due on June 4","have not booked"],"mustNotContain":["due on 2027-06-04"]},
+    {"id":"relative-weekday","english":false,"fragments":["下周五先开会，明天下午再确认；我说的是星期五，不是五号。"],"mustContain":["下周五","明天下午","星期五","不是五号"],"mustNotContain":["2026-","2026年"]},
+    {"id":"ambiguous-slash","english":false,"fragments":["客户写的是3/4，不知道是三月四日还是四月三日，先不要替他确定。"],"mustContain":["3/4","不知道","先不要替他确定","3月4日还是4月3日"],"mustNotContain":["2026-03-04","2026年3月4日"]},
+    {"id":"missing-year","english":false,"fragments":["我只记得是六月三日，年份不确定。另一个活动在二零二七年，月份还没定。"],"mustContain":["6月3日","年份不确定","2027年","月份还没定"],"mustNotContain":["2027年6月3日"]},
+    {"id":"invalid-recorded-date","english":false,"fragments":["表上填的是二零二七年二月三十日，这个日期需要核对，现在先按原记录保留。"],"mustContain":["2027年2月30日","需要核对","原记录保留"],"mustNotContain":["2027年2月28日","2027年3月2日"]},
+    {"id":"date-history","english":false,"fragments":["会议原来定在二零二七年六月三日，后来改到六月五日。这是在记录改期历史，不要把前一个日期删掉。"],"mustContain":["原来定在2027年6月3日","后来改到6月5日","不要把前一个日期删掉"],"mustNotContain":["后来改到2027年6月5日"]},
+    {"id":"acronym-fillers","english":false,"fragments":["我们讨论 A，呃，D H D 相关的访谈记录，不增加诊断信息。"],"mustContain":["ADHD","不增加诊断信息"],"mustNotContain":["确诊","注意缺陷"]},
+    {"id":"not-a-calendar-number","english":true,"fragments":["The budget is twenty seven dollars. The identifier is twenty twenty seven, not a year. We expect delivery in twenty twenty seven."],"mustContain":["twenty seven dollars","identifier is twenty twenty seven","in 2027"],"mustNotContain":["identifier is 2027"]},
+    {"id":"address","english":true,"fragments":["Learn about a.d.h.d.example.com and preserve `2027-06-03.txt`."],"mustContain":["a.d.h.d.example.com","`2027-06-03.txt`"],"mustNotContain":["ADHD.example.com"]}
+  ]
+}

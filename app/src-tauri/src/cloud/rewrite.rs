@@ -70,6 +70,12 @@ mod tense_hint;
 pub mod minimum;
 #[path="rewrite_language.rs"]
 mod language;
+#[path="rewrite_spoken_format.rs"]
+pub(super) mod spoken_format;
+#[path="rewrite_dates.rs"]
+pub(super) mod dates;
+#[path="rewrite_english_years.rs"]
+mod english_years;
 #[path="rewrite_local_repair.rs"]
 pub mod local_repair;
 #[path="rewrite_minimum_pipeline.rs"]
@@ -223,6 +229,7 @@ pub fn automatic_request_body(config: &ProviderConfig, mode: &ModeSnapshot, sour
         "preservationHints": integrity::preservation_hints(source),
     });
     body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("dictation data serialize"));
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
     Ok(body)
 }
 
@@ -243,6 +250,7 @@ pub fn natural_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source
         "preservationHints": integrity::preservation_hints(source),
     });
     body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("dictation data serialize"));
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
     Ok(body)
 }
 
@@ -264,19 +272,61 @@ pub fn fluent_request_body(config:&ProviderConfig,mode:&ModeSnapshot,source:&Sou
     let mut body=request_body_with_system(config,mode,source,fluent::system())?;
     body["messages"][1]["content"]=json!(serde_json::to_string(&json!({"sourceText":source.text(),
         "canonicalTerms":terms::matching_terms(source,dictionary)})).expect("dictation serialization"));
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
     Ok(body)
 }
 pub fn parse_fluent_draft(content:&str,mode:&ModeSnapshot,source:&SourceRevision)->Result<RewriteResult,CloudError> {
-    fluent::parse_draft(content,mode,source)
+    let mut draft=fluent::parse_draft(content,mode,source)?;
+    format_draft_spoken(&mut draft,spoken_english(source,None));
+    Ok(draft)
 }
 pub fn validate_draft_meaning(source:&SourceRevision,draft:&RewriteResult)->Result<(),CloudError> {
+    spoken_format::validate(source,&draft.blocks)?;
     integrity::validate_meaning(source,&draft.blocks)
 }
 pub fn review_admission(source:&SourceRevision,draft:&RewriteResult)->Result<(),CloudError> {
     let text=draft.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
     literals::validate(&source.text(), &text)?;
     format_requests::validate(&source.text(), &text)?;
+    spoken_format::validate(source,&draft.blocks)?;
     integrity::review_admission(source,&draft.blocks)
+}
+
+// The language preference controls date presentation, independently of the
+// experimental language-routing flag. Original ASR text and IDs stay frozen.
+pub(super) fn spoken_english(source:&SourceRevision,context:Option<&crate::core::writing_context::WritingContext>)->bool {
+    if context.is_some_and(|value|value.language==crate::core::DraftLanguage::English) {return true;}
+    let text=source.text();
+    if language::english_dominant(&text) {return true;}
+    // Date presentation also applies to short English sentences. The stricter
+    // experimental prose classifier intentionally requires much more evidence;
+    // an acronym or an English quote inside Chinese is still not a language
+    // choice. Exclude exact literals and look for ordinary prose/calendar words.
+    let mut plain=String::with_capacity(text.len());let mut offset=0;
+    for span in literals::spans(&text) {plain.push_str(&text[offset..span.start]);plain.push(' ');offset=span.end;}
+    plain.push_str(&text[offset..]);
+    let lower=plain.to_ascii_lowercase();
+    let calendar=["january","february","march","april","may","june","july","august","september","october","november","december"];
+    let month_word=lower.split(|c:char|!c.is_ascii_alphabetic()).any(|word|calendar.contains(&word));
+    // The spoken notation of the date itself should not outweigh the language
+    // of its sentence (e.g. "The date is 二零二六年十月二十三日").
+    let mut prose=String::with_capacity(plain.len());let mut offset=0;
+    for date in dates::mentions(&plain) {prose.push_str(&plain[offset..date.start]);prose.push(' ');offset=date.end;}
+    prose.push_str(&plain[offset..]);
+    let latin=prose.chars().filter(char::is_ascii_alphabetic).count();
+    let han=prose.chars().filter(|c|matches!(*c,'\u{3400}'..='\u{4dbf}'|'\u{4e00}'..='\u{9fff}'|'\u{20000}'..='\u{323af}')).count();
+    if han==0&&month_word {return true;}
+    if latin<=han.saturating_mul(2) {return false;}
+    let lower=prose.to_ascii_lowercase();
+    let words=lower.split(|c:char|!c.is_ascii_alphabetic()).filter(|word|!word.is_empty()).collect::<Vec<_>>();
+    latin>=6 && words.iter().filter(|word|word.len()>1).count()>=2
+        && words.iter().any(|word|["i","we","you","the","on","in","is","am","are","will","was","meet","meeting","date","report","by","until","from"].contains(word))
+}
+// Shape-only parsers also serve the explicit human-review history editor.
+// Normalization does not grant acceptance; the production admission/reviewer
+// checks below reject a changed explicit letter sequence before delivery.
+pub(super) fn format_draft_spoken(draft:&mut RewriteResult,english:bool) {
+    for block in &mut draft.blocks {block.text=spoken_format::normalize(&block.text,english);}
 }
 
 /// Private, offline lab evidence only. Never put extracted dictated values in runtime diagnostics.
@@ -289,6 +339,7 @@ pub const LONG_REWRITE_PROMPT_VERSION: &str = long::VERSION;
 pub fn long_request_body(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot)->Result<Value,CloudError> {
     let mut body = fluent_request_body(config, mode, source, dictionary)?;
     body["messages"][0]["content"] = json!(long::system());
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
     Ok(body)
 }
 
@@ -317,10 +368,11 @@ pub fn prepare_protected_long_compact(config:&ProviderConfig, mode:&ModeSnapshot
 /// Guarded production long dictation uses protected literals and source-bound spelling.
 pub fn prepare_guarded_long(config:&ProviderConfig, mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot)->Result<ProtectedLongRequest,CloudError> {
     let mut body = long_request_body(config, mode, source, dictionary)?;
-    let input = terms::canonicalize(&source.text(), dictionary);
+    let input = spoken_format::normalize(&terms::canonicalize(&source.text(), dictionary),spoken_english(source,None));
     let terms = protected_terms::ProtectedTerms::new_guarded(&input)?;
     body["messages"][0]["content"] = json!(format!("{}\n协议附加版本：protected-long-v3\n特殊括号标记是不可改动的原始专名、逐字引语或代码。所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。不在标记外输出英文字母。标记内的语气词是原话，不能去掉；它们会由本地逐字恢复后再核对。", long::system()));
     body["messages"][1]["content"] = json!(serde_json::to_string(&json!({"sourceText":terms.masked_source()})).expect("masked data serializes"));
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
     Ok(ProtectedLongRequest { body, terms, source_hash: protected_fingerprint(source), mode_hash: protected_fingerprint(mode) })
 }
 
@@ -350,6 +402,7 @@ fn prepare_protected_long_variant(config:&ProviderConfig, mode:&ModeSnapshot, so
     let system = format!("{}\n协议附加版本：{version}\n源文中的特殊括号标记代表不可改动的原始专名或字母串。不要猜测它们是什么。所有不同标记必须逐字至少保留一次，重复同一标记可以随无意义重复合并。标记不代表内容相同或角色相同，必须留在原来的对象、动作与限定关系里。不要在标记外输出任何英文字母，不新增英文缩写，不改变标记内部字符；JSON字段名及resolvedMode的值仍按原协议。这些标记在本地还原后再核对全文。", long::system());
     body["messages"][0]["content"] = json!(system);
     body["messages"][1]["content"] = json!(serde_json::to_string(&json!({"sourceText":terms.masked_source()})).expect("masked data serializes"));
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
     Ok(ProtectedLongRequest { body, terms, source_hash: protected_fingerprint(source), mode_hash: protected_fingerprint(mode) })
 }
 
@@ -357,8 +410,10 @@ pub fn parse_protected_long(content:&str, mode:&ModeSnapshot, source:&SourceRevi
     if request.source_hash != protected_fingerprint(source) || request.mode_hash != protected_fingerprint(mode) {
         return Err(CloudError::new("stale_protected_draft", "rewrite", "专名保护来源已变化"));
     }
-    let mut draft = parse_fluent_draft(content, mode, source)?;
+    // Protected markers are not prose; normalize only after exact restoration.
+    let mut draft = fluent::parse_draft(content, mode, source)?;
     draft.blocks[0].text = request.terms.restore_checked(&draft.blocks[0].text)?;
+    format_draft_spoken(&mut draft,spoken_english(source,None));
     Ok(draft)
 }
 
@@ -379,7 +434,7 @@ fn request_body_with_system(config: &ProviderConfig, mode: &ModeSnapshot, source
     super::models::validate_rewrite_model(config)?;
     validate_source(source)?;
     if mode.rules.chars().count()>4000 {return Err(CloudError::new("invalid_mode","rewrite","个人规则超过容量限制"));}
-    Ok(json!({
+    let mut body=json!({
         "model": config.rewrite_model,
         "messages": [
             {"role":"system", "content":system},
@@ -390,7 +445,9 @@ fn request_body_with_system(config: &ProviderConfig, mode: &ModeSnapshot, source
         "temperature":0.2,
         "max_tokens":8192,
         "stream":false
-    }))
+    });
+    spoken_format::attach(&mut body,source,spoken_english(source,None))?;
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -402,10 +459,14 @@ mod span_tests;
 #[cfg(test)]
 #[path="rewrite_quality_tests.rs"]
 mod quality_tests;
+#[cfg(test)]
+#[path="rewrite_spoken_pipeline_tests.rs"]
+mod spoken_pipeline_tests;
 
 pub fn parse_model_output(content: &str, mode: &ModeSnapshot, source: &SourceRevision) -> Result<RewriteResult, CloudError> {
     let draft = parse_model_draft(content, mode, source)?;
     literals::validate(&source.text(), &draft.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n"))?;
+    spoken_format::validate(source,&draft.blocks)?;
     integrity::validate_meaning(source, &draft.blocks)?;
     Ok(draft)
 }
@@ -457,7 +518,9 @@ fn parse_model_draft(content: &str, mode: &ModeSnapshot, source: &SourceRevision
     if allowed.iter().any(|id| !covered.contains(*id)) {
         return Err(CloudError::new("incomplete_source_coverage", "rewrite", "整理结果未覆盖全部识别来源，请重试整理或使用识别稿"));
     }
-    Ok(RewriteResult {resolved_mode:decoded.resolved_mode, blocks})
+    let mut draft=RewriteResult {resolved_mode:decoded.resolved_mode, blocks};
+    format_draft_spoken(&mut draft,spoken_english(source,None));
+    Ok(draft)
 }
 
 pub async fn rewrite(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, cancel: CancellationToken) -> Result<RewriteResult, CloudError> {

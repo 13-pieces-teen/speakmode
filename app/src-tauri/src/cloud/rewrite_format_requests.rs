@@ -91,6 +91,8 @@ pub(super) fn anchors(source: &str) -> Result<Vec<Anchor>,CloudError> {
 /// spellings such as Open Cloud -> OpenCloud and S V I D -> SVID. Other native
 /// guards and full review remain necessary; this is not a semantics proof.
 fn tokens(text: &str) -> Vec<String> {
+    let normalized=super::dates::normalize(text,false);
+    let text=normalized.as_str();
     let mut result=Vec::new();let mut word=String::new();
     for c in text.chars().chain(std::iter::once(' ')) {
         if c.is_ascii_alphanumeric()||matches!(c,'\''|'’') {word.push(if c=='’' {'\''}else{c.to_ascii_lowercase()});continue;}
@@ -137,6 +139,10 @@ pub(super) fn attach(body: &mut Value, source: &str) -> Result<(),CloudError> {
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn numeric_calendar_notation_keeps_the_spoken_request_anchor() {
+        assert!(validate("请把二零二六年十月二十三日的安排分点。","请把2026年10月23日的安排分点。").is_ok());
+        assert!(validate("请把二零二六年十月二十三日的安排分点。","请把2026年10月24日的安排分点。").is_err());
+    }
     #[test] fn anchors_explicit_requests_in_both_languages_without_executing_them() {
         for text in ["请把这两个约束分开列点。","麻烦把说明分段。","不要把这些约束写成表格。",
             "如果确认了需求，请将说明整理为列表。","Please put these constraints into bullet points.",

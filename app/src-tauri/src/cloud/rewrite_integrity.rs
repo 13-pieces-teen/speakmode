@@ -250,7 +250,10 @@ fn chinese_number(text: &str) -> Option<u64> {
 }
 
 fn fingerprints(text: &str) -> (HashSet<String>, HashSet<String>) {
-    let canonical = facts::canonical_text(text);
+    // Compare deterministic, same-letter notation without discarding lexical
+    // owner/action tokens. This is a local comparison view, never an ASR edit.
+    let notation=super::spoken_format::normalize(text,super::language::english_dominant(text));
+    let canonical = facts::canonical_text(&notation);
     let text = canonical.as_str();
     if text.chars().any(|c| c.is_ascii_alphabetic()) && !text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
         // English words retain boundaries. Compacting them like spaced product
