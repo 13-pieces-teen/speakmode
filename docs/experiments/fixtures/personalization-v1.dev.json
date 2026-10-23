@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "cases": [
+    {
+      "id": "PDEV-001",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "这次 AI backend 的改动主要是把 embedding 请求放进异步队列，前端拿到的是 job id，不是最终结果。现在 staging 里有二十个并发任务的时候，偶尔会出现 worker 已经完成但是 status 还是 running，我们怀疑是 callback 重试和状态写入顺序有关系，还没有确认根因。先保留原来的 polling fallback，等周四把超时和重复回调两种情况都复现以后，再决定要不要开到 production，别把这个写成已经修好了。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d1",
+        "profiles": [
+          {
+            "id": "local-d1",
+            "name": "本地画像 d1",
+            "profession": "软件工程",
+            "domain": "AI 后端与任务队列",
+            "description": "负责服务接口和异步任务状态流转。",
+            "tasks": [
+              "汇报联调状态",
+              "说明故障排查计划"
+            ],
+            "audience": "研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": "将已确认状态与待验证判断分开表达。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": false,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "embedding 请求进入异步队列，前端返回 job id 而非最终结果。",
+          "staging 二十并发时偶发 worker 完成但 status 仍为 running。",
+          "callback 重试与写入顺序只是根因怀疑，尚未确认。",
+          "保留 polling fallback；周四复现超时和重复回调后再决定是否到 production。"
+        ],
+        "preferences": [
+          "保留有意义的英文术语及标识符写法。",
+          "措辞紧凑，按现状、怀疑与后续计划自然分段。"
+        ],
+        "risks": [
+          "不得把怀疑改为确认根因或已经修复。",
+          "不得新增性能结果、技术方案或已上线承诺。"
+        ]
+      },
+      "category": "technical_long_mixed"
+    },
+    {
+      "id": "PDEV-002",
+      "scene": "email",
+      "language": "asSpoken",
+      "source": "麻烦跟客户说明一下，资料我们今天收到了，但是收入证明还需要补一页。等材料齐全以后，审核可能还要三个工作日，具体要看审批情况。如果这周五之前补齐，我们会尽量下周二前给一个进度反馈，不过这不是放款时间，也不能保证申请一定通过，客户如果不方便到店，可以先发扫描件供我们核对，原件什么时候交还要再确认。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d2",
+        "profiles": [
+          {
+            "id": "local-d2",
+            "name": "本地画像 d2",
+            "profession": "金融服务",
+            "domain": "银行客户沟通",
+            "description": "负责申请材料接收与进度沟通。",
+            "tasks": [
+              "说明材料缺口",
+              "反馈审核进度"
+            ],
+            "audience": "申请客户",
+            "scenes": [
+              "email"
+            ],
+            "instructions": ""
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "complete",
+          "tone": "formal",
+          "keepEnglishTerms": false,
+          "fewerCourtesies": true,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "今天收到资料，收入证明仍需补一页。",
+          "材料齐全后审核可能还需三个工作日，具体取决于审批。",
+          "周五前补齐时，尽量下周二前反馈进度；不是放款时间，也不保证通过。",
+          "不便到店可先提供扫描件核对；原件提交时间待确认。"
+        ],
+        "preferences": [
+          "以完整、适度正式的句子按话题分段。",
+          "减少空泛客套，保留有意义的请求和客户立场。"
+        ],
+        "risks": [
+          "不得删去可能、材料前提或审批限制。",
+          "不得增加收益、审批、放款或原件提交时间的承诺。"
+        ]
+      },
+      "category": "customer_conditions"
+    },
+    {
+      "id": "PDEV-003",
+      "scene": "chat",
+      "language": "asSpoken",
+      "source": "晚上回来的时候帮我带两盒酸奶吧，无糖的就行，别买草莓味。水果家里还有，不用再买了，我可能八点半以后才到家，你到了先吃，不用等我。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d3",
+        "profiles": [
+          {
+            "id": "local-d3",
+            "name": "本地画像 d3",
+            "profession": "软件工程",
+            "domain": "分布式服务",
+            "description": "负责服务可用性。",
+            "tasks": [
+              "技术进度同步"
+            ],
+            "audience": "工程团队",
+            "scenes": [
+              "technical",
+              "document"
+            ],
+            "instructions": "保留源文中的英文术语。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "complete",
+          "tone": "natural",
+          "keepEnglishTerms": false,
+          "fewerCourtesies": false,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": [
+          {
+            "scene": "chat",
+            "preferences": {
+              "sentenceStyle": "concise",
+              "tone": "natural",
+              "keepEnglishTerms": false,
+              "fewerCourtesies": true,
+              "paragraphs": false,
+              "lists": false
+            }
+          }
+        ]
+      },
+      "criteria": {
+        "facts": [
+          "带两盒无糖酸奶，不买草莓味。",
+          "家里还有水果，不用再买。",
+          "说话者可能八点半以后到家；对方可先吃，不必等。"
+        ],
+        "preferences": [
+          "普通聊天使用自然紧凑的表达。",
+          "保留带东西的礼貌请求，不强行列工作事项。"
+        ],
+        "risks": [
+          "当前聊天场合不发送职业背景或该身份的 instructions。",
+          "不得引入服务、可用性等职业词汇，不得漏掉否定或可能。"
+        ]
+      },
+      "category": "scope_personal_chat"
+    },
+    {
+      "id": "PDEV-004",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "表单里四个选项按顺序是 A、D、H、D，这是四个独立选项，不是一个缩写。配置键还叫 retry_count，不要改成 retryCount；日志里那一段 A D H D 是用户输入的原样字符串。最后说明一下，enable_cache 等于 false，只是关闭缓存，不是把整个服务停掉。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d4",
+        "profiles": [
+          {
+            "id": "local-d4",
+            "name": "本地画像 d4",
+            "profession": "软件工程",
+            "domain": "配置与日志",
+            "description": "维护应用配置及诊断信息。",
+            "tasks": [
+              "评审字段命名",
+              "说明配置行为"
+            ],
+            "audience": "研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": ""
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": false,
+          "paragraphs": false,
+          "lists": true
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "四个选项依次为 A、D、H、D，彼此独立。",
+          "配置键为 retry_count，不能改成 retryCount。",
+          "日志中的 A D H D 是原样字符串。",
+          "enable_cache 为 false 只关闭缓存，不关闭整个服务。"
+        ],
+        "preferences": [
+          "保留英文标识符和字符串的大小写、下划线与必要空格。",
+          "可对明确独立的说明事项分点，不合并独立字母。"
+        ],
+        "risks": [
+          "不得把四个独立选项合并成 ADHD 或猜测缩写含义。",
+          "不得改写代码键、布尔值或扩大停用范围。"
+        ]
+      },
+      "category": "literal_letters_code"
+    }
+  ]
+}

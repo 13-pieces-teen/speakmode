@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "cases": [
+    {
+      "id": "PDEV-FIX-001",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "界面说明里讨论 SDK，网格栏名从左到右是 S、D、K，每栏一个字母，栏名和文档标题分别保留。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d1",
+        "profiles": [
+          {
+            "id": "local-d1",
+            "name": "本地画像 d1",
+            "profession": "软件工程",
+            "domain": "AI 后端与任务队列",
+            "description": "负责服务接口和异步任务状态流转。",
+            "tasks": [
+              "汇报联调状态",
+              "说明故障排查计划"
+            ],
+            "audience": "研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": "保留每项有效信息，按话题自然分段。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": false,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "SDK 作为术语保留。",
+          "S、D、K 是按顺序的独立栏名。"
+        ],
+        "preferences": [
+          "标记清楚，适合技术说明。"
+        ],
+        "risks": [
+          "不能用另一处 SDK 掩盖栏名合并。"
+        ]
+      },
+      "category": "independent_column_labels"
+    },
+    {
+      "id": "PDEV-FIX-002",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "任务文档会讨论 API，也会讨论 L L M、R A G。练习标签是 A、P、I，需要分别保留。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d1",
+        "profiles": [
+          {
+            "id": "local-d1",
+            "name": "本地画像 d1",
+            "profession": "软件工程",
+            "domain": "AI 后端与任务队列",
+            "description": "负责服务接口和异步任务状态流转。",
+            "tasks": [
+              "汇报联调状态",
+              "说明故障排查计划"
+            ],
+            "audience": "研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": "保留每项有效信息，按话题自然分段。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": false,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "API、LLM、RAG 是讨论的术语。",
+          "A、P、I 是需要分别保留的标签。"
+        ],
+        "preferences": [
+          "明确术语可规范，列表保留独立表示。"
+        ],
+        "risks": [
+          "不能因为同一段有 API 就合并标签。"
+        ]
+      },
+      "category": "terms_alongside_labels"
+    },
+    {
+      "id": "PDEV-FIX-003",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "室内测量读数最高四十二度，温标未填写。另一台仪表明确显示三十二摄氏度。两个读数分别保留。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d1",
+        "profiles": [
+          {
+            "id": "local-d1",
+            "name": "本地画像 d1",
+            "profession": "软件工程",
+            "domain": "AI 后端与任务队列",
+            "description": "负责服务接口和异步任务状态流转。",
+            "tasks": [
+              "汇报联调状态",
+              "说明故障排查计划"
+            ],
+            "audience": "研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": "保留每项有效信息，按话题自然分段。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": false,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "第一项读数42度，未指明温标。",
+          "第二项32摄氏度。",
+          "两个读数分开。"
+        ],
+        "preferences": [
+          "可以数字化，但不添加温标。"
+        ],
+        "risks": [
+          "不得把第一项补成摄氏度或华氏度。"
+        ]
+      },
+      "category": "temperature_scale"
+    },
+    {
+      "id": "PDEV-FIX-004",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "现场有六个人，至少留三个人在入口值守，另外三个人可以轮换。温度为二十八摄氏度，只是读数，不是设备已通过验收。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-d1",
+        "profiles": [
+          {
+            "id": "local-d1",
+            "name": "本地画像 d1",
+            "profession": "软件工程",
+            "domain": "AI 后端与任务队列",
+            "description": "负责服务接口和异步任务状态流转。",
+            "tasks": [
+              "汇报联调状态",
+              "说明故障排查计划"
+            ],
+            "audience": "研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": "保留每项有效信息，按话题自然分段。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": false,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "现场6人，至少3人入口值守，另3人可轮换。",
+          "读数28摄氏度不等于设备通过验收。"
+        ],
+        "preferences": [
+          "允许个人与人、摄氏度与℃的明确等价写法。"
+        ],
+        "risks": [
+          "不能改人数、下界或验收状态。"
+        ]
+      },
+      "category": "person_classifier"
+    }
+  ]
+}

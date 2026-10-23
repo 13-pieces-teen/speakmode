@@ -87,8 +87,30 @@ fn explicit_amount_label(text: &str, start: usize, end: usize) -> bool {
             .is_none_or(|c| !c.is_alphanumeric() && c != '_')))
 }
 
+// Bare 度 can also mean an occurrence (一度认为 / 二度创作) or electricity.
+// Only an adjacent finite measurement cue promotes it to an unspecified degree;
+// even a temperature cue does not supply an absent Celsius/Fahrenheit scale.
+fn unspecified_degree_context(text: &str, start: usize, end: usize) -> bool {
+    let after = text[end..].trim_start();
+    if ["电", "认为", "以为", "提出", "创作", "获得", "获奖"].iter().any(|word| after.starts_with(word)) { return false; }
+    const WINDOW_CHARS: usize = 48;
+    let window_start = text[..start].char_indices().rev().nth(WINDOW_CHARS)
+        .map_or(0, |(index, c)| index + c.len_utf8());
+    let before = text[window_start..start].trim_end();
+    let before = before.strip_suffix('负').or_else(|| before.strip_suffix('-')).unwrap_or(before).trim_end();
+    if ["最高", "最低", "转到", "转至", "转过", "停在", "倾斜", "旋转", "升到", "升至", "降到", "降至"]
+        .iter().any(|cue| before.ends_with(cue)) { return true; }
+    let before = ["保持在", "约为", "达到", "显示", "为", "是", "约"].iter()
+        .filter_map(|link| before.strip_suffix(link).map(|prefix| (link.len(), prefix.trim_end())))
+        .max_by_key(|(length, _)| *length).map_or(before, |(_, prefix)| prefix);
+    ["温度", "角度", "读数", "示数", "度数", "夹角", "倾角", "转角", "仰角", "俯角"]
+        .iter().any(|label| before.ends_with(label))
+}
+
 // Unit conversions here are deliberately small and exact. Percentage points
 // and percentages differ; versions preserve component spelling, including zeros.
+// A bare degree never selects a temperature scale. Explicit temperature scales
+// stay separate even when their values could be physically converted.
 const UNITS: &[(&str, &str, u128)] = &[
     ("个百分点", "percentage-point", 1), ("％", "percent", 1), ("%", "percent", 1),
     ("人民币", "cny", 1), ("块钱", "cny", 1), ("元", "cny", 1), ("块", "cny", 1), ("cny", "cny", 1), ("rmb", "cny", 1),
@@ -101,7 +123,11 @@ const UNITS: &[(&str, &str, u128)] = &[
     ("months", "month", 1), ("month", "month", 1), ("years", "year", 1), ("year", "year", 1), ("年", "year", 1), ("日", "date-day", 1),
     ("gib", "gib", 1), ("mib", "mib", 1), ("kib", "kib", 1), ("gb", "gb", 1), ("mb", "mb", 1), ("kb", "kb", 1),
     ("公斤", "kilogram", 1), ("千克", "kilogram", 1), ("kg", "kilogram", 1), ("米", "metre", 1),
-    ("人", "person", 1), ("次", "times", 1), ("条", "item", 1), ("项", "item", 1), ("个", "count", 1), ("倍", "multiple", 1),
+    ("摄氏度", "temperature-c", 1), ("℃", "temperature-c", 1), ("°C", "temperature-c", 1),
+    ("华氏度", "temperature-f", 1), ("℉", "temperature-f", 1), ("°F", "temperature-f", 1),
+    ("开尔文", "temperature-k", 1), ("kelvin", "temperature-k", 1),
+    ("°", "degree", 1),
+    ("个人", "person", 1), ("人", "person", 1), ("次", "times", 1), ("条", "item", 1), ("项", "item", 1), ("个", "count", 1), ("倍", "multiple", 1),
 ];
 
 // These exact constructions use 一个 as an indefinite article, not an asserted
@@ -127,8 +153,18 @@ fn indefinite_article(before: &str, raw: &str, unit: &str, after: &str) -> bool 
 }
 
 fn begins(text: &str, phrase: &str) -> bool {
-    text.get(..phrase.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(phrase))
-        && (!phrase.is_ascii() || text[phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphabetic()))
+    let Some(prefix) = text.get(..phrase.len()) else { return false; };
+    // New symbol aliases must not match a prefix of an ASCII identifier. Keep
+    // the existing boundary rules for the other established unit spellings.
+    if !prefix.eq_ignore_ascii_case(phrase) { return false; }
+    if matches!(phrase, "°" | "°C" | "°F" | "℃" | "℉" | "kelvin") {
+        return text[phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+    }
+    // These explicit noun continuations are 个 + a compound beginning with 人,
+    // not the person classifier. This is finite protection, not Chinese parsing.
+    if phrase == "个人" && ["人工", "人机", "人脸", "人声", "人口", "人群", "人行"]
+        .iter().any(|noun| text['个'.len_utf8()..].starts_with(noun)) { return false; }
+    !phrase.is_ascii() || text[phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphabetic())
 }
 
 fn decimal(raw: &str, multiplier: u128) -> Option<String> {
@@ -276,12 +312,15 @@ pub(super) fn extract(text: &str) -> Vec<Fact> {
         }
         let suffix = text[end..].trim_start();
         let mut unit = if percentage_start.is_some() { "percent" } else { "scalar" };
-        if let Some((word, label, multiplier)) = UNITS.iter().filter(|(word, _, _)| begins(suffix, word)).max_by_key(|(word, _, _)| word.len()) {
+        let explicit_unit = UNITS.iter().filter(|(word, _, _)| begins(suffix, word)).max_by_key(|(word, _, _)| word.len()).copied();
+        let measured_degree = suffix.starts_with('度') && unspecified_degree_context(text, start,
+            text.len() - suffix.len() + '度'.len_utf8());
+        if let Some((word, label, multiplier)) = explicit_unit.or_else(|| measured_degree.then_some(("度", "degree", 1))) {
             unit = label;
             // 个功能 and 项功能 denote the same count. Do not conflate other
             // classifier dimensions (e.g. 条/人/次) or drop the numeric value.
-            if *word == "项" && suffix[word.len()..].trim_start().starts_with("功能") { unit = "count"; }
-            let Some(multiplier) = scale.checked_mul(*multiplier) else { continue; };
+            if word == "项" && suffix[word.len()..].trim_start().starts_with("功能") { unit = "count"; }
+            let Some(multiplier) = scale.checked_mul(multiplier) else { continue; };
             scale = multiplier; end = text.len() - suffix.len() + word.len();
         } else if previous.is_some_and(|c| matches!(c, '¥' | '￥' | '$')) {
             unit = if previous == Some('$') { "usd" } else { "cny" };

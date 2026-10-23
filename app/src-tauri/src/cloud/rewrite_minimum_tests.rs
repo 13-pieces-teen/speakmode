@@ -8,6 +8,10 @@ use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpListener, sync::Notify, t
 mod language_tests;
 #[path="rewrite_writing_context_tests.rs"]
 mod writing_context_tests;
+#[path="rewrite_personalization_lab_tests.rs"]
+mod personalization_lab_tests;
+#[path="rewrite_personalization_quality_regression_tests.rs"]
+mod personalization_quality_regression_tests;
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 

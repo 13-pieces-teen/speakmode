@@ -10,3 +10,5 @@ app/public/fonts/OFL.txt -text
 *.ico -text
 *.woff2 -text
 *.crate -text
+# Frozen evaluation manifests retain the exact bytes recorded in their receipts.
+docs/experiments/fixtures/personalization*.json -text

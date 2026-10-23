@@ -127,6 +127,50 @@ pub async fn experiment_with_writing_context(config:&ProviderConfig,secret:&str,
     Ok(execute_until_with_writing_context(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
         CancellationToken::new(),&endpoint,RewriteExecution::for_duration(wait),None,Some(context)).await)
 }
+/// Content-free transport observation for the explicit personalization lab.
+/// A started event precedes provider conversion and dispatch; it is not a bill.
+#[derive(Debug,Clone,Serialize)]#[serde(rename_all="camelCase")]
+pub struct PersonalizationLabEvent {
+    pub stage:&'static str,pub event:&'static str,pub duration_ms:Option<f64>,
+    pub remaining_budget_ms:u64,pub outcome:Option<&'static str>,
+}
+/// Reuse the production semantic path with an explicit frozen dictionary and
+/// durable caller ledger. Returning false from the observer cancels dispatch.
+/// This lab client disables redirects and all automatic retries. No delivery,
+/// history access, credentials lookup, or application config mutation occurs.
+pub async fn experiment_personalization_observed(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&crate::core::writing_context::WritingContext,wait:Duration,
+    observer:impl Fn(PersonalizationLabEvent)->bool+Send+Sync+'static)->Result<Outcome,CloudError>{
+    use std::sync::{Arc,Mutex,atomic::{AtomicBool,AtomicUsize,Ordering}};
+    context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?;
+    let endpoint=super::rewrite_endpoint(config)?;
+    let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never()).build()
+        .map_err(|_|CloudError::new("lab_client_failed","rewrite","评估客户端创建失败"))?;
+    let cancel=CancellationToken::new();let observed_cancel=cancel.clone();
+    let failed=Arc::new(AtomicBool::new(false));let observed_failed=Arc::clone(&failed);
+    let starts=Arc::new(AtomicUsize::new(0));let observed_starts=Arc::clone(&starts);
+    let timings=Arc::new(Mutex::new(Vec::new()));let observed_timings=Arc::clone(&timings);
+    let execution=RewriteExecution::observed(Instant::now()+wait,move|event|{
+        let stage=match event.stage{RequestStage::Generation=>"generation",RequestStage::Review=>"review",RequestStage::Repair=>"repair",RequestStage::FinalReview=>"finalReview"};
+        let outcome=event.outcome.map(|value|match value{RequestOutcome::ResponseReceived=>"responseReceived",RequestOutcome::Failed=>"failed",RequestOutcome::Cancelled=>"cancelled",RequestOutcome::TimedOut=>"timedOut",RequestOutcome::Interrupted=>"interrupted"});
+        let duration_ms=event.finished_at.map(|end|end.duration_since(event.started_at).as_secs_f64()*1000.);
+        if event.finished_at.is_none() && observed_starts.fetch_add(1,Ordering::SeqCst)>=4 {
+            observed_failed.store(true,Ordering::SeqCst);observed_cancel.cancel();return;
+        }
+        if let (Some(duration_ms),Some(outcome))=(duration_ms,outcome){
+            let mut timings=observed_timings.lock().unwrap();
+            if timings.len()<4 {timings.push(RequestTiming{stage,duration_ms,remaining_budget_ms:event.remaining_budget_ms,outcome});}
+        }
+        if !observer(PersonalizationLabEvent{stage,event:if event.finished_at.is_some(){"finished"}else{"started"},duration_ms,remaining_budget_ms:event.remaining_budget_ms,outcome}) {
+            observed_failed.store(true,Ordering::SeqCst);observed_cancel.cancel();
+        }
+    });
+    let mut outcome=execute_until_with_writing_context(&client,config,secret,mode,source,dictionary,cancel,&endpoint,execution,None,Some(context)).await;
+    outcome.trace.requests=std::mem::take(&mut *timings.lock().unwrap());
+    if failed.load(Ordering::SeqCst){outcome.result=Err(CloudError::new("lab_ledger_failed","rewrite","评估账本写入失败，后续请求已停止"));}
+    Ok(outcome)
+}
 /// Same generated draft, review, repair and absolute deadline as production.
 /// Only this explicit lab entry records per-request timings and overrides the
 /// reviewer wire format. It never reads history, persists, or inputs text.
