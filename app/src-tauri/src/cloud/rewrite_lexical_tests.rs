@@ -194,3 +194,134 @@ fn d03_explicit_prefixed_correction_no_longer_requires_the_retired_value() {
         assert!(check(&input, output).is_ok());
     }
 }
+
+#[test]
+fn finite_absence_forms_keep_status_but_never_create_a_generic_wu_anchor() {
+    for phrase in ["暂无", "尚无", "无明确"] {
+        let input=format!("Alpha{phrase}完成日期。");let found=anchors(&input);
+        assert_eq!(found.len(),1,"{input}");assert_eq!(found[0].text,phrase,"{input}");
+        assert_eq!(found[0].kind,Kind::NegativeStatus,"{input}");
+        // The scoped guard still rejects changed objects and deleted status.
+        assert!(check(&[&input],&input.replace("Alpha","Beta")).is_err(),"{input}");
+        assert!(check(&[&input],"Alpha已有完成日期。").is_err(),"{input}");
+    }
+    for input in ["无线连接正常。", "无锡供应商返回结果。", "无疑已经完成。", "无穷多个取值。", "这是无损记录。"] {
+        assert!(anchors(input).iter().all(|anchor|anchor.kind!=Kind::NegativeStatus),"{input}");
+    }
+    assert!(!PHRASES.iter().any(|(phrase,_)|*phrase=="无"));
+    for excluded in ["并无", "仍无", "无确定", "无确切", "无具体"] {
+        assert!(!PHRASES.iter().any(|(phrase,_)|*phrase==excluded));
+    }
+}
+
+#[test]
+fn inability_longest_matches_do_not_become_absent_statuses() {
+    for phrase in ["暂无法", "尚无法"] {
+        let input=format!("Alpha{phrase}提交申请。");let found=anchors(&input);
+        assert_eq!(found.len(),1,"{input}");assert_eq!(found[0].text,phrase,"{input}");
+        assert_eq!(found[0].kind,Kind::Negative,"{input}");
+        assert!(check(&[&input],"Alpha无法提交申请。").is_ok(),"{input}");
+        assert!(check(&[&input],"Alpha提交申请。").is_err(),"{input}");
+        assert!(!same_kind(Kind::NegativeStatus,found[0].kind));
+    }
+    for input in ["仍无法提交申请。", "并无法提交申请。"] {
+        let found=anchors(input);assert_eq!(found.len(),1,"{input}");
+        assert_eq!(found[0].text,"无法");assert_eq!(found[0].kind,Kind::Negative);
+    }
+}
+
+#[test]
+fn erfei_contrast_is_protected_but_the_specious_idiom_is_not_a_false_contrast() {
+    assert!(anchors("这个说法似是而非。").is_empty());
+    assert!(check(&["这个说法似是而非。"],"这个说法似乎有理但不可靠。").is_ok());
+    for (input,expected) in [
+        ("这个说法似是而非，不要直接采用。",Kind::Prohibition),
+        ("不要给出似是而非的解释。",Kind::Prohibition),
+        ("这个说法并非似是而非。",Kind::NegativeFact),
+        ("这个说法似是而非，而非已经验证。",Kind::NegativeFact),
+    ] {
+        let found=anchors(input);assert_eq!(found.len(),1,"{input}");assert_eq!(found[0].kind,expected,"{input}");
+    }
+    assert!(check(&["不是提供审批结果。"],"而非提供审批结果。").is_ok());
+    assert!(check(&["而非提供审批结果。"],"提供审批结果。").is_err());
+    assert!(check(&["而非提供审批结果。"],"而非提交合同。").is_err());
+}
+
+#[test]
+fn complete_conjunctions_do_not_turn_feichang_into_a_false_erfei_contrast() {
+    for (input,output) in [
+        ("然而非常顺利。","但很顺利。"),
+        ("反而非常清楚。","却很清楚。"),
+        ("因而非常满意。","因此很满意。"),
+        ("从而非常稳定。","由此变得很稳定。"),
+        ("进而非常好。","随后变得很好。"),
+    ] {
+        assert!(anchors(input).is_empty(),"{input}");
+        assert!(check(&[input],output).is_ok(),"{input} -> {output}");
+    }
+    // There is deliberately no broad 而非常/非常 exclusion. This unambiguous
+    // contrast must remain protected; plain 而非常顺利 stays a finite ambiguity.
+    let contrast=anchors("采用异常流程，而非常规流程。");
+    assert_eq!(contrast.len(),1);assert_eq!(contrast[0].text,"而非");
+    assert_eq!(contrast[0].kind,Kind::NegativeFact);
+    assert!(check(&["采用异常流程，而非常规流程。"],"采用异常流程和常规流程。").is_err());
+}
+
+#[test]
+fn conjunction_boundaries_preserve_adjacent_actual_negation_and_later_contrasts() {
+    for (input,kind,output) in [
+        ("然而不是最终结果。",Kind::NegativeFact,"但这是最终结果。"),
+        ("反而无法继续处理。",Kind::Negative,"却可以继续处理。"),
+        ("因而并非最终结果。",Kind::NegativeFact,"因此这是最终结果。"),
+        ("从而不能继续处理。",Kind::Negative,"由此可以继续处理。"),
+        ("进而不会提供结果。",Kind::Negative,"随后提供结果。"),
+        ("然而这是更新进度，而非提供审批结果。",Kind::NegativeFact,"但这是更新进度，也提供审批结果。"),
+    ] {
+        let found=anchors(input);assert_eq!(found.len(),1,"{input}");assert_eq!(found[0].kind,kind,"{input}");
+        assert!(check(&[input],output).is_err(),"real negation must remain: {input}");
+    }
+}
+
+#[test]
+fn observed_absence_spellings_respect_finite_complete_word_boundaries() {
+    for input in ["请合并无线网络配置。", "归并无效规则。", "兼并无线设备业务。", "吞并无线设备业务。",
+        "她品格高尚无私。", "穿搭时尚无比。", "我崇尚无为而治。", "这种风尚无比自然。", "这次停顿短暂无比。"] {
+        assert!(anchors(input).is_empty(),"complete-word boundary: {input}");
+    }
+    for (input,output) in [
+        ("请合并无线网络配置。","请把无线网络配置合并。"),
+        ("请归并无效规则。","请把无效规则归并。"),
+        ("公司准备兼并无线设备业务。","公司准备将无线设备业务兼并。"),
+        ("集团吞并无线设备业务。","无线设备业务被集团吞并。"),
+        ("她品格高尚无私。","她的品格崇高而无私。"),
+        ("穿搭时尚无比。","穿搭十分时髦。"),
+        ("我崇尚无为而治。","我提倡顺其自然的治理。"),
+        ("这种风尚无比自然。","这种风气十分自然。"),
+        ("这次停顿短暂无比。","这次停顿十分短暂。"),
+    ] {assert!(check(&[input],output).is_ok(),"{input} -> {output}");}
+}
+
+#[test]
+fn actual_absence_or_inability_after_complete_words_still_cannot_disappear() {
+    for (input,kind,output) in [
+        ("请合并配置，但尚无备份。",Kind::NegativeStatus,"请合并配置，有备份。"),
+        ("归并后尚无结果。",Kind::NegativeStatus,"归并后已有结果。"),
+        ("兼并暂无进展。",Kind::NegativeStatus,"兼并已有进展。"),
+        ("吞并仍无法完成。",Kind::Negative,"吞并可以完成。"),
+        ("想法高尚，但尚无证据。",Kind::NegativeStatus,"想法高尚，已有证据。"),
+        ("穿搭时尚，但尚无成片。",Kind::NegativeStatus,"穿搭时尚，已有成片。"),
+        ("大家崇尚自然，但尚无定论。",Kind::NegativeStatus,"大家崇尚自然，已有定论。"),
+        ("这种风尚流行，但尚无样本。",Kind::NegativeStatus,"这种风尚流行，已有样本。"),
+        ("这种风尚无法改变。",Kind::Negative,"这种风尚可以改变。"),
+        ("停顿短暂，但暂无结果。",Kind::NegativeStatus,"停顿短暂，已有结果。"),
+        ("合并未完成。",Kind::NegativeStatus,"合并已经完成。"),
+        ("品格高尚未改变。",Kind::NegativeStatus,"品格高尚已经改变。"),
+    ] {
+        let found=anchors(input);assert_eq!(found.len(),1,"{input}");assert_eq!(found[0].kind,kind,"{input}");
+        assert!(check(&[input],output).is_err(),"actual qualifier must remain: {input}");
+    }
+    for input in ["暂无明确完成日期。", "尚无明确完成日期。", "无明确完成日期。"] {
+        let found=anchors(input);assert_eq!(found.len(),1,"{input}");assert_eq!(found[0].kind,Kind::NegativeStatus);
+        assert!(check(&[input],"已有明确完成日期。").is_err(),"{input}");
+    }
+}

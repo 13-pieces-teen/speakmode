@@ -94,8 +94,13 @@ const PHRASES: &[(&str, Kind)] = &[
     ("没有确定", Kind::Pending), ("没有确认", Kind::Pending), ("没确定", Kind::Pending), ("没确认", Kind::Pending),
     ("不能确定", Kind::Pending), ("不确定", Kind::Pending), ("待确认", Kind::Pending), ("待确定", Kind::Pending), ("待定", Kind::Pending), ("未定", Kind::Pending),
     ("不要", Kind::Prohibition), ("请勿", Kind::Prohibition), ("切勿", Kind::Prohibition), ("禁止", Kind::Prohibition), ("不得", Kind::Prohibition), ("暂不", Kind::Prohibition), ("暂时不", Kind::Prohibition), ("暂勿", Kind::Prohibition), ("别", Kind::Prohibition),
-    ("并不是", Kind::NegativeFact), ("不是", Kind::NegativeFact), ("并非", Kind::NegativeFact), ("不等于", Kind::NegativeFact), ("≠", Kind::NegativeFact),
+    ("并不是", Kind::NegativeFact), ("不是", Kind::NegativeFact), ("并非", Kind::NegativeFact), ("而非", Kind::NegativeFact), ("不等于", Kind::NegativeFact), ("≠", Kind::NegativeFact),
     ("尚未", Kind::NegativeStatus), ("还没有", Kind::NegativeStatus), ("还没", Kind::NegativeStatus), ("没有", Kind::NegativeStatus), ("并未", Kind::NegativeStatus), ("未曾", Kind::NegativeStatus), ("没", Kind::NegativeStatus),
+    // Observed absence spellings only, not generic 无 (无线/无锡/无疑 are not
+    // absent statuses), and not a general Chinese lexical/semantic solution.
+    ("暂无", Kind::NegativeStatus), ("尚无", Kind::NegativeStatus), ("无明确", Kind::NegativeStatus),
+    // Longest match must keep 无法 as inability, not consume its 无 as absence.
+    ("暂无法", Kind::Negative), ("尚无法", Kind::Negative),
     ("不会", Kind::Negative), ("不能", Kind::Negative), ("无法", Kind::Negative), ("不可能", Kind::Negative), ("不可以", Kind::Negative), ("不", Kind::Negative),
     ("unless", Kind::Exception), ("if", Kind::Conditional),
     ("might", Kind::Possibility), ("may", Kind::Possibility), ("could", Kind::Possibility),
@@ -111,7 +116,18 @@ const NON_ANCHORS: &[&str] = &[
     // These complete lexical words contain 别 without expressing prohibition.
     // Skip only the word itself: adjacent 别/不要/不 remain independent anchors.
     "区别", "差别",
+    // An idiom describing a specious account is not an asserted 而非 contrast.
+    // Consume only this word so adjacent actual negatives remain protected.
+    "似是而非",
+    // Complete conjunctions establish the finite boundary before 非常:
+    // 然而非常顺利 contains no asserted 而非. Do not skip arbitrary 而非常,
+    // because 而非常规流程 can be a genuine "rather than normal procedure".
+    "然而", "反而", "因而", "从而", "进而",
 ];
+// Apply these complete-word boundaries only before 无. Unconditionally skipping
+// them would also swallow existing 尚未 in 品格高尚未改变.
+// This avoids finite 暂无/尚无 cross-word anchors without adding generic 无.
+const ABSENCE_BOUNDARY_WORDS: &[&str] = &["短暂", "高尚", "时尚", "崇尚", "风尚"];
 const CORRECTIONS: &[&str] = &["不对", "说错了", "我说错了", "更正一下", "更正为", "改口", "准确地说"];
 const FILLERS: &[&str] = &["嗯", "呃", "啊", "那个", "这个", "就是说", "就是", "然后", "我说"];
 
@@ -142,6 +158,11 @@ fn phrase_at(text: &str, offset: usize, phrase: &str) -> bool {
         && text[offset + phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric() && c != '\'')
 }
 
+fn neutral_at(text: &str, offset: usize, phrase: &str) -> bool {
+    phrase_at(text, offset, phrase) && (!ABSENCE_BOUNDARY_WORDS.contains(&phrase)
+        || text[offset + phrase.len()..].starts_with('无'))
+}
+
 fn anchors(text: &str) -> Vec<Anchor<'_>> {
     let mut found = Vec::new();
     let mut offset = 0;
@@ -158,7 +179,8 @@ fn anchors(text: &str) -> Vec<Anchor<'_>> {
             offset += length; continue;
         }
         let protected = PHRASES.iter().filter(|entry| phrase_at(text, offset, entry.0)).max_by_key(|entry| entry.0.len());
-        let neutral = NON_ANCHORS.iter().filter(|phrase| phrase_at(text, offset, phrase)).max_by_key(|phrase| phrase.len());
+        let neutral = NON_ANCHORS.iter().chain(ABSENCE_BOUNDARY_WORDS.iter())
+            .filter(|phrase| neutral_at(text, offset, phrase)).max_by_key(|phrase| phrase.len());
         if neutral.is_some_and(|phrase| protected.is_none_or(|(candidate, _)| phrase.len() >= candidate.len())) {
             offset += neutral.unwrap().len();
         } else if let Some((phrase, kind)) = protected {

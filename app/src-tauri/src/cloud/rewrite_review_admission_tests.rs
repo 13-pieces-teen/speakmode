@@ -209,3 +209,139 @@ fn review_evidence_requires_known_dimensions_from_either_side() {
         assert_eq!(super::super::review_required_evidence(&source, &blocks), expected, "{input} -> {output}");
     }
 }
+
+#[test]
+fn absence_and_contrast_paraphrases_retain_only_their_existing_finite_categories() {
+    for (input,output) in [
+        ("目前没有明确完成日期。","目前暂无明确完成日期。"),
+        ("目前没有明确完成日期。","目前尚无明确完成日期。"),
+        ("目前没有明确完成日期。","目前无明确完成日期。"),
+        ("不是提供审批结果。","而非提供审批结果。"),
+    ] {
+        assert!(admitted(&[input],output),"{input} -> {output}");
+        assert!(admitted(&[output],input),"{output} -> {input}");
+    }
+    for (input,output) in [
+        ("目前没有明确完成日期。","目前已有明确完成日期。"),
+        ("目前暂无明确完成日期。","目前已有明确完成日期。"),
+        ("目前暂无明确完成日期。","目前暂无法完成。"),
+        ("目前无明确完成日期。","目前不提供完成日期。"),
+        ("不是提供审批结果。","没有提供审批结果。"),
+        ("目前暂无明确完成日期。","这是无锡供应商的安排。"),
+        ("目前无明确完成日期。","无线连接已经完成。"),
+        ("而非提供审批结果。","这个说法似是而非。"),
+    ] {assert!(!admitted(&[input],output),"{input} -> {output}");}
+}
+
+#[test]
+fn conjunction_feichang_paraphrases_are_not_missing_negative_fact_categories() {
+    for (input,output) in [
+        ("然而非常顺利。","但很顺利。"),
+        ("反而非常清楚。","却很清楚。"),
+        ("因而非常满意。","因此很满意。"),
+        ("从而非常稳定。","由此变得很稳定。"),
+        ("进而非常好。","随后变得很好。"),
+    ] {
+        assert!(admitted(&[input],output),"{input} -> {output}");
+        assert!(admitted(&[output],input),"{output} -> {input}");
+    }
+    for (input,output) in [
+        ("然而不是最终结果。","但这是最终结果。"),
+        ("反而无法继续处理。","却可以继续处理。"),
+        ("安排进度更新，而非提供审批结果。","安排进度更新并提供审批结果。"),
+        ("采用异常流程，而非常规流程。","采用异常流程和常规流程。"),
+    ] {assert!(!admitted(&[input],output),"{input} -> {output}");}
+}
+
+#[test]
+fn observed_absence_boundaries_do_not_create_word_internal_status_assertions() {
+    use crate::{cloud::rewrite::{review_admission as outer_admission,RewriteResult},core::BaseMode};
+    for (input,output) in [
+        ("请合并无线网络配置。","请把无线网络配置合并。"),
+        ("请归并无效规则。","请把无效规则归并。"),
+        ("公司准备兼并无线设备业务。","公司准备将无线设备业务兼并。"),
+        ("集团吞并无线设备业务。","无线设备业务被集团吞并。"),
+        ("她品格高尚无私。","她的品格崇高而无私。"),
+        ("穿搭时尚无比。","穿搭十分时髦。"),
+        ("我崇尚无为而治。","我提倡顺其自然的治理。"),
+        ("这种风尚无比自然。","这种风气十分自然。"),
+        ("这次停顿短暂无比。","这次停顿十分短暂。"),
+    ] {
+        let source=source(&[input]);let frozen=source.clone();
+        let draft=RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![OutputBlock{
+            id:"word-boundary-candidate".into(),text:output.into(),source_refs:vec!["item-0".into()]}]};
+        assert!(outer_admission(&source,&draft).is_ok(),"{input} -> {output}");
+        assert_eq!(super::evidence(&source,&draft.blocks)["differences"]["missingQualifierKindsUnderSameKindRule"],serde_json::json!([]));
+        assert_eq!(source,frozen);
+    }
+    for (input,output) in [
+        ("请合并配置，但尚无备份。","请合并配置，有备份。"),
+        ("归并后尚无结果。","归并后已有结果。"),
+        ("兼并暂无进展。","兼并已有进展。"),
+        ("吞并仍无法完成。","吞并可以完成。"),
+        ("想法高尚，但尚无证据。","想法高尚，已有证据。"),
+        ("穿搭时尚，但尚无成片。","穿搭时尚，已有成片。"),
+        ("大家崇尚自然，但尚无定论。","大家崇尚自然，已有定论。"),
+        ("这种风尚流行，但尚无样本。","这种风尚流行，已有样本。"),
+        ("这种风尚无法改变。","这种风尚可以改变。"),
+        ("停顿短暂，但暂无结果。","停顿短暂，已有结果。"),
+        ("合并未完成。","合并已经完成。"),
+        ("品格高尚未改变。","品格高尚已经改变。"),
+        ("暂无明确完成日期。","已有明确完成日期。"),
+        ("尚无明确完成日期。","已有明确完成日期。"),
+        ("无明确完成日期。","已有明确完成日期。"),
+    ] {assert!(!admitted(&[input],output),"{input} -> {output}");}
+}
+
+#[test]
+fn frozen_email_body_native_replays_allow_paraphrases_but_keep_real_losses_rejected() {
+    use crate::{cloud::rewrite::{review_admission as outer_admission,RewriteResult},core::BaseMode};
+    // Exact exposed development source/candidates from PEBD001/004, not new
+    // model observations. Passing only admits them to independent full review.
+    let input="客户问补交地址证明后是不是当天有结果，帮我回一下，收到地址证明后我们会继续核对材料，如果还需其他文件，会按审核意见再联系您。现在没有明确的完成日期，我只能承诺周三下午再联系您更新进度，不是周三给审批结果。";
+    let source=source(&[input]);let frozen=source.clone();
+    let draft=|text:&str|RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![OutputBlock{
+        id:"frozen-email-candidate".into(),text:text.into(),source_refs:vec!["item-0".into()]}]};
+    let candidates=[
+        ("PEBD001B","关于您询问补交地址证明后是否当天有结果，收到地址证明后我们会继续核对材料。如果还需其他文件，会按审核意见再联系您。\n\n目前暂无明确的完成日期，我只能承诺周三下午再联系您更新进度，并非周三给出审批结果。"),
+        ("PEBD001C","关于您询问补交地址证明后是否当天有结果，收到地址证明后我们会继续核对材料。如果还需其他文件，会按审核意见再联系您。\n\n目前暂无明确的完成日期。我只能承诺周三下午再联系您更新进度，而非在周三给出审批结果。"),
+        ("PEBD004C","客户询问补交地址证明后是否当天出结果。请回复：收到地址证明后我们会继续核对材料，若还需其他文件，将按审核意见再联系您。\n\n目前无明确完成日期，仅承诺周三下午联系您更新进度，而非周三给出审批结果。"),
+        ("PEBD004D","客户询问补交地址证明后是否当天有结果。请回复：收到地址证明后我们会继续核对材料，如果还需其他文件，会按审核意见再联系您。\n\n目前无明确完成日期，仅承诺周三下午联系您更新进度，并非周三给出审批结果。"),
+    ];
+    for (id,text) in candidates {
+        let candidate=draft(text);assert!(outer_admission(&source,&candidate).is_ok(),"{id}");
+        let evidence=super::evidence(&source,&candidate.blocks);
+        assert_eq!(evidence["differences"]["missingQualifierKindsUnderSameKindRule"],serde_json::json!([]),"{id}");
+        assert_eq!(source,frozen);
+        if id.starts_with("PEBD004") {assert!(text.contains("请回复"),"technical candidate still has a request");}
+    }
+    let lost_question="收到地址证明后，我们会继续核对材料。如果还需其他文件，会按审核意见再联系您。\n\n目前没有明确的完成日期。我只能承诺周三下午再联系您更新进度，不是周三给审批结果。";
+    let missing=draft(lost_question);assert!(outer_admission(&source,&missing).is_err(),"PEBD001D really lost its customer question");
+    assert_eq!(super::evidence(&source,&missing.blocks)["differences"]["missingQualifierKindsUnderSameKindRule"],serde_json::json!(["polar_question"]));
+    for (text,bad) in [
+        (candidates[0].1,candidates[0].1.replace("暂无","已有")),
+        (candidates[1].1,candidates[1].1.replace("而非在周三给出审批结果","周三给出审批结果")),
+        (candidates[2].1,candidates[2].1.replace("若还需其他文件","还需其他文件")),
+        (candidates[3].1,candidates[3].1.replace("周三","周四")),
+    ] {
+        assert_ne!(text,bad);assert!(outer_admission(&source,&draft(&bad)).is_err(),"a qualifier/time deletion must still fail");
+    }
+}
+
+#[test]
+fn new_lexical_forms_never_waive_exact_quoted_or_code_retention() {
+    use crate::{cloud::rewrite::{review_admission as outer_admission,RewriteResult},core::BaseMode};
+    let input="帮我回一下，请在周五前补交地址证明，如果暂时拿不到原件，可以先发清晰扫描件供核对，原件提交时间还要确认。客服记录中的原话是“帮我回一下”，工单状态码是 `pending_review`，不是已经审核通过。";
+    let source=source(&[input]);
+    let draft=|text:&str|RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![OutputBlock{
+        id:"quoted-email-candidate".into(),text:text.into(),source_refs:vec!["item-0".into()]}]};
+    // Exact exposed PEBD002B: lexical synonyms do not rescue its lost quote.
+    let bad="请在周五前补交地址证明。如果暂时拿不到原件，可以先发清晰扫描件供核对，但原件提交时间还需确认。\n\n工单状态码为 `pending_review`，并非已审核通过。";
+    assert_eq!(outer_admission(&source,&draft(bad)).unwrap_err().code,"rewrite_literal_changed");
+    for (literal,changed) in [("“暂无明确结果”","“已有明确结果”"),("`尚无法提交`","`尚无提交`"),("“似是而非”","“而非”")] {
+        let text=format!("记录原话或代码{literal}，不是当前状态。");let source=self::source(&[&text]);
+        let unchanged=draft(&text);assert!(outer_admission(&source,&unchanged).is_ok());
+        let changed=draft(&text.replace(literal,changed));
+        assert_eq!(outer_admission(&source,&changed).unwrap_err().code,"rewrite_literal_changed");
+    }
+}

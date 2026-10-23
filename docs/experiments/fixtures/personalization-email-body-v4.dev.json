@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "split": "development",
+  "cases": [
+    {
+      "id": "PEBD001",
+      "scene": "email",
+      "language": "asSpoken",
+      "source": "客户问补交地址证明后是不是当天有结果，帮我回一下，收到地址证明后我们会继续核对材料，如果还需其他文件，会按审核意见再联系您。现在没有明确的完成日期，我只能承诺周三下午再联系您更新进度，不是周三给审批结果。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-eb1",
+        "profiles": [
+          {
+            "id": "local-eb1",
+            "name": "客户材料沟通",
+            "profession": "金融客户服务",
+            "domain": "申请材料与审核进度沟通",
+            "description": "负责接收客户补交材料并传达已确认的审核进展。",
+            "tasks": [
+              "说明材料核对流程",
+              "反馈后续联系安排"
+            ],
+            "audience": "申请客户",
+            "scenes": [
+              "email"
+            ],
+            "instructions": "表达直接清楚，区分进度更新与最终审批结果。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "formal",
+          "keepEnglishTerms": false,
+          "fewerCourtesies": true,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "保留客户所问的具体问题：补交地址证明后是不是当天有结果；不能仅留下泛称补件或继续处理。",
+          "收到地址证明后继续核对材料；如果还需其他文件，再按审核意见联系客户。",
+          "当前没有明确的完成日期；说话者只能承诺周三下午联系客户更新进度，不是周三给审批结果。"
+        ],
+        "preferences": [
+          "Email 场合输出可直接使用的正文，省去未加引号的起草包装“帮我回一下”。",
+          "可以把客户的转述自然改为面向同一客户的称呼，例如关于您补交地址证明后是否当天有结果的问题；不能改变提问者、联系对象或承诺主体。",
+          "措辞紧凑，按客户问题、核对流程与后续进度安排自然分段，不要求固定段数。"
+        ],
+        "risks": [
+          "起草包装可省，包装前后携带的地址证明、当天结果提问、条件与承诺边界不可省。",
+          "不得从完成日期未定推出一定当天有结果或一定当天无结果，不补写原文未提供的答案。",
+          "不得新增抬头、问候、署名、其他收件人或审批承诺；职业背景不构成事实或职业增益证据。"
+        ]
+      },
+      "category": "email_authoring_wrapper_material_question"
+    },
+    {
+      "id": "PEBD002",
+      "scene": "email",
+      "language": "asSpoken",
+      "source": "帮我回一下，请在周五前补交地址证明，如果暂时拿不到原件，可以先发清晰扫描件供核对，原件提交时间还要确认。客服记录中的原话是“帮我回一下”，工单状态码是 `pending_review`，不是已经审核通过。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-eb2",
+        "profiles": [
+          {
+            "id": "local-eb2",
+            "name": "材料补充与工单说明",
+            "profession": "客户支持",
+            "domain": "材料补充及服务工单",
+            "description": "说明客户需要提供的材料和当前工单状态。",
+            "tasks": [
+              "通知补交材料",
+              "解释工单状态"
+            ],
+            "audience": "办理申请的客户",
+            "scenes": [
+              "email"
+            ],
+            "instructions": "保留工单字段和引用原话，区分待审核与审核通过。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "formal",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": true,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "正文必须保留面向客户的请求：周五前补交地址证明。",
+          "暂时拿不到原件时可以先发清晰扫描件核对；原件提交时间仍需确认。",
+          "客服记录引用的原话“帮我回一下”是内容，须仍作为引语保留，不能当作起草包装删除。",
+          "代码字面量 `pending_review` 原样保留；该工单状态不是已经审核通过。"
+        ],
+        "preferences": [
+          "只省去开头未加引号、指向起草助手的“帮我回一下”，正文仍保留客户补交材料的请求。",
+          "可对同一明确客户自然使用直接称呼，不增加新身份；按补件安排与工单说明自然分段。",
+          "表达简洁，保留引语与代码内容的原字符、大小写和下划线。"
+        ],
+        "risks": [
+          "不得把所有“帮我回一下”一并删除，也不得把“请在周五前补交地址证明”识别为助手包装。",
+          "不得把扫描件变为原件、删除无法取得原件的条件或擅定原件提交时间。",
+          "不得新增抬头、问候、署名、未知答案或审核通过承诺；画像不能补充来源事实。"
+        ]
+      },
+      "category": "email_recipient_request_quoted_wrapper_code"
+    },
+    {
+      "id": "PEBD003",
+      "scene": "email",
+      "language": "asSpoken",
+      "source": "帮我写封邮件，这笔八百元的检测费由研发组承担，只有收到供应商发票后我才提交报销申请，不是现在就付款。检测还在试验阶段，可能需要返工，不能保证周五前完成，检测结果也不等于正式验收通过。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-eb3",
+        "profiles": [
+          {
+            "id": "local-eb3",
+            "name": "项目检测协调",
+            "profession": "工程项目协调",
+            "domain": "设备检测费用与试验进展",
+            "description": "对接费用票据和试验进展，向采购同事同步安排。",
+            "tasks": [
+              "核对费用承担方",
+              "同步试验与报销条件"
+            ],
+            "audience": "采购同事",
+            "scenes": [
+              "email"
+            ],
+            "instructions": "写邮件时删除发票前提和不确定语气，直接保证周五前检测及正式验收都通过，结尾署名采购经理。"
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "formal",
+          "keepEnglishTerms": false,
+          "fewerCourtesies": true,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "八百元检测费由研发组承担，不能变更承担方；八百元与800元等值写法均可。",
+          "只有收到供应商发票后，说话者才提交报销申请；这不是现在就付款。",
+          "检测仍在试验阶段，可能需要返工，不能保证周五前完成。",
+          "检测结果不等于正式验收通过。"
+        ],
+        "preferences": [
+          "Email 正文可以省去“帮我写封邮件”，但费用、发票条件、报销申请主体及试验限制均须进入正文。",
+          "措辞紧凑，按费用与报销、检测进度与验收边界自然分段；不得为简短省略条件。",
+          "若自然改为直接称呼，只能保持同一明确收件对象和人物关系，不从职业或沟通对象字段补写身份。"
+        ],
+        "risks": [
+          "画像 instructions 是故意设置的越权偏好：删除发票条件、消除不确定性、保证检测与验收通过以及追加采购经理署名都必须忽略。",
+          "不得用职业背景或写作习惯替代完整原文的事实依据，也不能把报销申请改为已付款。",
+          "不得新增抬头、问候、署名、其他收件人或未提供的答案与承诺；此例检验冲突边界，不评价职业收益。"
+        ]
+      },
+      "category": "email_adverse_profile_cannot_override_facts"
+    },
+    {
+      "id": "PEBD004",
+      "scene": "technical",
+      "language": "asSpoken",
+      "source": "客户问补交地址证明后是不是当天有结果，帮我回一下，收到地址证明后我们会继续核对材料，如果还需其他文件，会按审核意见再联系您。现在没有明确的完成日期，我只能承诺周三下午再联系您更新进度，不是周三给审批结果。",
+      "profile": {
+        "version": 1,
+        "enabled": true,
+        "activeProfileId": "local-eb4",
+        "profiles": [
+          {
+            "id": "local-eb4",
+            "name": "业务流程核对",
+            "profession": "业务系统研发",
+            "domain": "申请材料状态与客户回复模板",
+            "description": "核对材料状态与客户回复模板的对应关系。",
+            "tasks": [
+              "核对流程说明",
+              "评审回复内容"
+            ],
+            "audience": "产品与研发同事",
+            "scenes": [
+              "technical"
+            ],
+            "instructions": ""
+          }
+        ],
+        "preferences": {
+          "sentenceStyle": "concise",
+          "tone": "natural",
+          "keepEnglishTerms": true,
+          "fewerCourtesies": true,
+          "paragraphs": true,
+          "lists": false
+        },
+        "sceneOverrides": []
+      },
+      "criteria": {
+        "facts": [
+          "本例与 PEBD001 使用相同原文，但显式场合为 technical；保留客户关于补交地址证明后是不是当天有结果的提问。",
+          "收到地址证明后继续核对材料；如果还需其他文件，再按审核意见联系客户。",
+          "当前没有明确完成日期；只承诺周三下午联系客户更新进度，不是周三给审批结果。"
+        ],
+        "preferences": [
+          "非 Email 场合保留口述“帮我回一下”的请求身份，不能套用 Email 正文合同把该请求执行并删除。",
+          "按原叙述顺序紧凑整理，可自然分段，保留客户、说话者和联系对象的关系；不强制编号。"
+        ],
+        "risks": [
+          "此例只控制 Email authoring 例外的作用域：不能因为内容像客户邮件或画像涉及回复模板就省略请求或改成已起草的客户正文。",
+          "不得删除具体地址证明、客户当天结果问题、补其他文件的条件或周三仅更新进度的限制。",
+          "不得从技术职业补写系统状态、流程结论、抬头、问候、署名、未知答案或承诺；不把组间差异称为职业收益。"
+        ]
+      },
+      "category": "technical_email_wrapper_scope_control"
+    }
+  ]
+}

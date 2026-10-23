@@ -23,7 +23,7 @@
 | 检查 | 当前结果 | 证据与边界 |
 | --- | --- | --- |
 | Windows desktop 编译 | PASS | `personalization-check-r2.log`；使用现有 MSVC 工具链及共享缓存 |
-| 完整 Rust library 测试 | PASS：973 passed，0 failed，4 ignored | `personalization-quality-regression-final-test.log`；包含真实 SQLite、协调器、mock HTTP 与字母/单位回归；不使用麦克风或真实模型 |
+| 完整 Rust library 测试 | PASS：999 passed，0 failed，4 ignored | `personalization-email-v4-final-tests.log`；包含真实 SQLite、协调器、mock HTTP、字母/单位及邮件合同/词法回归；不使用麦克风或真实模型 |
 | TypeScript 与 Vite 构建 | PASS | `personalization-integrated-build.log`；前端版本 0.4.28，含主分支最新统计切换修复 |
 | 前端配置校验 | PASS：11/11 | `personalization-helper-20261023.json` |
 | 隔离 Edge 行为检查 | PASS：17/17 | `personalization-ui-20261023-integrated/receipt.json`；合成 IPC，无外部请求、pageErrors 为 0 |
@@ -63,6 +63,16 @@
 5. 三阶段除校验实际请求内容，还校验本地画像版本，即使两个版本传给模型的文字相同，也不能交叉使用回执。金额标签识别只检查就近有界窗口，避免长文中每个数字重复复制整段前文。
 
 金额守卫仍是有限数值检查，不证明金额归属或一般语义保真，也不覆盖无单位的英文拼写数词。职业背景不能替代原始内容和独立复核。
+
+## 2026-10-24：邮件正文与复核回归
+
+用户确认邮件应直接成稿，省去明确面向助手的起草包装，同时保留具体材料、客户问题、收件人请求、条件和承诺。`situational-dictation-v4` 将这项固定合同传给生成、复核和有界局部修复；显式其他场合优先于 Email 宿主提示，原始识别与来源 ID 不修改。画像不能扩大省略范围，不能补写问题答案、收件人或署名。
+
+固定文本开发实验暴露了等义否定的误拦。新增有限拼写 `暂无 / 尚无 / 无明确 / 而非`，保护 `无法` 最长匹配、真实问题与字面量，排除若干完整词的跨词误识别；没有通用“无”或类别／作用域豁免。四份实际误拦候选现在可进入独立复核，真实问题／引语丢失仍被拒绝。该有限分类不证明语义等价，复杂格式式或疑问式起草包装仍可能回退。
+
+三轮开发结果分别为 16 路径 26 请求（8 接受）、16 路径 31 请求（13 接受）、单个冲突画像案例 4 路径 8 请求（3 接受）。最后一轮四份正文相同，D 仍被模型误拒，不能宣称个人表达合同 v2 已解决复核误拒，也不能合并不同轮次为质量通过率。当前 999 项 library 和 10 项消融工具测试通过；真实录音与用户采纳仍为 NOT_RUN。逐条证据见 [邮件实验](personalization-email-body-2026-10-24.md)。
+
+另一个 24 请求的逐单元核对实验与基线判定相同，却更慢；只保留显式实验入口，不接入生产选择。见 [覆盖复核实验](personalization-coverage-review-2026-10-24.md)。本轮继续保持 Draft，不按模型接受数宣布整理质量已验收。
 
 ## PRD 完成核对
 
