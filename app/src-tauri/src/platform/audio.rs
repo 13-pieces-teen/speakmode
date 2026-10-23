@@ -87,6 +87,11 @@ pub struct InputDevice {
     pub sample_format: String,
 }
 
+fn device_key(name: &str) -> String {
+    let backend = if cfg!(target_os = "macos") { "coreaudio" } else { "wasapi" };
+    format!("{backend}:{name}")
+}
+
 pub fn enumerate_inputs() -> Result<Vec<InputDevice>> {
     let host = cpal::default_host();
     let default_name = host.default_input_device().and_then(|d| d.name().ok());
@@ -94,7 +99,7 @@ pub fn enumerate_inputs() -> Result<Vec<InputDevice>> {
     for device in host.input_devices().map_err(unavailable)? {
         let name = device.name().map_err(unavailable)?;
         let config = device.default_input_config().map_err(unavailable)?;
-        output.push(InputDevice { id: format!("wasapi:{name}"), is_default: default_name.as_ref() == Some(&name),
+        output.push(InputDevice { id: device_key(&name), is_default: default_name.as_ref() == Some(&name),
             name, sample_rate: config.sample_rate().0, channels: config.channels(), sample_format: config.sample_format().to_string() });
     }
     Ok(output)
@@ -289,7 +294,7 @@ fn unavailable(error: impl std::fmt::Display) -> PlatformError { PlatformError::
 fn select_device(id: Option<&str>) -> Result<cpal::Device> {
     let host = cpal::default_host();
     if let Some(id) = id {
-        let mut matching = host.input_devices().map_err(unavailable)?.filter(|d| d.name().ok().is_some_and(|n| format!("wasapi:{n}") == id));
+        let mut matching = host.input_devices().map_err(unavailable)?.filter(|d| d.name().ok().is_some_and(|n| device_key(&n) == id));
         let device = matching.next().ok_or_else(|| PlatformError::Unavailable("selected microphone no longer exists".into()))?;
         if matching.next().is_some() { return Err(PlatformError::Unavailable("microphone names are ambiguous; use system default".into())); }
         Ok(device)
@@ -298,6 +303,10 @@ fn select_device(id: Option<&str>) -> Result<cpal::Device> {
 
 fn capture_worker(device_id: Option<String>, conditioning_mode: ConditioningMode, control: Receiver<Control>, frames: Sender<AudioFrame>,
     events: &Sender<AudioEvent>, accepting: Arc<AtomicBool>, cancellation: Arc<AtomicBool>, ready: &Sender<std::result::Result<(), String>>, duration_progress: Arc<AtomicU64>) -> Result<CaptureSummary> {
+    #[cfg(target_os = "macos")]
+    if !super::macos::microphone_granted() {
+        return Err(PlatformError::Unavailable("请先在 macOS 系统设置中允许 SpeakMode 使用麦克风".into()));
+    }
     let device = select_device(device_id.as_deref())?;
     let supported = device.default_input_config().map_err(unavailable)?;
     let config: cpal::StreamConfig = supported.clone().into();

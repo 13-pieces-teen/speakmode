@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Button, Switch, TextField } from '@radix-ui/themes';
 import { PlusIcon, Cross2Icon } from '@radix-ui/react-icons';
+import {isMacOS} from '../platform';
 import { applicationKey, applicationLabel, writingApplications, writingSceneLabels, type AppWritingPreferences, type AppWritingScene } from '../appWriting';
 import { SettingRow } from './SettingsControls';
 
@@ -9,7 +10,7 @@ function SceneOptions() {
   return Object.entries(writingSceneLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>);
 }
 export function AppWritingSettings({ value, disabled, onChange }: Props) {
-  const [preset, setPreset] = useState('wechat.exe');
+  const [preset, setPreset] = useState(writingApplications[0].id);
   const [custom, setCustom] = useState('');
   const [scene, setScene] = useState<AppWritingScene>('chat');
   const [error, setError] = useState('');
@@ -22,7 +23,7 @@ export function AppWritingSettings({ value, disabled, onChange }: Props) {
   const handle = (promise: Promise<void>) => { void promise.catch(() => {}); };
   async function add() {
     const key = applicationKey(preset === 'custom' ? custom : preset);
-    if (!key) { setError('请填写程序名，例如 Code.exe，不包含文件路径。'); return; }
+    if (!key) { setError('请填写应用标识，例如 Code.exe 或 com.microsoft.VSCode，不包含文件路径。'); return; }
     if (value.overrides.some(item => item.application.toLowerCase() === key)) { setError('这个应用已有偏好，请在上方修改。'); return; }
     if (value.overrides.length >= 32) { setError('应用偏好最多保存 32 项，请先移除不需要的项目。'); return; }
     setError('');
@@ -40,7 +41,7 @@ export function AppWritingSettings({ value, disabled, onChange }: Props) {
   }
   async function exclude() {
     const key = applicationKey(excludedApplication);
-    if (!key) { setExclusionError('请填写程序名，例如 Code.exe，不包含文件路径。'); return; }
+    if (!key) { setExclusionError('请填写应用标识，例如 Code.exe 或 com.microsoft.VSCode，不包含文件路径。'); return; }
     if (value.excludedApplications.includes(key)) { setExclusionError('这个应用已被排除。'); return; }
     if (value.excludedApplications.length >= 32) { setExclusionError('最多排除 32 个应用。'); return; }
     setExclusionError('');
@@ -69,7 +70,7 @@ export function AppWritingSettings({ value, disabled, onChange }: Props) {
             onClick={()=>handle(onChange({...value,excludedApplications:value.excludedApplications.filter(item=>item!==application)}).then(()=>{setExclusionError('');exclusionInput.current?.focus();}))}><Cross2Icon/></Button></li>)}
       </ul>}
       <div className="input-context-exclusion-editor">
-        <label htmlFor="input-context-excluded-app">程序名<TextField.Root ref={exclusionInput} id="input-context-excluded-app" placeholder="例如 Code.exe" disabled={disabled} value={excludedApplication} maxLength={80} aria-describedby="input-context-exclusion-error"
+        <label htmlFor="input-context-excluded-app">程序名<TextField.Root ref={exclusionInput} id="input-context-excluded-app" placeholder={isMacOS?'例如 com.microsoft.VSCode':'例如 Code.exe'} disabled={disabled} value={excludedApplication} maxLength={160} aria-describedby="input-context-exclusion-error"
           onChange={event=>{setExcludedApplication(event.target.value);setExclusionError('');}}/></label>
         <Button variant="soft" color="gray" disabled={disabled||value.excludedApplications.length>=32} onClick={()=>void exclude()}><PlusIcon/>排除此应用</Button>
       </div>
@@ -81,7 +82,7 @@ export function AppWritingSettings({ value, disabled, onChange }: Props) {
         aria-describedby="app-writing-enabled-description app-writing-privacy"
         onCheckedChange={enabled => handle(onChange({ ...value, enabled }))} />
     </SettingRow>
-    <p id="app-writing-privacy" className="settings-control-hint">应用匹配只使用程序名。输入位置感知单独控制是否读取附近文字；偏好更改用于下一次口述。</p>
+    <p id="app-writing-privacy" className="settings-control-hint">应用匹配只使用程序名或 Bundle ID。输入位置感知单独控制是否读取附近文字；偏好更改用于下一次口述。</p>
     {value.enabled && <div className="app-writing-preferences">
       <p className="settings-control-hint">常见聊天应用、Word 和代码编辑器会自动匹配。浏览器使用通用场合；开启输入位置感知后，可用的输入框上下文帮助区分聊天与文档。</p>
       {value.overrides.length > 0 && <ul className="app-writing-list" aria-label="应用表达偏好">
@@ -100,7 +101,7 @@ export function AppWritingSettings({ value, disabled, onChange }: Props) {
         </select></label>
         <label>表达场景<select aria-label="新应用的表达场景" value={scene} onChange={event => setScene(event.target.value as AppWritingScene)}><SceneOptions /></select></label>
         <Button type="button" variant="soft" color="gray" disabled={fieldDisabled || value.overrides.length >= 32} onClick={() => void add()}><PlusIcon />添加偏好</Button>
-        {preset === 'custom' && <label className="app-writing-custom">程序名<TextField.Root aria-label="应用程序名" placeholder="例如 Notepad.exe" value={custom} maxLength={80} onChange={event => { setCustom(event.target.value); setError(''); }} /></label>}
+        {preset === 'custom' && <label className="app-writing-custom">程序名<TextField.Root aria-label="应用程序名" placeholder={isMacOS?'例如 com.apple.TextEdit':'例如 Notepad.exe'} value={custom} maxLength={160} onChange={event => { setCustom(event.target.value); setError(''); }} /></label>}
       </fieldset>
       <p className="settings-control-hint">浏览器偏好适用于该浏览器的所有页面。选择“通用”时按口述和可用上下文判断；移除偏好则恢复自动匹配。</p>
       {error && <p role="alert" className="settings-error">{error}</p>}

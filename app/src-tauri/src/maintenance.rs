@@ -96,7 +96,7 @@ pub enum VerdictDelivery {Acknowledged,Unconfirmed}
 
 #[cfg(windows)]
 pub use native::{start_server,prepare_uninstall};
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os="macos")))]
 pub async fn prepare_uninstall()->io::Result<()>{Err(io::Error::other("Windows maintenance only"))}
 
 #[cfg(windows)]
@@ -458,3 +458,9 @@ mod tests {
         drop(held);delete_data(&root,&root).unwrap();assert!(!root.exists());
     }
 }
+
+#[cfg(target_os="macos")]
+#[path="platform/macos/maintenance.rs"]
+mod macos;
+#[cfg(target_os="macos")]
+pub use macos::{start_server,prepare_uninstall};

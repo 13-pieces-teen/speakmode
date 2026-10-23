@@ -285,3 +285,6 @@ svg { flex-shrink: 0; }
 @media(max-width:600px){.environment-banner{padding:14px}.guard-actions{display:grid;grid-template-columns:1fr;width:100%}.history-restore-form .history-sentence-texts{grid-template-columns:1fr}.history-full-comparison p{max-height:none;overflow:visible}}
 .session-recovery{margin-bottom:22px;font-size:13px}.session-recovery>p{margin:8px 0;color:var(--sm-secondary)}.session-recovery-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.session-recovery-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto;padding:12px;background:var(--sm-mist)}
 .retained-recovery-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}.retained-recovery-heading>span{font-size:12px;color:var(--sm-muted);white-space:nowrap}.retained-recovery details{margin-top:12px}.retained-recovery-confirm{margin-top:14px;padding:12px 14px;border:1px solid var(--sm-line);border-radius:10px;background:var(--sm-mist)}.retained-recovery-confirm p{margin:0;line-height:1.8;overflow-wrap:anywhere}
+
+.window-titlebar-macos .window-brand{padding-left:82px}
+.window-titlebar-macos{grid-template-columns:var(--sm-sidebar-width) minmax(0,1fr)}

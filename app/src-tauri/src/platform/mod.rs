@@ -69,3 +69,6 @@ pub enum PlatformError {
     Disconnected,
 }
 pub type Result<T> = std::result::Result<T, PlatformError>;
+
+#[cfg(target_os = "macos")]
+pub mod macos;

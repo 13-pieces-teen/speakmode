@@ -1,4 +1,17 @@
-# Windows platform implementation
+# Desktop platform implementation
+
+The shared engine uses the same ownership and delivery policy on Windows and
+macOS. The macOS boundary lives in `macos/`: CPAL/CoreAudio input, native keyring,
+Accessibility target capture and bounded context, tagged Cmd+V dispatch, AppKit
+overlay windows, lifecycle observers, and a peer-checked Unix maintenance socket.
+Default standalone right Alt is presented as right Option on Mac. Native paste
+reports dispatch without claiming confirmed insertion. Secure input, focus/selection
+changes and unavailable accessibility permissions fail closed. See
+[macOS build and acceptance notes](../../../../docs/macos.md) for permission setup,
+native probes, actual test results and remaining acceptance work.
+
+The following sections describe the Windows implementation and the shared
+ownership contracts; Windows packaging settings live in `tauri.windows.conf.json`.
 
 No module import performs input capture or clipboard mutation. Native operations
 are explicit. The desktop coordinator owns user intent, durable state, generation

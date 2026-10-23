@@ -128,7 +128,7 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
                 </Select.Item>)}
               </Select.Content>
             </Select.Root>
-            <p id="microphone-device-hint" className="settings-control-hint">{!available ? '设备列表仅在桌面应用中可用。' : devicesStatus === 'error' ? '设备列表读取失败，旧列表暂不可选。已保存的麦克风选择保持不变。' : !devicesReady ? '正在读取设备列表；已保存的麦克风选择保持不变。' : !realDevices.length ? '尚未取得可用设备，请检查麦克风连接和系统权限。' : selectedDeviceMissing ? '已选设备暂不可用；请选择其他设备或系统默认。' : '设备列表来自系统；系统默认会跟随 Windows 输入设置。'}</p>
+            <p id="microphone-device-hint" className="settings-control-hint">{!available ? '设备列表仅在桌面应用中可用。' : devicesStatus === 'error' ? '设备列表读取失败，旧列表暂不可选。已保存的麦克风选择保持不变。' : !devicesReady ? '正在读取设备列表；已保存的麦克风选择保持不变。' : !realDevices.length ? '尚未取得可用设备，请检查麦克风连接和系统权限。' : selectedDeviceMissing ? '已选设备暂不可用；请选择其他设备或系统默认。' : '设备列表来自系统；系统默认会跟随系统输入设置。'}</p>
             {devicesStatus === 'error' && <div className="settings-device-recovery"><p className="settings-error" role="alert">{deviceReadError ?? '无法读取设备列表。'}</p><Button size="2" variant="soft" color="gray" disabled={disabled} onClick={() => void refresh()}>重新读取设备</Button></div>}
           </div>
         </SettingRow>
@@ -182,7 +182,7 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
           <Switch id="keep-history" aria-describedby="keep-history-description settings-preview-scope" disabled={disabled} checked={preferences.keepHistory} onCheckedChange={value => handle(update('keepHistory', value, '记录偏好（下一次口述生效）'))} />
         </SettingRow>
         {!preferences.keepHistory && <p className="settings-inline-note">新口述仅保留临时结果与不含正文的使用统计，不写入历史。已有记录不会删除，当前已开始的口述仍按开始时的选择处理。</p>}
-        <SettingRow title="开机启动" description="登录 Windows 后，在托盘中待命，不自动开始录音。" htmlFor="launch-on-startup" feedback={<SettingFeedback feedback={feedback} target="launchOnStartup" />}>
+        <SettingRow title="开机启动" description="登录系统后，在状态菜单中待命，不自动开始录音。" htmlFor="launch-on-startup" feedback={<SettingFeedback feedback={feedback} target="launchOnStartup" />}>
           <Switch id="launch-on-startup" aria-describedby="launch-on-startup-description settings-preview-scope" disabled={disabled} checked={preferences.launchOnStartup} onCheckedChange={value => handle(update('launchOnStartup', value, '开机启动偏好'))} />
         </SettingRow>
       </SettingsSection>

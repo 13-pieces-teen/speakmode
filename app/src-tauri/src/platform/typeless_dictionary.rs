@@ -60,7 +60,14 @@ type Result<T> = std::result::Result<T, TypelessImportError>;
 
 /// Called only by the user's import action. The source is fixed, never IPC supplied.
 pub fn read_local() -> Result<ImportedTerms> {
-    #[cfg(not(windows))] { Err(TypelessImportError::Unavailable) }
+    #[cfg(not(any(windows, target_os="macos")))] { Err(TypelessImportError::Unavailable) }
+    #[cfg(target_os="macos")] {
+        let home = std::env::var_os("HOME").ok_or(TypelessImportError::Unavailable)?;
+        let support = PathBuf::from(home).join("Library/Application Support");
+        let roots = ["Typeless", "Typeless.exe"].map(|name| support.join(name).join("Partitions/no-proxy-session/Cache/Cache_Data"));
+        let root = roots.iter().find(|path| path.join("index").is_file()).ok_or(TypelessImportError::Unavailable)?;
+        read_cache(root)
+    }
     #[cfg(windows)] {
         let appdata = std::env::var_os("APPDATA").ok_or(TypelessImportError::Unavailable)?;
         let root = PathBuf::from(appdata).join("Typeless.exe/Partitions/no-proxy-session/Cache/Cache_Data");

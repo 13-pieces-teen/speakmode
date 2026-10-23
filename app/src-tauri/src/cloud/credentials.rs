@@ -31,7 +31,7 @@ fn account(config: &ProviderConfig, stage: CredentialStage) -> Result<String, Cl
 
 fn entry(config: &ProviderConfig, stage: CredentialStage) -> Result<keyring::Entry, CloudError> {
     keyring::Entry::new(SERVICE, &account(config, stage)?)
-        .map_err(|_| CloudError::new("credential_unavailable", "credentials", "无法访问 Windows 凭据管理器"))
+        .map_err(|_| CloudError::new("credential_unavailable", "credentials", "无法访问系统凭据存储"))
 }
 
 pub fn configured_for(config: &ProviderConfig, stage: CredentialStage) -> Result<bool, CloudError> {

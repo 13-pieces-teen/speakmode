@@ -1,0 +1,25 @@
+{
+  "app": {
+    "macOSPrivateApi": true
+  },
+  "bundle": {
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/128x128.png",
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
+    },
+    "resources": {
+      "../../docs/third-party/nsis-resources/": "third-party/",
+      "../../docs/third-party/MACOS_NATIVE_NOTICES.txt": "third-party/MACOS_NATIVE_NOTICES.txt",
+      "../../docs/third-party/LOCAL-SOURCE-MODIFICATIONS.md": "third-party/MACOS_LOCAL_SOURCE_MODIFICATIONS.md"
+    }
+  }
+}

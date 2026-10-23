@@ -1,6 +1,6 @@
 # Local source modification boundary
 
-Updated 2026-10-08. This note accompanies the dependency inventory and is included in the staged
+Updated 2026-10-23. This note accompanies the dependency inventory and is included in the staged
 installer resource manifest. It is a source-modification record, not release/legal
 approval or evidence of a successful installation.
 
@@ -73,3 +73,16 @@ separate evidence; compiler notice collection does not certify final CRT linkage
 Regenerate/stage after final dependency or notice source changes. The current
 verification receipt covers the resulting material snapshot and original text
 hashes, not final binary composition or legal review.
+
+## macOS port (2026-10-23)
+
+The local handy-keys changes in `src/listener.rs` and
+`src/platform/macos/listener.rs` expose a monotonic event-tap reset epoch and
+filter SpeakMode-tagged synthetic paste events. After a tap reset, the wrapper
+discards pending gestures so a reconciled release cannot start another recording.
+The MIT license and original attribution remain unchanged. Windows hook code
+and its standalone Alt/Win masking policy were not changed by this port.
+
+The Mac bundle includes this updated record separately as
+`MACOS_LOCAL_SOURCE_MODIFICATIONS.md`; the Windows installer retains its existing
+frozen resource snapshot. Neither record establishes physical-key acceptance.

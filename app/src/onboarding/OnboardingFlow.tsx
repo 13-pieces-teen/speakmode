@@ -3,6 +3,7 @@ import {ArrowLeftIcon, ArrowRightIcon, ChatBubbleIcon, CheckCircledIcon, CheckIc
 import {useDesktop} from '../services/DesktopProvider';
 import {errorMessage} from '../services/bridge';
 import {WindowChrome} from '../components/WindowChrome';
+import {MacPermissions} from '../components/MacPermissions';
 import {ProviderSettings} from '../components/ProviderSettings';
 import {ShortcutEditor} from '../components/ShortcutEditor';
 import {CopyAction} from '../components/CopyAction';
@@ -26,7 +27,7 @@ const enChat = 'Hi Alex, the meeting is tomorrow at three, uh, actually four. Co
 const cnDocument = '今天同步三件事。登录页已经完成。支付页还在联调，预计周五完成。发布前先补一轮回归测试，通过以后再上线。';
 const enDocument = 'A quick project update. The login page is complete. Payment integration is in progress and should finish on Friday. Run the regression tests before release, and only launch if they pass.';
 
-function Keycap({value}:{value:string}) { return <kbd className="ob-keycap">{value === 'alt_right' ? 'Right Alt' : shortcutLabel(value)}</kbd>; }
+function Keycap({value}:{value:string}) { return <kbd className="ob-keycap">{shortcutLabel(value)}</kbd>; }
 function Source({children}:{children:ReactNode}) { return <div className="ob-source"><p><SpeakerLoudIcon aria-hidden="true"/>可以这样说</p><blockquote>{children}</blockquote></div>; }
 
 export function OnboardingFlow({state}:{state:OnboardingState}) {
@@ -127,7 +128,7 @@ export function OnboardingFlow({state}:{state:OnboardingState}) {
           {step === 'welcome' && <WelcomeStage/>}
           {step === 'setup' && <div className="ob-setup-card">
             <div className="ob-card-heading"><SpeakerLoudIcon/><span>准备就绪</span><span className="ob-badge">本机设置</span></div>
-            <div className="ob-setup-scroll">
+            <div className="ob-setup-scroll"><MacPermissions/>
               <label className="ob-field" htmlFor="ob-microphone">录音麦克风<select id="ob-microphone" value={desktop.preferences.microphoneId ?? ''} disabled={pending || desktop.devicesStatus !== 'ready'} onChange={event => {const value = event.target.value;void run(() => desktop.command('preferences.update',{patch:{microphoneId:value || null},expectedVersion:desktop.preferences.version}));}}><option value="">系统默认麦克风</option>{desktop.preferences.microphoneId && !device && <option value={desktop.preferences.microphoneId} disabled>已保存的设备（当前不可用）</option>}{desktop.devices.map(value => <option key={value.id} value={value.id} disabled={value.available === false}>{value.name}{value.available === false ? '（不可用）' : ''}</option>)}</select></label>
               <div className="ob-device-status"><span>{desktop.devicesStatus === 'loading' ? '正在读取麦克风…' : deviceReady ? '已找到录音设备，下一步实际试音。' : '没有可用麦克风，请检查设备连接与系统权限。'}</span><button type="button" className="ob-link" disabled={pending} onClick={() => void desktop.refresh()}>刷新设备</button></div>
               <details className="ob-provider" open={!desktop.provider.configured || undefined}><summary><span>{desktop.provider.configured ? '服务配置已保存' : '连接云端服务'}</span><span>{desktop.provider.configured ? '查看 / 修改' : '需要 API Key'}</span></summary><ProviderSettings compact onDraftStateChange={onDraftStateChange}/></details>

@@ -84,12 +84,15 @@ export const errorMessage=error=>String(error);
 export const fromModeId=value=>value,toModeId=value=>value,builtinModes=[];
 export const Button='button',Popover={Root:'popoverRoot',Trigger:'popoverTrigger',Content:'popoverContent'};
 export const CheckIcon='check',ChevronDownIcon='chevron',Cross2Icon='cross',ModeIcon='mode';
-export const CaptionStrip='caption',RecorderWaveform='waveform',fragment='fragment';
+export const CaptionStrip='caption',RecorderWaveform='waveform',Fragment='fragment',fragment='fragment';
 export const element=(type,props,...children)=>({type,props:{...props,children:children.length===1?children[0]:children}});
 `);
+const modesSource=await readFile(root+'/app/src/modes.ts','utf8');
+await writeFile(out+'/modes-check.mjs',ts.transpileModule(modesSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);
 const imports=new Map([
+ ['../modes',pathToFileURL(out+'/modes-check.mjs').href],
  ['../services/deliveryFeedback',pathToFileURL(out+'/delivery-feedback-check.mjs').href],
- ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../hooks/useModes','../components/ui','../model','../modes','../services/bridge','./useRecorderSize','./CaptionStrip','./RecorderWaveform'].map(name=>[name,pathToFileURL(stubsPath).href]),
+ ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../hooks/useModes','../components/ui','../model','../services/bridge','./useRecorderSize','./CaptionStrip','./RecorderWaveform'].map(name=>[name,pathToFileURL(stubsPath).href]),
 ]);
 const replaceImports=context=>node=>ts.visitNode(node,function visit(current){
  if(ts.isImportDeclaration(current)&&ts.isStringLiteral(current.moduleSpecifier)){
@@ -111,7 +114,7 @@ const copyButtons=(tree)=>{
 };
 const renderRecorder=(deliveryState,{available=true,reject=false,extra={}}={})=>{
  const calls=[];
- setDesktop({available,session:{...session('ready',deliveryState),...extra},modes:[],recorderModeRequest:null,error:'',command:async(name,payload)=>{calls.push({name,payload});if(reject)throw new Error('synthetic navigation failure');}});
+ setDesktop({available,modes:[],session:{...session('ready',deliveryState),...extra},modes:[],recorderModeRequest:null,error:'',command:async(name,payload)=>{calls.push({name,payload});if(reject)throw new Error('synthetic navigation failure');}});
  return {buttons:copyButtons(RecorderWindow()),calls};
 };
 await test('Unconfirmed recorder never asks to open main or repeats delivery',()=>{

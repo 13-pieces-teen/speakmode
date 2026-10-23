@@ -30,3 +30,5 @@
 @media (prefers-reduced-motion: reduce) {
   .ux, .ux *, .ux *::before, .ux *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.mac-permission-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}

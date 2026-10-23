@@ -23,10 +23,12 @@ impl Default for AppWritingPreferences {
 
 pub fn application_key(value: &str) -> Option<String> {
     let value = value.trim().to_ascii_lowercase();
-    (value.len() > 4 && value.len() <= 80 && value.ends_with(".exe")
+    let executable = value.len() > 4 && value.ends_with(".exe")
         && !value.starts_with('.') && !value.contains("..")
-        && value.bytes().all(|c| c.is_ascii_alphanumeric() || b"._- ".contains(&c)))
-        .then_some(value)
+        && value.bytes().all(|c| c.is_ascii_alphanumeric() || b"._- ".contains(&c));
+    let bundle = value.split('.').count() >= 2 && value.split('.').all(|part|
+        !part.is_empty() && part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'));
+    (value.len() <= 160 && (executable || bundle)).then_some(value)
 }
 
 impl AppWritingPreferences {
@@ -34,13 +36,13 @@ impl AppWritingPreferences {
         if self.excluded_applications.len()>32 {return Err("上下文排除应用最多保存 32 项");}
         let mut excluded=std::collections::HashSet::new();
         for app in &self.excluded_applications {
-            let key=application_key(app).ok_or("排除应用需填写程序名，例如 Code.exe，不包含路径")?;
+            let key=application_key(app).ok_or("排除应用需填写程序名，例如 Code.exe 或 com.microsoft.VSCode，不包含路径")?;
             if !excluded.insert(key) {return Err("排除应用不能重复");}
         }
         if self.overrides.len() > 32 { return Err("应用偏好最多保存 32 项"); }
         let mut seen = std::collections::HashSet::new();
         for item in &self.overrides {
-            let key = application_key(&item.application).ok_or("请填写应用程序名，例如 Code.exe，不包含路径")?;
+            let key = application_key(&item.application).ok_or("请填写应用程序名，例如 Code.exe 或 com.microsoft.VSCode，不包含路径")?;
             if !seen.insert(key) { return Err("同一应用只能保存一项表达偏好"); }
         }
         Ok(())
@@ -57,10 +59,11 @@ impl AppWritingPreferences {
         }
         match key.as_str() {
             "wechat.exe" | "weixin.exe" | "qq.exe" | "telegram.exe" | "slack.exe" |
-            "feishu.exe" | "lark.exe" | "ms-teams.exe" | "discord.exe" => AppWritingScene::Chat,
-            "winword.exe" | "wps.exe" | "onenote.exe" => AppWritingScene::Document,
-            "outlook.exe" | "thunderbird.exe" => AppWritingScene::Email,
-            "code.exe" | "cursor.exe" | "windsurf.exe" => AppWritingScene::Technical,
+            "feishu.exe" | "lark.exe" | "ms-teams.exe" | "discord.exe" | "com.tencent.xinwechat" | "com.tencent.qq" | "com.tinyspeck.slackmacgap" |
+            "com.electron.lark" | "com.larksuite.lark" | "com.hnc.discord" | "org.telegram.desktop" | "com.microsoft.teams2" => AppWritingScene::Chat,
+            "winword.exe" | "wps.exe" | "onenote.exe" | "com.microsoft.word" | "com.apple.iwork.pages" | "com.apple.notes" => AppWritingScene::Document,
+            "outlook.exe" | "thunderbird.exe" | "com.apple.mail" | "com.microsoft.outlook" => AppWritingScene::Email,
+            "code.exe" | "cursor.exe" | "windsurf.exe" | "com.microsoft.vscode" | "com.todesktop.230313mzl4w4u92" | "com.exafunction.windsurf" => AppWritingScene::Technical,
             // Browsers and ambiguous/unknown executables need a user preference.
             _ => AppWritingScene::General,
         }
@@ -85,6 +88,17 @@ mod tests {
         assert_eq!(p.scene_for("msedge.exe"), AppWritingScene::Chat);
         p.enabled = false;
         assert_eq!(p.scene_for("msedge.exe"), AppWritingScene::General);
+    }
+    #[test]
+    fn mac_bundle_ids_select_scenes_and_preserve_explicit_preferences() {
+        let mut prefs = AppWritingPreferences::default();
+        assert_eq!(prefs.scene_for("com.tencent.xinWeChat"), AppWritingScene::Chat);
+        assert_eq!(prefs.scene_for("com.microsoft.VSCode"), AppWritingScene::Technical);
+        assert_eq!(prefs.scene_for("com.apple.mail"), AppWritingScene::Email);
+        assert_eq!(prefs.scene_for("com.apple.Safari"), AppWritingScene::General);
+        prefs.overrides.push(AppWritingOverride { application: "com.apple.Safari".into(), scene: AppWritingScene::Document });
+        assert_eq!(prefs.scene_for("com.apple.safari"), AppWritingScene::Document);
+        for invalid in ["/Applications/App.app", "com..app", ".com.app", "com.app/child"] { assert!(application_key(invalid).is_none()); }
     }
     #[test]
     fn preferences_reject_paths_duplicates_and_unbounded_entries() {

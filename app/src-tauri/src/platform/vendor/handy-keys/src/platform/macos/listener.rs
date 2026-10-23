@@ -3,7 +3,7 @@
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -65,6 +65,7 @@ pub(crate) struct MacOSListenerState {
     pub running: Arc<AtomicBool>,
     pub blocking_hotkeys: Option<BlockingHotkeys>,
     pub run_loop: TapRunLoop,
+    pub reset_epoch: Arc<AtomicU64>,
 }
 
 /// Spawn a macOS keyboard listener using CGEventTap
@@ -81,11 +82,13 @@ pub(crate) fn spawn(blocking_hotkeys: Option<BlockingHotkeys>) -> Result<MacOSLi
     // success (needed to stop it later), or an error message.
     let (init_tx, init_rx) = mpsc::channel::<std::result::Result<TapRunLoop, String>>();
 
+    let reset_epoch = Arc::new(AtomicU64::new(0));
+    let thread_reset = reset_epoch.clone();
     let thread_state = Arc::clone(&state);
     let thread_running = Arc::clone(&running);
 
     let handle = thread::spawn(move || {
-        run_event_tap(thread_state, thread_running, init_tx);
+        run_event_tap(thread_state, thread_running, init_tx, thread_reset);
     });
 
     // Wait for the event tap to be created
@@ -107,6 +110,7 @@ pub(crate) fn spawn(blocking_hotkeys: Option<BlockingHotkeys>) -> Result<MacOSLi
         running,
         blocking_hotkeys,
         run_loop,
+        reset_epoch,
     })
 }
 
@@ -155,6 +159,7 @@ fn reconcile_modifiers(current: &mut Modifiers, flags: CGEventFlags) {
 struct CallbackCtx {
     state: Arc<Mutex<ListenerState>>,
     tap: Cell<Option<NonNull<CFMachPort>>>,
+    reset_epoch: Arc<AtomicU64>,
 }
 
 /// The callback function for the event tap
@@ -180,6 +185,7 @@ unsafe extern "C-unwind" fn event_tap_callback(
         event_type,
         CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
     ) {
+        ctx.reset_epoch.fetch_add(1, Ordering::AcqRel);
         if let Some(tap) = ctx.tap.get() {
             CGEvent::tap_enable(tap.as_ref(), true);
         }
@@ -194,6 +200,10 @@ unsafe extern "C-unwind" fn event_tap_callback(
     }
 
     let cg_event = event.as_ref();
+    // SpeakMode's own paste events must never trigger or record a shortcut.
+    if CGEvent::integer_value_field(Some(cg_event), CGEventField::EventSourceUserData) == 0x534d_5041 {
+        return event.as_ptr();
+    }
     let flags = CGEvent::flags(Some(cg_event));
 
     let mut should_block = false;
@@ -440,6 +450,7 @@ fn run_event_tap(
     state: Arc<Mutex<ListenerState>>,
     running: Arc<AtomicBool>,
     init_tx: Sender<std::result::Result<TapRunLoop, String>>,
+    reset_epoch: Arc<AtomicU64>,
 ) {
     // Event types we want to monitor
     let event_mask: CGEventMask = (1 << CGEventType::KeyDown.0)
@@ -457,6 +468,7 @@ fn run_event_tap(
     let ctx_ptr = Box::into_raw(Box::new(CallbackCtx {
         state: Arc::clone(&state),
         tap: Cell::new(None),
+        reset_epoch,
     }));
 
     let callback: CGEventTapCallBack = Some(event_tap_callback);
@@ -661,6 +673,7 @@ mod tests {
         CallbackCtx {
             state: Arc::new(Mutex::new(ListenerState::new(tx, None))),
             tap: Cell::new(Some(NonNull::from(&**tap))),
+            reset_epoch: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -679,6 +692,35 @@ mod tests {
             NonNull::from(&*event).as_ptr(),
             "pseudo-events must be passed through, not blocked"
         );
+    }
+
+    #[test]
+    fn tap_reset_epoch_advances_without_an_installed_port() {
+        let (tx, _rx) = mpsc::channel();
+        let ctx = CallbackCtx {
+            state: Arc::new(Mutex::new(ListenerState::new(tx, None))),
+            tap: Cell::new(None),
+            reset_epoch: Arc::new(AtomicU64::new(0)),
+        };
+        deliver_tap_disabled(&ctx, CGEventType::TapDisabledByTimeout);
+        assert_eq!(ctx.reset_epoch.load(Ordering::Acquire), 1);
+        deliver_tap_disabled(&ctx, CGEventType::TapDisabledByUserInput);
+        assert_eq!(ctx.reset_epoch.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn speakmode_paste_tag_does_not_modify_shortcut_state_or_emit_events() {
+        let (tx, rx) = mpsc::channel();
+        let state = Arc::new(Mutex::new(ListenerState::new(tx, None)));
+        state.lock().unwrap().current_modifiers = Modifiers::OPT_RIGHT;
+        let ctx = CallbackCtx { state: state.clone(), tap: Cell::new(None), reset_epoch: Arc::new(AtomicU64::new(0)) };
+        let event = CGEvent::new(None).unwrap();
+        CGEvent::set_integer_value_field(Some(&event), CGEventField::EventSourceUserData, 0x534d_5041);
+        let returned = unsafe { event_tap_callback(std::ptr::null_mut(), CGEventType::KeyDown,
+            NonNull::from(&*event), &ctx as *const CallbackCtx as *mut c_void) };
+        assert_eq!(returned, NonNull::from(&*event).as_ptr());
+        assert_eq!(state.lock().unwrap().current_modifiers, Modifiers::OPT_RIGHT);
+        assert!(rx.try_recv().is_err());
     }
 
     /// Recovery is event-driven now (no polling watchdog): receiving a

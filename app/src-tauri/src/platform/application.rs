@@ -1,5 +1,6 @@
 //! Read only the executable basename for an already captured process lifetime.
 //! Failure leaves the writing scene unknown; it never changes input permission.
+#[cfg(not(target_os = "macos"))]
 use super::delivery::TargetSnapshot;
 
 #[cfg(windows)]
@@ -22,7 +23,7 @@ pub fn name_for_target(target: &TargetSnapshot) -> Option<String> {
         crate::core::app_writing::application_key(path.rsplit(['\\', '/']).next()?)
     }
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn name_for_target(_: &TargetSnapshot) -> Option<String> { None }
 
 #[cfg(all(test, windows))]
@@ -40,4 +41,9 @@ mod tests {
         target.process_created_at+=1; assert!(name_for_target(&target).is_none());
         target.process_id=0; assert!(name_for_target(&target).is_none());
     }
+}
+
+#[cfg(target_os = "macos")]
+pub fn name_for_target(target: &super::delivery::TargetSnapshot) -> Option<String> {
+    super::macos::application_key_for(target.process_id, target.process_created_at)
 }

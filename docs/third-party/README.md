@@ -22,7 +22,7 @@
 
 ## 安装器资源与冻结快照
 
-[tauri.conf.json](../../app/src-tauri/tauri.conf.json)使用 `../../docs/third-party/nsis-resources/` → 安装目录 `third-party/` 的资源映射。因此仓库保留 `app/` 与 `docs/` 的相对层级，以及 [nsis-resources/](nsis-resources/)内原有 14 个文件；0.2.12 追加一份 SuperFastHash 许可，目前共 14 个分发材料和清单本身。源码压缩包中的 `.crate` 文件是对应依赖的原始源码包，不是应用可执行程序。
+[tauri.windows.conf.json](../../app/src-tauri/tauri.windows.conf.json)使用 `../../docs/third-party/nsis-resources/` → 安装目录 `third-party/` 的资源映射。因此仓库保留 `app/` 与 `docs/` 的相对层级，以及 [nsis-resources/](nsis-resources/)内原有 14 个文件；0.2.12 追加一份 SuperFastHash 许可，目前共 14 个分发材料和清单本身。源码压缩包中的 `.crate` 文件是对应依赖的原始源码包，不是应用可执行程序。
 
 - [THIRD_PARTY_NOTICES.txt](nsis-resources/THIRD_PARTY_NOTICES.txt)保留已采集的实际许可正文。
 - [依赖清单](nsis-resources/THIRD_PARTY_INVENTORY.json)、[CSV](nsis-resources/THIRD_PARTY_DEPENDENCIES.csv)与[第三方 review](nsis-resources/THIRD_PARTY_REVIEW.md)保留当时的依赖范围和证据边界。
@@ -41,3 +41,9 @@
 | react-remove-scroll-bar 2.3.8 | MIT | 对应该 npm 版本的完整许可正文 |
 
 这些缺口保持可见，没有用通用许可证、当前分支或同作者其他库的文件代替。已有声明、来源材料及哈希，不等于最终链接组成、字体图标来源、运行时再分发或实际安装行为已经验收。
+
+## macOS 原生补充
+
+Mac 配置复用上述随附材料，并附带 [MACOS_NATIVE_NOTICES.txt](MACOS_NATIVE_NOTICES.txt)
+中的 macOS Keychain 后端许可，以及当前的本地键盘库修改记录。冻结清单仍有上文说明的历史边界，
+不因新增 Mac 构建变成对当前所有依赖的重新审计。

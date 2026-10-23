@@ -1,10 +1,12 @@
+import {isMacOS} from '../platform';
+import {readMacShortcut} from '../macosShortcut';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Button, Kbd } from '@radix-ui/themes';
 import { CheckIcon, KeyboardIcon, Pencil1Icon, ResetIcon } from '@radix-ui/react-icons';
 import { useDesktop } from '../services/DesktopProvider';
 import { errorMessage } from '../services/bridge';
 
-const DEFAULT_SHORTCUT = '右 Alt';
+const DEFAULT_SHORTCUT = isMacOS?'右 Option':'右 Alt';
 const FUNCTION_KEYS = new Set(['F2', 'F3', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12']);
 const RESERVED_CTRL_LETTERS = new Set(['C', 'V', 'X', 'Z', 'A', 'F', 'R', 'W', 'T', 'N', 'L']);
 
@@ -61,6 +63,7 @@ function abandonCapture(command: CaptureCommand, lease: CaptureLease) {
 }
 
 function readShortcut(event: KeyboardEvent<HTMLButtonElement>): ShortcutResult {
+  if(isMacOS)return readMacShortcut(event);
   const { key, code, ctrlKey, altKey, shiftKey, metaKey } = event;
   if (metaKey || key === 'Meta' || code === 'MetaLeft' || code === 'MetaRight') {
     return { error: '不能使用 Win 键，请选择其他快捷键。' };
@@ -335,7 +338,7 @@ export function ShortcutEditor({ value, onChange, disabled = false }: ShortcutEd
         try {
           await closeEditor('', lease);
           if (mounted.current && !captureLease.current) {
-            if (saved) setNotice('录音快捷键已恢复为右 Alt。');
+            if (saved) setNotice(`录音快捷键已恢复为${DEFAULT_SHORTCUT}。`);
             else if (failure) setError(failure);
             else if (lease.leaving) setNotice('已取消恢复，当前快捷键保持不变。');
           }
@@ -346,7 +349,7 @@ export function ShortcutEditor({ value, onChange, disabled = false }: ShortcutEd
             setCommitted(saved);
             setNotice('');
             setError(saved
-              ? '录音快捷键已恢复为右 Alt，但退出按键捕获未成功。请重试退出，恢复录音快捷键。'
+              ? `录音快捷键已恢复为${DEFAULT_SHORTCUT}，但退出按键捕获未成功。请重试退出，恢复录音快捷键。`
               : `${failure ? `${failure}；` : ''}未能确认已退出按键捕获，录音快捷键暂时停用。请重试退出。`);
           }
         }
@@ -368,12 +371,12 @@ export function ShortcutEditor({ value, onChange, disabled = false }: ShortcutEd
       </Button>
       {!editing && value !== DEFAULT_SHORTCUT && <Button type="button" size="2"
         variant="ghost" color="gray" className="shortcut-reset" disabled={pending || unavailable} onClick={() => void restoreDefault()}>
-        <ResetIcon aria-hidden="true" />恢复右 Alt
+        <ResetIcon aria-hidden="true" />恢复{DEFAULT_SHORTCUT}
       </Button>}
     </div>
     {editing && <section className="shortcut-panel" id={panelId} aria-label="更改录音快捷键">
       <p className="shortcut-help" id={helpId}>
-        按下右 Alt、F2/F3/F6–F12，或 Ctrl / Alt + 字母或空格，也可加 Shift。
+        {isMacOS?'按下右 Option、F2/F3/F6–F12，或 Control / Option / Command + 字母。':'按下右 Alt、F2/F3/F6–F12，或 Ctrl / Alt + 字母或空格，也可加 Shift。'}
         在捕获区域按 Esc 取消，按 Tab 前往确认或取消按钮。
       </p>
       <Button ref={captureRef} type="button" size="2" variant="outline"

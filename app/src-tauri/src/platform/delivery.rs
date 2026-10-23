@@ -10,6 +10,7 @@ const NATIVE_EDIT_RUNTIME_ID: i32 = 0x534d_4e41;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TargetSnapshot {
+    /// Windows HWND; on macOS an opaque application anchor (never an AX pointer).
     pub hwnd: usize,
     pub process_id: u32,
     pub focused_hwnd: usize,
@@ -924,7 +925,7 @@ mod native {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 mod native {
     use super::*;
     pub fn capture_bounded() -> Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
@@ -1262,3 +1263,7 @@ mod tests {
         assert_eq!(dispatch_with(&ops, &permit, &snapshot(), "known fixture", || true).reason_code.as_deref(), Some("attemptConsumed"));
     }
 }
+
+#[cfg(target_os = "macos")]
+#[path = "macos/delivery.rs"]
+mod native;

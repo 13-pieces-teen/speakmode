@@ -134,6 +134,8 @@ pub fn standalone_release_disposition(inserted:u32) -> StandaloneReleaseDisposit
 /// registered hotkeys.
 pub struct KeyboardListener {
     event_receiver: Receiver<KeyEvent>,
+    #[cfg(target_os = "macos")]
+    reset_epoch: Arc<AtomicU64>,
     #[cfg(target_os = "windows")]
     observed_receiver: Option<Receiver<ObservedEvent>>,
     _thread_handle: Option<JoinHandle<()>>,
@@ -179,6 +181,7 @@ impl KeyboardListener {
             let run_loop = state.run_loop;
             Ok(KeyboardListener {
                 event_receiver: state.event_receiver,
+                reset_epoch: state.reset_epoch,
                 _thread_handle: state.thread_handle,
                 running: state.running,
                 blocking_hotkeys: state.blocking_hotkeys,
@@ -248,6 +251,12 @@ impl KeyboardListener {
                 std::sync::mpsc::RecvTimeoutError::Disconnected => Error::EventLoopNotRunning,
             })
     }
+
+    /// Monotonic reset boundary when macOS disables/re-enables the event tap.
+    /// Consumers must discard pending gestures rather than treating reconciled
+    /// releases as a fresh physical tap.
+    #[cfg(target_os = "macos")]
+    pub fn macos_reset_epoch(&self) -> u64 { self.reset_epoch.load(Ordering::Acquire) }
 
     /// Get a reference to the blocking hotkeys set (if blocking is enabled)
     pub fn blocking_hotkeys(&self) -> Option<&BlockingHotkeys> {

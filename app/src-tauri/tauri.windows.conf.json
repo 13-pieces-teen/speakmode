@@ -1,0 +1,25 @@
+{
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "windows": {
+      "nsis": {
+        "template": "windows/installer-template.nsi",
+        "installerHooks": "windows/installer-hooks.nsh",
+        "installMode": "currentUser",
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    },
+    "resources": {
+      "../../docs/third-party/nsis-resources/": "third-party/"
+    }
+  }
+}

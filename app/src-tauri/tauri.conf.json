@@ -50,32 +50,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
     "shortDescription": "按自己的方式整理语音输入",
-    "resources": {
-      "../../docs/third-party/nsis-resources/": "third-party/"
-    },
-    "windows": {
-      "nsis": {
-        "template": "windows/installer-template.nsi",
-        "installerHooks": "windows/installer-hooks.nsh",
-        "installMode": "currentUser",
-        "languages": [
-          "SimpChinese",
-          "English"
-        ]
-      },
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper",
-        "silent": true
-      }
-    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.ico"
+    ],
+    "targets": [
+      "app",
+      "dmg"
     ]
   }
 }

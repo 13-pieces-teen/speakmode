@@ -1,13 +1,15 @@
 //! Native desktop composition. Engine owns session/data semantics; this layer owns
 //! windows, OS integration and authenticated-by-window IPC routing.
-//! Native audio, focus and keyboard QA must be run on Windows; geometry tests do
-//! not stand in for WebView2, accessibility, delivery or microphone acceptance.
+//! Native audio, focus and keyboard QA must run on each supported OS; geometry
+//! tests do not stand in for accessibility, delivery or microphone acceptance.
 use crate::engine::{ApiError, AppEvent, AppHub, CommandRequest, Result};
 use crate::platform::hotkeys::{HotkeyEvent, HotkeyService};
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::{Arc, Mutex, Weak, atomic::{AtomicBool, AtomicU8, Ordering}}, time::Duration};
 use tauri::{AppHandle, Manager, State, WebviewWindow, WebviewWindowBuilder, WindowEvent, RunEvent,
-    ipc::Channel, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
+    ipc::Channel, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
+#[cfg(windows)]
+use tauri::tray::{TrayIconEvent, MouseButton, MouseButtonState};
 use tauri_plugin_autostart::ManagerExt;
 
 struct DesktopState {
@@ -124,6 +126,39 @@ fn control_main_window(window: WebviewWindow, action: MainWindowAction) -> Resul
 }
 
 #[tauri::command]
+async fn native_permissions(window: WebviewWindow, state: State<'_, Arc<DesktopState>>, action: String) -> Result<Value> {
+    if window.label() != "main" { return Err(native_error("forbidden_window", "请在主面板管理权限")); }
+    if action != "status" && state.exit.load(Ordering::Acquire) != 0 { return Err(native_error("app_exiting", "正在退出，请等待本机任务释放")); }
+    #[cfg(target_os = "macos")]
+    {
+        use crate::platform::macos::permissions;
+        match action.as_str() {
+            "status" => {},
+            "microphone" => { on_ui(window.app_handle(), &state, || { permissions::request_microphone(); Ok(()) })?; },
+            "accessibility" => { on_ui(window.app_handle(), &state, || { permissions::request_accessibility(); Ok(()) })?; },
+            "inputMonitoring" => { on_ui(window.app_handle(), &state, || { permissions::request_input_monitoring(); Ok(()) })?; },
+            "restartShortcuts" => {
+                if state.hook_starting.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                    let released = state.hub.hooks.lock().unwrap().as_ref().is_none_or(|owner| owner.owner_released());
+                    state.hook_starting.store(false, Ordering::Release);
+                    if released {
+                        let shortcut = state.hub.snapshot("main")?["preferences"]["shortcut"].as_str().unwrap_or("alt_right").to_owned();
+                        start_hotkeys(window.app_handle().clone(), Arc::clone(&state), shortcut);
+                    }
+                }
+            },
+            _ => return Err(native_error("invalid_permission", "未知权限操作")),
+        }
+        let mut status = json!(permissions::status());
+        status["shortcutsReady"] = json!(state.hub.hooks.lock().unwrap().as_ref().is_some_and(|owner| owner.available()));
+        status["shortcutsStarting"] = json!(state.hook_starting.load(Ordering::Acquire));
+        Ok(status)
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = (action, state); Ok(json!({"platform":"windows"})) }
+}
+
+#[tauri::command]
 async fn app_command(window: WebviewWindow, state: State<'_, Arc<DesktopState>>, request: CommandRequest) -> Result<Value> {
     // Never accept a client-supplied window label. Engine applies the recording
     // surface whitelist to this label before payloads are processed.
@@ -198,7 +233,7 @@ fn refresh_mode_entry(app: &AppHandle, state: &Arc<DesktopState>) {
             let enabled = snapshot.as_ref()
                 .is_some_and(|snapshot| mode_entry_enabled(snapshot, state.exit.load(Ordering::Acquire), visible));
             if let Ok(slot) = state.mode_item.lock() { if let Some(item) = slot.as_ref() { let _ = item.set_enabled(enabled); } }
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             if let Some(window) = ui_handle.get_webview_window("recording") {
                 let _ = win::close_stale_mode(&window, &state, snapshot.as_ref());
             }
@@ -237,6 +272,7 @@ async fn stop_maintenance(state:&DesktopState)->Result<()> {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+#[cfg(any(windows, target_os="macos"))]
 fn start_maintenance(app:AppHandle,state:Arc<DesktopState>){
     state.maintenance_starting.store(true,Ordering::Release);
     tauri::async_runtime::spawn(async move{
@@ -311,6 +347,12 @@ fn recorder_rect(width: f64, height: f64, scale: f64, area: Rect) -> Result<Rect
     Ok(Rect { x: x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
         y: y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32, width: w, height: h })
 }
+
+#[cfg(target_os = "macos")]
+#[path = "platform/macos/window.rs"]
+mod mac_window;
+#[cfg(target_os = "macos")]
+use mac_window as win;
 
 #[cfg(windows)]
 mod win {
@@ -491,15 +533,15 @@ fn recorder_visibility(app: &AppHandle, state: &Arc<DesktopState>, visible: bool
     let window = app.get_webview_window("recording").ok_or_else(|| window_error("missing recorder"))?;
     let state2 = Arc::clone(state);
     on_ui(app, state, move || {
-        #[cfg(windows)] { win::visible(&window, &state2, visible) }
-        #[cfg(not(windows))] { let _ = (window, state2, visible); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
+        #[cfg(any(windows, target_os = "macos"))] { win::visible(&window, &state2, visible) }
+        #[cfg(not(any(windows, target_os = "macos")))] { let _ = (window, state2, visible); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
     })
 }
 fn resize_recorder(app: &AppHandle, state: &Arc<DesktopState>, width: f64, height: f64, menu_open: bool) -> Result<()> {
     let window = app.get_webview_window("recording").ok_or_else(|| window_error("missing recorder"))?;
     let state2 = Arc::clone(state);
     on_ui(app, state, move || {
-        #[cfg(windows)] {
+        #[cfg(any(windows, target_os = "macos"))] {
             if menu_open {
                 let snapshot = state2.hub.snapshot("recording")?;
                 if mode_menu_request(&snapshot, state2.exit.load(Ordering::Acquire)).is_err() {
@@ -508,7 +550,7 @@ fn resize_recorder(app: &AppHandle, state: &Arc<DesktopState>, width: f64, heigh
             }
             win::resize(&window, &state2, width, height, menu_open)
         }
-        #[cfg(not(windows))] { let _ = (window, state2, width, height, menu_open); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
+        #[cfg(not(any(windows, target_os = "macos")))] { let _ = (window, state2, width, height, menu_open); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
     })
 }
 fn request_recorder_mode(app: &AppHandle, state: &Arc<DesktopState>) -> Result<()> {
@@ -518,7 +560,7 @@ fn request_recorder_mode(app: &AppHandle, state: &Arc<DesktopState>) -> Result<(
     let window = app.get_webview_window("recording").ok_or_else(|| window_error("missing recorder"))?;
     let state2 = Arc::clone(state);
     on_ui(app, state, move || {
-        #[cfg(windows)] {
+        #[cfg(any(windows, target_os = "macos"))] {
             let before = state2.hub.snapshot("recording")?;
             if !mode_request_is_current(&before, state2.exit.load(Ordering::Acquire), &request) {
                 win::close_stale_mode(&window, &state2, Some(&before))?;
@@ -539,7 +581,7 @@ fn request_recorder_mode(app: &AppHandle, state: &Arc<DesktopState>) -> Result<(
             let after = state2.hub.snapshot("recording").ok();
             win::close_stale_mode(&window, &state2, after.as_ref())
         }
-        #[cfg(not(windows))] { let _ = (window, state2, request); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
+        #[cfg(not(any(windows, target_os = "macos")))] { let _ = (window, state2, request); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
     }).map_err(|error| error.for_session(&error_identity.session_id, error_identity.generation))
 }
 fn cancel_shortcut_capture(app: AppHandle, state: Arc<DesktopState>) {
@@ -588,18 +630,20 @@ fn install_native_actions(app: &AppHandle, state: &Arc<DesktopState>) {
         let menu_return=state.recorder.lock().map_err(|_|window_error("lock"))?.return_focus;
         let state2=Arc::clone(&state);
         on_ui(&handle,&state,move||{
-            #[cfg(windows)]{win::stop_target(&window,&state2,anchor,menu_return)}
-            #[cfg(not(windows))]{let _=(window,state2,anchor);Err(native_error("unsupported_platform","MVP 需要 Windows"))}
+            #[cfg(any(windows, target_os = "macos"))]{win::stop_target(&window,&state2,anchor,menu_return)}
+            #[cfg(not(any(windows, target_os = "macos")))]{let _=(window,state2,anchor);Err(native_error("unsupported_platform","MVP 需要 Windows"))}
         })
     }));
 }
 fn start_hotkeys(app: AppHandle, state: Arc<DesktopState>, shortcut: String) {
-    state.hook_starting.store(true, Ordering::Release);
+    if state.hook_starting.swap(true, Ordering::AcqRel) { return; }
     tauri::async_runtime::spawn_blocking(move || {
         let weak = Arc::downgrade(&state);
         let callback_app = app.clone();
         // A callback runs on the hook thread. Only enqueue async work here: never
         // wait on HotkeyService ACK/shutdown from the very callback it must serve.
+        #[cfg(target_os="macos")]
+        let restarting = state.hub.hooks.lock().unwrap().is_some();
         let started = HotkeyService::start(&shortcut, Duration::from_secs(1), move |event| {
             let Some(state) = weak.upgrade() else { return; };
             if state.exit.load(Ordering::Acquire) != 0 { return; }
@@ -637,6 +681,15 @@ fn start_hotkeys(app: AppHandle, state: Arc<DesktopState>, shortcut: String) {
                 // completed after Quit. shutdown_ready will join this slot.
                 *slot = Some(service);drop(slot);
                 if state.exit.load(Ordering::Acquire)==0{state.hub.changed();}
+                #[cfg(target_os="macos")]
+                state.hub.publish("native.shortcutsReady",json!({}));
+                #[cfg(target_os="macos")]
+                if restarting && state.exit.load(Ordering::Acquire)==0 {
+                    let state2=Arc::clone(&state); let handle=app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error)=state2.hub.interrupt_session("HooksReinstalled").await { reveal_desktop_error(&handle,&state2,error); }
+                    });
+                }
             },
             Err(error) => {
                 let (_error,owner)=error.into_parts();
@@ -696,6 +749,25 @@ fn reject_unsafe_profile_directory(path: &std::path::Path) -> std::io::Result<()
             if profile_path_is_within(&protected, path)
                 || (reject_descendants && profile_path_is_within(path, &protected)) {
                 return Err(std::io::Error::other("system or shared profile directory refused"));
+            }
+        }
+    }
+    #[cfg(target_os="macos")]
+    {
+        let mut protected = vec![
+            (PathBuf::from("/System"),true),(PathBuf::from("/Library"),true),
+            (PathBuf::from("/Applications"),true),(PathBuf::from("/usr"),true),
+            (PathBuf::from("/bin"),true),(PathBuf::from("/sbin"),true),
+            (PathBuf::from("/Users"),false),(PathBuf::from("/private"),false),
+            (PathBuf::from("/private/tmp"),false),(PathBuf::from("/private/etc"),true),
+        ];
+        if let Some(home)=std::env::var_os("HOME").map(PathBuf::from) {
+            protected.extend([(home.clone(),false),(home.join("Library/Application Support"),false),(home.join("Library/Caches"),false)]);
+        }
+        for (root,descendants) in protected {
+            let root=root.canonicalize().unwrap_or(root);
+            if profile_path_key(path)==profile_path_key(&root) || descendants && profile_path_is_within(path,&root) {
+                return Err(std::io::Error::other("profile must use a dedicated user data directory"));
             }
         }
     }
@@ -799,7 +871,11 @@ fn maintenance_entry()->Option<i32>{
 fn maintenance_directory()->std::io::Result<PathBuf>{
     let default_scope=if cfg!(debug_assertions){Some(development_runtime_root()?)}else{None};
     let default=if let Some(scope)=&default_scope{scope.join("desktop")}else{
-        PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or_else(||std::io::Error::other("local data directory unavailable"))?).join(crate::maintenance::APP_IDENTIFIER)
+        #[cfg(target_os="macos")]
+        let base = PathBuf::from(std::env::var_os("HOME").ok_or_else(||std::io::Error::other("home directory unavailable"))?).join("Library/Application Support");
+        #[cfg(not(target_os="macos"))]
+        let base = PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or_else(||std::io::Error::other("local data directory unavailable"))?);
+        base.join(crate::maintenance::APP_IDENTIFIER)
     };
     let requested=std::env::var_os("SPEAKMODE_DATA_DIR").map(PathBuf::from);
     let explicit=requested.is_some();
@@ -809,10 +885,18 @@ fn maintenance_directory()->std::io::Result<PathBuf>{
 }
 
 pub fn run() {
+    #[cfg(all(target_os="macos",debug_assertions))]
+    if std::env::args().nth(1).as_deref()==Some("--native-probe") {
+        match crate::platform::macos::lab::run(std::env::args().skip(2)) {
+            Ok(())=>return,
+            Err(error)=>{eprintln!("native probe failed: {error}");std::process::exit(1);}
+        }
+    }
     if let Some(code)=maintenance_entry(){std::process::exit(code);}
     let override_dir = data_override().expect("SpeakMode data directory could not be prepared");
     // Before Tauri starts threads, pin WebView2's process override and temporary
     // files too. Debug/QA uses a dedicated profile rather than the release profile.
+    #[cfg(windows)]
     if let Some(root) = &override_dir {
         let webview = root.join("webview"); let temp = root.join("tmp");
         std::fs::create_dir_all(&webview).expect("WebView directory unavailable");
@@ -826,8 +910,10 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| { let _ = show_main(app); }))
         .plugin(tauri_plugin_autostart::Builder::new().app_name("SpeakMode").arg("--autostart").build())
-        .invoke_handler(tauri::generate_handler![app_command, subscribe_state, control_main_window])
+        .invoke_handler(tauri::generate_handler![app_command, subscribe_state, control_main_window, native_permissions])
         .setup(move |app| {
+            #[cfg(target_os="macos")]
+            crate::platform::macos::lifecycle::prepare_notification_centers();
             let directory = match override_dir.clone() { Some(path) => path, None => app.path().app_local_data_dir()? };
             std::fs::create_dir_all(&directory)?;
             crate::maintenance::mark_profile(&directory)?;
@@ -842,7 +928,11 @@ pub fn run() {
                 std::fs::create_dir_all(&data)?;
                 let mut window = WebviewWindowBuilder::from_config(app, config)?.data_directory(data).on_navigation(local_navigation);
                 if config.label == "recording" { window = window.focusable(false).focused(false).visible(false).shadow(false); }
-                else { window = window.visible(!autostart_launch).focused(!autostart_launch); }
+                else {
+                    window = window.visible(!autostart_launch).focused(!autostart_launch);
+                    #[cfg(target_os = "macos")]
+                    { window = window.decorations(true).title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true); }
+                }
                 window.build()?;
             }
             install_native_actions(app.handle(), &state);
@@ -852,7 +942,7 @@ pub fn run() {
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &mode, &quit])?;
             TrayIconBuilder::with_id("speakmode").icon(tray_icon()).tooltip("SpeakMode")
-                .menu(&menu).show_menu_on_left_click(false)
+                .menu(&menu).show_menu_on_left_click(cfg!(target_os="macos"))
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show-main" => { let _ = show_main(app); },
                     "recording-mode" => { if let Some(state) = current_state(app) {
@@ -861,8 +951,9 @@ pub fn run() {
                     "quit" => { if let Some(state) = current_state(app) { request_exit(app.clone(), state); } },
                     _ => {},
                 })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event { let _ = show_main(tray.app_handle()); }
+                .on_tray_icon_event(|_tray, _event| {
+                    #[cfg(not(target_os="macos"))]
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = _event { let _ = show_main(_tray.app_handle()); }
                 }).build(app)?;
             let snapshot = state.hub.snapshot("main").map_err(|e| std::io::Error::other(e.message))?;
             let shortcut = snapshot["preferences"]["shortcut"].as_str().unwrap_or("alt_right").to_owned();
@@ -872,6 +963,7 @@ pub fn run() {
             if app.autolaunch().is_enabled().ok() != Some(requested) {
                 publish_error(&state, native_error("autostart_mismatch", "开机启动的系统状态与偏好不一致，请在设置中重新确认"));
             }
+            #[cfg(any(windows, target_os="macos"))]
             start_maintenance(app.handle().clone(),Arc::clone(&state));
             start_hotkeys(app.handle().clone(), state, shortcut);
             Ok(())
@@ -925,8 +1017,8 @@ pub fn run() {
                         let Some(window) = app.get_webview_window("recording") else { return; };
                         let state2 = Arc::clone(&state);
                         let result = on_ui(&app, &state, move || {
-                            #[cfg(windows)] { win::blurred(&window, &state2) }
-                            #[cfg(not(windows))] { let _ = (window, state2); Ok(()) }
+                            #[cfg(any(windows, target_os = "macos"))] { win::blurred(&window, &state2) }
+                            #[cfg(not(any(windows, target_os = "macos")))] { let _ = (window, state2); Ok(()) }
                         });
                         if let Err(error) = result { publish_error(&state, error); }
                     });
@@ -937,6 +1029,8 @@ pub fn run() {
         });
     let app = builder.build(context).expect("SpeakMode desktop failed to initialize");
     app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = event { let _ = show_main(app); }
         if let RunEvent::ExitRequested { api, .. } = event {
             if let Some(state) = current_state(app) {
                 if state.exit.load(Ordering::Acquire) != 2 { api.prevent_exit(); request_exit(app.clone(), state); }
@@ -972,6 +1066,17 @@ mod tests {
             if let Some(root) = std::env::var_os(name).map(PathBuf::from) {
                 assert!(resolve_profile_directory(&root).is_err(), "{name}");
             }
+        }
+    }
+    #[cfg(target_os="macos")]
+    #[test] fn mac_profile_rejects_system_trees_and_shared_user_roots() {
+        for path in ["/System/Library/speakmode", "/Applications/SpeakMode.app/data", "/private/tmp", "/Users"] {
+            assert!(reject_unsafe_profile_directory(std::path::Path::new(path)).is_err());
+        }
+        if let Some(home)=std::env::var_os("HOME").map(PathBuf::from) {
+            assert!(reject_unsafe_profile_directory(&home).is_err());
+            assert!(reject_unsafe_profile_directory(&home.join("Library/Application Support")).is_err());
+            assert!(reject_unsafe_profile_directory(&home.join("Library/Application Support/dev.speakmode.desktop")).is_ok());
         }
     }
     #[test] fn work_area_excludes_taskbar() {

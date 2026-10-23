@@ -17,6 +17,7 @@ import {RecorderWindow} from './windows/RecorderWindow';
 import {SessionRecovery} from './components/SessionRecovery';
 import {RetainedRecovery} from './components/RetainedRecovery';
 import {OnboardingFlow} from './onboarding/OnboardingFlow';
+import {MacPermissions} from './components/MacPermissions';
 import {WindowChrome} from './components/WindowChrome';
 export function App(){return <DesktopProvider><ModeProvider><NavigationGuardProvider>{new URLSearchParams(location.search).get('window')==='recorder'?<RecorderWindow/>:<AppContent/>}</NavigationGuardProvider></ModeProvider></DesktopProvider>;}
 function AppContent(){
@@ -43,6 +44,7 @@ function AppContent(){
  const preparingGuide=desktop.status==='ready'&&desktop.onboarding?.progress.autoShow&&!desktop.onboarding.active&&!error&&!desktop.error;
  if(desktop.available&&(desktop.status==='loading'||preparingGuide))return <div className="onboarding-loading"><WindowChrome available/><p role="status">正在连接 SpeakMode…</p></div>;
  return <AppShell view={view} onNavigate={navigate} onRecorder={()=>navigate('recorder')}>
+  <MacPermissions/>
   {!desktop.available&&<div className="environment-banner" role="status"><strong>请在 SpeakMode 桌面应用中使用</strong><p>此浏览器页面只展示界面。录音、云服务、历史和设置均从桌面原生服务读取，这里不会生成示例数据。</p></div>}
   {desktop.available&&desktop.status==='loading'&&<p role="status" className="environment-banner">正在连接桌面服务…</p>}
   {desktop.available&&!desktop.provider.configured&&view!=='settings'&&<div className="environment-banner"><div><strong>先配置云端服务</strong><p>选择语音识别与文字整理服务，保存对应的 API Key 后即可开始口述。</p></div><Button variant="soft" onClick={()=>navigate('settings')}>前往设置</Button></div>}

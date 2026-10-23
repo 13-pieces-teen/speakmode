@@ -177,6 +177,7 @@ impl HotkeyService {
     pub fn owner_released(&self) -> bool {
         self.worker.as_ref().is_none_or(JoinHandle::is_finished)
     }
+    pub fn available(&self) -> bool { self.require_running().is_ok() }
     fn require_running(&self) -> Result<()> {
         if !self.ready || self.stopping.load(Ordering::SeqCst) || self.owner_released() {
             Err(PlatformError::Disconnected)
@@ -327,7 +328,7 @@ fn unrelated_key_is_held() -> bool {
         .any(|vk| unsafe { GetAsyncKeyState(vk) } as u16 & 0x8000 != 0)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn run(_: Hotkey, _: Duration, _: Receiver<Command>, _: Arc<AtomicBool>,
     ready: Sender<std::result::Result<(), String>>, _: impl Fn(HotkeyEvent)) {
     let _ = ready.send(Err("Windows is the MVP target".into()));
@@ -667,3 +668,9 @@ mod tests {
     }
 
 }
+
+#[cfg(target_os = "macos")]
+#[path = "macos/hotkeys.rs"]
+mod macos_hotkeys;
+#[cfg(target_os = "macos")]
+use macos_hotkeys::run;

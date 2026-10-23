@@ -24,6 +24,7 @@ export const useEffect=(effect,deps)=>{const index=cursor++,previous=slots[index
 export const useMemo=(fn,deps)=>{const index=cursor++,previous=slots[index];if(!previous||!same(deps,previous.deps))slots[index]={deps,value:fn()};return slots[index].value;};
 export const useCallback=(fn,deps)=>useMemo(()=>fn,deps);
 export const useDesktop=()=>desktop,useNavigationGuard=()=>navigation;
+export const EmptyStateNote='emptyStateNote',DownloadIcon='svg';
 export const focusInView=()=>{},errorMessage=value=>value.message??String(value);
 export const Button='button',IconButton='button',TextArea='textarea',TextField={Root:'input',Slot:'slot'};
 export const Dialog={Root:'dialog-root',Content:'dialog',Title:'h2',Description:'p',Close:'close'},AlertDialog={Root:'alert-root',Content:'alertdialog',Title:'h2',Description:'p',Cancel:'cancel',Action:'action'},DropdownMenu={Root:'menu-root',Trigger:'trigger',Content:'menu',Item:'menuitem',Separator:'hr'};
@@ -33,7 +34,7 @@ export const Fragment='fragment',element=(type,props,...children)=>({type,props:
 const source=await readFile(root+'/app/src/pages/DictionaryPage.tsx','utf8');
 const imports=new Map([
  ['../dictionary',pathToFileURL(out+'/dictionary.mjs').href],
- ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../services/bridge','../components/NavigationGuard','../components/focusInView'].map(name=>[name,pathToFileURL(stubPath).href])
+ ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../services/bridge','../components/NavigationGuard','../components/focusInView','../components/EmptyStateNote'].map(name=>[name,pathToFileURL(stubPath).href])
 ]);
 const rewriteImports=context=>node=>ts.visitNode(node,function visit(current){
  if(ts.isImportDeclaration(current)&&ts.isStringLiteral(current.moduleSpecifier)){

@@ -1071,7 +1071,7 @@ fn capture_failure(summary:&CaptureSummary)->Option<ApiError> {
     if summary.cancelled || summary.complete {return None;}
     let (code,message)=match classify_capture_error(summary.error.as_deref())? {
         CaptureFailureReason::PcmStalled=>("audio_capture_stalled","麦克风已连续 5 秒没有提供音频，本次录音已停止。已有字幕可复制，请检查设备后重新录音。"),
-        CaptureFailureReason::FirstSampleTimeout=>("audio_first_sample_timeout","麦克风启动后没有提供音频，请检查设备连接和 Windows 麦克风权限。"),
+        CaptureFailureReason::FirstSampleTimeout=>("audio_first_sample_timeout","麦克风启动后没有提供音频，请检查设备连接和 系统麦克风权限。"),
         CaptureFailureReason::DeviceError=>("audio_capture_device_error","麦克风连接或音频流中断，本次录音未完整。已有字幕可复制，请重新连接设备。"),
         CaptureFailureReason::QueueOverflow=>("audio_capture_queue_overflow","音频处理队列未能及时接收，本次录音未完整。已有字幕可复制，请稍后重新录音。"),
         CaptureFailureReason::MalformedFrame=>("audio_capture_malformed","麦克风提供的音频格式异常，本次录音未完整。请更换设备后重新录音。"),

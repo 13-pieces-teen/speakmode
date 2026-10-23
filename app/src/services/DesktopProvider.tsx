@@ -34,7 +34,7 @@ function eventIssue(event:AppEvent,current:LiveSession|null):DesktopError|null {
  const scope=explicitScope==='application'||explicitScope==='transport'||explicitScope==='session'?explicitScope:(id!==undefined||generation!==undefined||current?'session':'application');
  // Legacy unscoped errors are attributed at receipt. Native producers must attach
  // identity to session errors so a late error cannot be attributed to a new session.
- const issue:DesktopError={scope,message:errorMessage(event.payload),...(scope==='session'?{sessionId:id??(explicitScope===undefined?sessionId(current):undefined),generation:generation??(explicitScope===undefined?current?.generation:undefined)}:{}),...(scope==='transport'?{operation:'event'}:{})};
+ const issue:DesktopError={scope,message:errorMessage(event.payload),...(scope==='session'?{sessionId:id??(explicitScope===undefined?sessionId(current):undefined),generation:generation??(explicitScope===undefined?current?.generation:undefined)}:{}),...(scope==='transport'?{operation:'event'}:payload.code==='shortcut_unavailable'?{operation:'shortcut'}:{})};
  return scope==='session'&&!matchesSession(issue,current)?null:issue;
 }
 export function DesktopProvider({children}:{children:ReactNode}) {
@@ -99,14 +99,15 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   alive.current=true;if(!available)return;
   let active=true;let resyncing=false;let queued:AppEvent[]=[];
   const applyIntent=(event:AppEvent)=>{
+   if(event.kind==='native.shortcutsReady'){setState(prev=>withErrors(prev,prev.errors.filter(issue=>issue.operation!=='shortcut')));return;}
    if(event.kind==='error'){setState(prev=>{const issue=eventIssue(event,prev.session);return issue?putError(prev,issue):prev;});return;}
    if(event.kind==='recorder.openMode'&&recorderSurface){const payload=event.payload as Partial<RecorderModeRequest>|null;if((event.sessionId!==undefined&&payload?.sessionId!==undefined&&event.sessionId!==payload.sessionId)||(event.generation!==undefined&&payload?.generation!==undefined&&event.generation!==payload.generation))return;const request={sequence:event.sequence,sessionId:event.sessionId??payload?.sessionId??'',generation:event.generation??payload?.generation??-1};setState(prev=>matchesSession(request,prev.session)&&canOpenMode(prev.session)?{...prev,recorderModeRequest:request}:prev);}
   };
   const resync=()=>{if(resyncing)return;resyncing=true;void command<NativeSnapshot>('state.snapshot').then(snap=>{if(!active)return;applySnapshot(snap);setState(prev=>clearReadError(prev,'snapshot'));const pending=queued;queued=[];resyncing=false;pending.sort((a,b)=>a.sequence-b.sequence).forEach(event=>{
    // Snapshots do not contain ephemeral errors/menu intents. Preserve queued
    // intents even when the snapshot's sequence already includes their publication.
-   if(event.sequence<=sequence.current&&(event.kind==='error'||event.kind==='recorder.openMode'))applyIntent(event);else receive(event);
-  });}).catch(e=>{const pending=queued;queued=[];resyncing=false;if(active){readFailed('snapshot',e);pending.filter(event=>event.kind==='error').forEach(applyIntent);}});};
+   if(event.sequence<=sequence.current&&(event.kind==='error'||event.kind==='recorder.openMode'||event.kind==='native.shortcutsReady'))applyIntent(event);else receive(event);
+  });}).catch(e=>{const pending=queued;queued=[];resyncing=false;if(active){readFailed('snapshot',e);pending.filter(event=>event.kind==='error'||event.kind==='native.shortcutsReady').forEach(applyIntent);}});};
   const receive=(event:AppEvent)=>{
    if(!active)return;
    if(event.kind==='level'){const raw=event.payload as {level:number;sessionId?:string;generation?:number};const payload={...raw,sessionId:raw.sessionId??event.sessionId,generation:raw.generation??event.generation};if(typeof payload.level!=='number'||!Number.isFinite(payload.level))return;setState(prev=>{const session=receiveLevel(prev.session,payload,performance.now());return session===prev.session?prev:{...prev,session};});return;}
@@ -116,7 +117,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
    if(event.kind==='snapshot'){applySnapshot({...event.payload as NativeSnapshot,sequence:event.sequence});return;}
    sequence.current=event.sequence;
    if(event.kind==='session'){const next=event.payload as LiveSession|null;if((next===null||typeof next==='object')&&acceptSession(next))setState(prev=>withSession(prev,next));return;}
-   if(event.kind==='error'||event.kind==='recorder.openMode'){applyIntent(event);return;}
+   if(event.kind==='error'||event.kind==='recorder.openMode'||event.kind==='native.shortcutsReady'){applyIntent(event);return;}
    clearTimeout(refreshTimer.current);refreshTimer.current=setTimeout(()=>{if(recorderSurface)resync();else void refresh();},80);
   };
   void subscribeDesktop(receive).then(snap=>{if(active){applySnapshot(snap);setState(prev=>clearReadError(prev,'subscribe'));}}).catch(error=>{if(active){readFailed('subscribe',error);setState(prev=>({...prev,status:'error'}));}});

@@ -1,6 +1,8 @@
 # SpeakMode
 
-SpeakMode 是一个 Windows 语音输入 MVP：按右 Alt 开始口述，再按一次结束，按当前写作场合生成成稿，并输入到结束口述时的文本位置。录音中可以停顿、翻阅资料或移动光标。
+SpeakMode 是一个 Windows / macOS 语音输入应用：按右 Alt（Mac 为右 Option）开始口述，再按一次结束，按当前写作场合生成成稿，并输入到结束口述时的文本位置。录音中可以停顿、翻阅资料或移动光标。
+
+macOS 移植复用同一份 React 界面、识别与整理服务、词典、历史和交付状态机，并提供 CoreAudio、钥匙串、全局快捷键、原生窗口与菜单栏适配。构建、权限和实际验收范围见 [macOS 开发与验证](docs/macos.md)。
 
 当前桌面源码版本为 **0.2.30**，前端 package 版本为 **0.4.27**。仓库包含实际 React/Tauri/Rust 实现、锁定依赖、测试和构建所需的第三方材料；不包含个人配置、API Key、历史数据库、录音、安装包或本机工具链。
 
@@ -62,7 +64,7 @@ SpeakMode 是一个 Windows 语音输入 MVP：按右 Alt 开始口述，再按�
 
 ## 功能
 
-- 全局录音快捷键、Windows 原生悬浮栏、真实音量反馈和流式字幕。
+- 全局录音快捷键、原生悬浮栏、真实音量反馈和流式字幕。
 - 自动、聊天、文档、邮件、技术和自定义场合；兼容旧轻整理/结构，个人规则不能覆盖来源事实。
 - 可选输入位置感知：结合当前字段标签和有界邻近文字判断用途，支持关闭或排除应用；手动场合优先。
 - 独立成稿语言：默认跟随口述，也可选择英文成稿，保留明确的事实和不确定专名。
@@ -75,7 +77,7 @@ SpeakMode 是一个 Windows 语音输入 MVP：按右 Alt 开始口述，再按�
 
 ## 开发
 
-支持目标为 Windows x64。需要 Node.js **22.12+**、npm、Rust MSVC 工具链、Microsoft C++ Build Tools / Windows SDK 和 WebView2 Runtime。Rust crate 使用 edition 2024；本机原始验证使用 Rust 1.99.0。此仓库不安装或分发上述开发工具。
+Windows x64 需要 Node.js **22.12+**、npm、Rust MSVC 工具链、Microsoft C++ Build Tools / Windows SDK 和 WebView2 Runtime。macOS 需要同版本 Node.js、Rust 和 Xcode Command Line Tools，见 [Mac 构建入口](docs/macos.md)。Rust crate 使用 edition 2024；本机原始 Windows 验证使用 Rust 1.99.0。此仓库不安装或分发上述开发工具。
 
 ```powershell
 git clone https://github.com/13-pieces-teen/speakmode.git
@@ -88,7 +90,7 @@ npm run tauri -- dev --target x86_64-pc-windows-msvc
 
 开发热更新也应复用同一个 `CARGO_TARGET_DIR`，不要按版本复制编译缓存。桌面检查、测试和打包统一使用下方带磁盘预检的入口；目录选择、12 GiB 缓存预算及 8 GiB 可用空间要求见 [构建与缓存管理](docs/build-cache.md)。
 
-在应用“设置 → 云端服务”中配置自己的 Key 和所属地域。新配置默认模型为 `qwen3-asr-flash-realtime` 和 `qwen3.8-flash`，可从模型列表另选型号并保存；模型可用性、额度和地域取决于你的账号。Key 通过 Windows Credential Manager 保存，不写入 Git 文件或发送到前端日志。
+在应用“设置 → 云端服务”中配置自己的 Key 和所属地域。新配置默认模型为 `qwen3-asr-flash-realtime` 和 `qwen3.8-flash`，可从模型列表另选型号并保存；模型可用性、额度和地域取决于你的账号。Key 在 Windows 使用 Credential Manager，在 macOS 使用登录钥匙串，不写入 Git 文件或发送到前端日志。
 
 浏览器单独运行 `npm run dev` 可检查界面，但不生成示例数据或执行原生操作，不能代替桌面语音、系统快捷键或跨应用输入验收。
 
