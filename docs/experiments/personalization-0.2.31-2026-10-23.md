@@ -28,13 +28,13 @@
 | 前端配置校验 | PASS：11/11 | `personalization-helper-20261023.json` |
 | 隔离 Edge 行为检查 | PASS：17/17 | `personalization-ui-20261023-integrated/receipt.json`；合成 IPC，无外部请求、pageErrors 为 0 |
 | 窗口与键盘 | PASS | 1280、800、430 宽度，键盘页签、减少动态效果；已查看截图 |
-| 安装包与 EXE | PASS | `personalization-package-final.log`，退出 0；文件版本均为 0.2.31。未安装或启动 |
+| 安装包与 EXE | PASS | 修复版 `personalization-package-quality-r2.log`，退出 0；文件版本均为 0.2.31。未安装或启动 |
 | 职业／习惯消融的真实模型质量 | 已执行，质量门槛未证明 | 4 条开发、60 条冻结文本；包含回退、误拦及被放行的保真疑点，不能宣称职业增益；见整理对照报告 |
 | 真实录音与目标应用输入 | NOT_RUN | 尚无用户可直接采用率及端到端耗时结论 |
 
 日志和截图存于仓库外的工作区 `output/`，不提交个人数据、凭据、音频、数据库、缓存或安装包。
 
-最终候选制品保存在 `output/releases/0.2.31-personalization-2026-10-23-final/`：
+首轮候选制品保存在 `output/releases/0.2.31-personalization-2026-10-23-final/`（以下 r2 已更新试用候选）：
 
 | 文件 | 字节数 | SHA256 |
 | --- | --- | --- |
@@ -42,6 +42,15 @@
 | SpeakMode.exe | 28,872,192 | 9CAD451FAD11255EDCE2F169BC50C36DD81F3074A0C4544F8D09090220858A86 |
 
 制品清单为同目录 `artifacts.json`，记录构建时源码 commit `20d9ace600c12db4a794109715c571785428b113` 及 app tree `430ba9d74796ad3b7487e30b0850e90ef201a937`。构建后共享缓存 11.548 GiB，低于现有 12 GiB 预算。此前的初版包不作为最终候选。
+
+修复后供六任务试用的 r2 位于 `output/releases/0.2.31-personalization-2026-10-23-r2/`，版本仍为 0.2.31：
+
+| 文件 | 字节数 | SHA256 |
+| --- | --- | --- |
+| SpeakMode_0.2.31_x64-setup.exe | 15,148,235 | 1E16AD381F34CEC06233547232B853CC03409B1D8E7EEC09475948B5C2A4E915 |
+| SpeakMode.exe | 28,895,744 | A58CD193589EED9E802D88A25225A3EA4A54224E22D52ACC33313929870A7EA7 |
+
+同目录 `artifacts.json` 绑定源码 commit `ff0c1ab663187a93d80d63e6e0cf98bbfd9edf8c` 和 app tree `089903abb15058fc81532a47a3e1ac3e1cedcbcb`。打包包含 TypeScript/Vite 构建，退出 0；未安装或启动新程序。真实录音与用户质量评价仍待执行。
 
 源代码审阅：[Draft PR #26](https://github.com/13-pieces-teen/speakmode/pull/26)。工程就绪与真实质量验收分别跟踪，不据此合并或安装。
 
