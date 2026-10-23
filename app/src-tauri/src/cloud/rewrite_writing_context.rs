@@ -78,6 +78,7 @@ pub(super) fn attach(body: &mut Value, mode: &ModeSnapshot, source: &SourceRevis
     }
     body["messages"][1]["content"] = json!(data.to_string());
     super::format_requests::attach(body,&source.text())?;
+    super::spoken_format::attach(body,source,super::spoken_english(source,Some(context)))?;
     Ok(())
 }
 

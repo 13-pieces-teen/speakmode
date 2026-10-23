@@ -8,7 +8,7 @@
 use super::{anchors, effective_spans, facts, same_kind, CloudError, Kind};
 use crate::core::{OutputBlock, SourceRevision};
 use std::collections::HashSet;
-#[path = "rewrite_english_years.rs"] mod english_years;
+use super::super::english_years;
 
 fn reject(message: &'static str) -> CloudError {
     CloudError::new("rewrite_meaning_risk", "rewrite", message)
@@ -30,6 +30,12 @@ fn numeric_sets(source: &SourceRevision, blocks: &[OutputBlock], spans: &[super:
     output_numbers.extend(blocks.iter().flat_map(|block| english_years::retained_keys(&block.text))
         .filter(|key|expected.contains(key)));
     source_numbers.extend(expected);
+    // A date's optional comma must not hide its year from clause-based
+    // extraction. Use the effective (already corrected) spans in source order,
+    // rather than reintroducing a date withdrawn by an explicit spoken repair.
+    let effective=spans.iter().map(|span|span.text.as_str()).collect::<Vec<_>>().join(", ");
+    source_numbers.extend(super::super::dates::fact_keys(&effective));
+    output_numbers.extend(blocks.iter().flat_map(|block|super::super::dates::fact_keys(&block.text)));
     (source_numbers, output_numbers)
 }
 
@@ -122,6 +128,8 @@ pub(super) fn required_evidence(source: &SourceRevision, blocks: &[OutputBlock])
         }
     }
     facts_required |= !english_years::keys(&source.text()).is_empty() || blocks.iter().any(|block| !english_years::keys(&block.text).is_empty());
+    facts_required |= !super::super::dates::fact_keys(&spans.iter().map(|span|span.text.as_str()).collect::<Vec<_>>().join(", ")).is_empty()
+        || blocks.iter().any(|block|!super::super::dates::fact_keys(&block.text).is_empty());
     (facts_required, scope_required)
 }
 

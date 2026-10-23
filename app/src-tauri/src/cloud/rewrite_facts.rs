@@ -39,12 +39,15 @@ fn prose_number_len(text: &str, before: &str) -> usize {
 // a clause. In particular, version 0.1.7 must never become three source spans.
 pub(super) fn clauses(text: &str) -> Vec<&str> {
     let mut result = Vec::new(); let mut start = 0;
+    let mut dates=super::super::dates::mentions(text).into_iter().peekable();
     for (index, c) in text.char_indices() {
         let previous = text[..index].chars().next_back();
         let following = text[index + c.len_utf8()..].chars().next();
         let decimal_dot = c == '.' && previous.is_some_and(|c| c.is_ascii_digit()) && following.is_some_and(|c| c.is_ascii_digit());
         let grouping = c == ',' && previous.is_some_and(|c| c.is_ascii_digit()) && grouped_suffix(&text[index + 1..]);
-        if super::is_separator(c) && !decimal_dot && !grouping {
+        while dates.peek().is_some_and(|d|d.end<=index){dates.next();}
+        let inside_date=dates.peek().is_some_and(|d|d.start<index&&index<d.end);
+        if super::is_separator(c) && !decimal_dot && !grouping && !inside_date {
             let clause = text[start..index].trim();
             if !clause.is_empty() { result.push(clause); }
             start = index + c.len_utf8();
@@ -184,7 +187,12 @@ fn clock_fact(text: &str, start: usize) -> Option<Fact> {
 
 pub(super) fn extract(text: &str) -> Vec<Fact> {
     let mut result = Vec::new(); let mut offset = 0;
+    let mut date_components=super::super::dates::mentions(text).iter().flat_map(|d|super::super::dates::components(text,d)).collect::<Vec<_>>().into_iter().peekable();
     while offset < text.len() {
+        while date_components.peek().is_some_and(|(_,end,_)|*end<=offset){date_components.next();}
+        if date_components.peek().is_some_and(|(start,_,_)|*start==offset) {
+            let (start,end,key)=date_components.next().unwrap();result.push(Fact{key,start,end});offset=end;continue;
+        }
         if let Some(fact) = english_numbers::extract_at(text, offset) { offset = fact.end; result.push(fact); continue; }
         // These three spellings express the same per-occurrence frequency;
         // the 一/1 is not a standalone assertion that something happens once.

@@ -45,9 +45,16 @@ fn fluent_gate_is_explicit_and_legacy_contract_remains_frozen_outside_it() {
     assert_eq!(production_request_body(&config,&mode,&source,&dictionary).unwrap(),minimum::prepare(&config,&mode,&source,&dictionary,true).unwrap().body);
     // Preserve the old experiment baseline explicitly even after production
     // selects a different protocol for the narrow, evaluated configuration.
+    // Spoken notation is an additive policy; the original prefix stays frozen.
     let baseline=baseline_request_body(&config,&mode,&source).unwrap();
-    assert_eq!(format!("{:x}",Sha256::digest(baseline["messages"][0]["content"].as_str().unwrap().as_bytes())),
+    let system=baseline["messages"][0]["content"].as_str().unwrap();
+    let marker=format!("\n{}\n",spoken_format::VERSION);
+    let (frozen,notation)=system.split_once(&marker).expect("explicit additive notation policy");
+    assert_eq!(format!("{:x}",Sha256::digest(frozen.as_bytes())),
         "32af00059d7c1addf44a13304beca7357bc0f42aa3caa003cc2c172ec74a5c11");
+    assert_eq!(system.matches(spoken_format::VERSION).count(),1);
+    assert!(notation.starts_with("Spoken notation:"));
+    assert!(notation.contains("Explicit separate letters"));
     assert_ne!(request_body(&config,&mode,&source).unwrap(),baseline);
     for variation in 0..7 {
         let mut other_config=config.clone();let mut other_mode=mode.clone();
