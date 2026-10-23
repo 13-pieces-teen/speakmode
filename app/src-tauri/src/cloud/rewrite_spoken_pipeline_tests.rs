@@ -128,7 +128,7 @@ fn even_an_explicit_five_pass_verdict_cannot_override_letter_list_guard(){
 async fn explicit_english_scene_formats_chinese_date_without_touching_source(){
     let input="The report date is 二零二六年十月二十三日. We are discussing A D H D research.";
     let(config,mode,source)=fixture(input);let before=source.clone();
-    let context=WritingContext{scene:AppWritingScene::Document,language:DraftLanguage::English,input:None};
+    let context=WritingContext{scene:AppWritingScene::Document,language:DraftLanguage::English,input:None,personalization:None};
     let server=Server::new(vec![draft(input),Reply::Fixed(ACCEPT.into())]).await;
     let result=minimum_pipeline::run_until_with_writing_context(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),
         CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),&context).await.unwrap();

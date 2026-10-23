@@ -63,6 +63,23 @@ fn grouped_suffix(text: &str) -> bool {
     digits == 3 && text[digits..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric())
 }
 
+// A small explicit label makes an otherwise unitless number an asserted amount.
+// This does not infer a currency, scan a profession, or promote arbitrary counts.
+// English labels require whole-word boundaries; identifiers such as budget3000
+// are already excluded by the numeric scanner's adjacent-letter rule.
+fn explicit_amount_label(text: &str, start: usize, end: usize) -> bool {
+    if text[end..].chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') { return false; }
+    let before = text[..start].trim_end();
+    let before = before.strip_suffix('负').or_else(|| before.strip_suffix('-')).unwrap_or(before).trim_end();
+    let before = before.strip_suffix('：').or_else(|| before.strip_suffix(':')).unwrap_or(before).trim_end();
+    let chinese = ["是", "为", "先"].iter().find_map(|word| before.strip_suffix(word)).unwrap_or(before).trim_end();
+    if ["预算", "金额", "费用", "价格"].iter().any(|label| chinese.ends_with(label)) { return true; }
+    let lower = before.to_ascii_lowercase();
+    let english = lower.strip_suffix(" is").unwrap_or(&lower).trim_end();
+    ["budget", "amount", "price", "cost"].iter().any(|label| english.strip_suffix(label)
+        .is_some_and(|prefix| prefix.chars().next_back().is_none_or(|c| !c.is_alphanumeric() && c != '_')))
+}
+
 // Unit conversions here are deliberately small and exact. Percentage points
 // and percentages differ; versions preserve component spelling, including zeros.
 const UNITS: &[(&str, &str, u128)] = &[
@@ -187,8 +204,12 @@ fn clock_fact(text: &str, start: usize) -> Option<Fact> {
 
 pub(super) fn extract(text: &str) -> Vec<Fact> {
     let mut result = Vec::new(); let mut offset = 0;
+    // Literal contents keep their existing exact-match protection. A label in
+    // code/quoted examples must not create a new prose-amount dimension.
+    let mut literals=super::super::literals::spans(text).into_iter().peekable();
     let mut date_components=super::super::dates::mentions(text).iter().flat_map(|d|super::super::dates::components(text,d)).collect::<Vec<_>>().into_iter().peekable();
     while offset < text.len() {
+        while literals.peek().is_some_and(|literal|literal.end<=offset){literals.next();}
         while date_components.peek().is_some_and(|(_,end,_)|*end<=offset){date_components.next();}
         if date_components.peek().is_some_and(|(start,_,_)|*start==offset) {
             let (start,end,key)=date_components.next().unwrap();result.push(Fact{key,start,end});offset=end;continue;
@@ -258,6 +279,8 @@ pub(super) fn extract(text: &str) -> Vec<Fact> {
         } else if previous.is_some_and(|c| matches!(c, '¥' | '￥' | '$')) {
             unit = if previous == Some('$') { "usd" } else { "cny" };
         }
+        if unit == "scalar" && !literals.peek().is_some_and(|literal|literal.start<=numeric_start&&numeric_start<literal.end)
+            && explicit_amount_label(text,numeric_start,end) { unit = "amount"; }
         // A bare 一 in 一下/一般/唯一 is prose, not an asserted numeric fact.
         if !arabic && unit == "scalar" && !raw.chars().any(|c| matches!(c, '十' | '百' | '千' | '万' | '亿')) { continue; }
         if indefinite_article(before, raw, unit, &text[end..]) { offset = end; continue; }
@@ -302,4 +325,31 @@ pub(super) fn canonical_text(text: &str) -> String {
         result.push_str(&text[start..fact.start]); result.push(' '); result.push_str(&fact.key); result.push(' '); start = fact.end;
     }
     result.push_str(&text[start..]); result
+}
+
+#[cfg(test)]
+mod amount_tests {
+    use super::*;
+    fn amounts(text:&str)->Vec<String>{extract(text).into_iter().map(|fact|fact.key).filter(|key|key.starts_with("amount:")).collect()}
+    #[test]
+    fn explicit_unitless_amount_labels_keep_exact_values_and_original_ranges() {
+        for text in ["预算三千", "预算是3000", "预算为 3,000", "金额：3000", "价格三千", "费用先3000", "The budget is 3000", "Budget: 3000", "The amount is 3000", "price 3000", "cost is 3000"] {
+            let facts=extract(text);assert_eq!(amounts(text),["amount:3000"],"{text}");let fact=facts.iter().find(|fact|fact.key=="amount:3000").unwrap();
+            assert_eq!(decimal(text[fact.start..fact.end].trim(),1).as_deref(),Some("3000"),"{text}");
+        }
+        assert_eq!(amounts("金额三"),["amount:3"]);assert_eq!(amounts("预算负三千"),["amount:-3000"]);assert_eq!(amounts("budget -3000"),["amount:-3000"]);
+    }
+    #[test]
+    fn labels_do_not_promote_arbitrary_digits_lists_identifiers_or_literal_examples() {
+        for text in ["3000", "预计3000", "第1条", "1. 测试", "A、D、H、D", "rebudget 3000", "_amount 3000", "budget3000", "budget_3000", "预算_3000", "预算3000A", "预算版本3000", "`budget: 3000`", "`预算三千`", "代码 ```text\n预算3000\n```", "引用‘金额3000’", "const budget = 3000"] {
+            assert!(amounts(text).is_empty(),"{text}");
+        }
+        assert_eq!(amounts("第1条预算三千"),["amount:3000"]);
+    }
+    #[test]
+    fn explicit_units_keep_the_existing_currency_and_measurement_dimensions() {
+        for (text,key) in [("预算三千元","cny:3000"),("金额3000美元","usd:3000"),("The budget is 30 dollars","usd:30"),("费用3000元","cny:3000"),("预算3个月","month:3")] {
+            let facts=extract(text);assert!(facts.iter().any(|fact|fact.key==key),"{text}");assert!(amounts(text).is_empty(),"{text}");
+        }
+    }
 }

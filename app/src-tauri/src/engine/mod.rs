@@ -1,6 +1,7 @@
 mod session;
 mod diagnostics;
 mod typeless_import;
+mod personalization;
 pub use session::{LiveSession, SessionPhase};
 
 use crate::{cloud::{self, CloudError, credentials, rewrite}, core::*, platform};
@@ -79,7 +80,7 @@ struct HistoryCandidate {
     #[serde(flatten)] revision:OutputRevision,
     review_issues:Vec<rewrite::ManualReviewIssue>,
 }
-struct CandidateSlot {key:String,run:String,cancel:CancellationToken,base:String,result:Option<HistoryCandidate>,adopting:Option<Arc<CommitGuard>>}
+struct CandidateSlot {personalization:Option<personalization::EffectivePersonalization>,key:String,run:String,cancel:CancellationToken,base:String,result:Option<HistoryCandidate>,adopting:Option<Arc<CommitGuard>>}
 
 fn reviewed_candidate(candidate:&OutputRevision,payload:&Value)->Result<OutputRevision> {
     let mut reviewed=candidate.clone();
@@ -106,7 +107,7 @@ fn candidate_for_adoption(candidate:&HistoryCandidate,payload:&Value)->Result<Ou
     reviewed_candidate(&candidate.revision,payload)
 }
 #[derive(Clone)]
-enum ReplayValue {Safe(Value),Session(String,u64),Mode(String,u64),Detail(String),Candidate(String,String),Capture(String),Dictionary(u64),Correction(String,String,Option<u64>,CorrectionDictionaryStatus),Acknowledged}
+enum ReplayValue {Safe(Value),Session(String,u64),Mode(String,u64),Detail(String),Candidate(String,String),Capture(String),Dictionary(u64),Personalization(u64),Correction(String,String,Option<u64>,CorrectionDictionaryStatus),Acknowledged}
 struct RequestRecord {fingerprint:String,outcome:Mutex<Option<Result<ReplayValue>>>,completed:tokio::sync::Notify}
 struct RequestOwner(Arc<RequestRecord>);
 impl Drop for RequestOwner {fn drop(&mut self){let mut outcome=self.0.outcome.lock().unwrap();if outcome.is_none(){*outcome=Some(Err(ApiError::new("request_interrupted","ipc","操作已中断，请刷新状态后核对")));}drop(outcome);self.0.completed.notify_waiters();}}
@@ -124,6 +125,8 @@ pub(crate) struct Inner {
     // Source identity only; entries live as long as their actual request lease,
     // including cancelled requests whose UI slot has already been replaced.
     preview_sources:HashMap<String,String>,
+    personalization_workers:HashMap<String,personalization::EffectivePersonalization>,
+    personalization_revocations:HashMap<String,u64>,
     shortcut_capture:Option<String>,
     capture_commit_guard:Option<Arc<CommitGuard>>,
     used_operation_ids:HashSet<String>,
@@ -174,7 +177,7 @@ fn cancel_operation(inner:&mut Inner,key:&str)->Result<()> {
     inner.used_operation_ids.insert(key.into());inner.cancelled_operation_ids.insert(key.into());Ok(())
 }
 struct AuxiliaryLease {hub:Arc<AppHub>,key:String}
-impl Drop for AuxiliaryLease {fn drop(&mut self){let mut i=self.hub.inner.lock().unwrap();i.auxiliary_workers.remove(&self.key);i.preview_sources.remove(&self.key);}}
+impl Drop for AuxiliaryLease {fn drop(&mut self){let mut i=self.hub.inner.lock().unwrap();i.auxiliary_workers.remove(&self.key);i.preview_sources.remove(&self.key);i.personalization_workers.remove(&self.key);}}
 /// Drop the actual request future before releasing admission, including task abort.
 struct AuxiliaryFuture<F:Future>{future:Option<Pin<Box<F>>>,lease:Option<AuxiliaryLease>}
 impl<F:Future> Future for AuxiliaryFuture<F>{type Output=F::Output;fn poll(self:Pin<&mut Self>,cx:&mut Context<'_>)->Poll<Self::Output>{let this=self.get_mut();match this.future.as_mut().unwrap().as_mut().poll(cx){Poll::Pending=>Poll::Pending,Poll::Ready(value)=>{this.future.take();this.lease.take();Poll::Ready(value)}}}}
@@ -185,7 +188,8 @@ struct RevisionIntent {session_id:String,generation:u64,sequence:u64}
 struct SettingsLease {hub:Arc<AppHub>,id:String}
 impl Drop for SettingsLease {fn drop(&mut self){let mut i=self.hub.inner.lock().unwrap();if i.settings_pending.as_deref()==Some(&self.id){i.settings_pending=None;}}}
 fn db_wire(value:DbValue)->Result<Value>{match value{
-    DbValue::Snapshot(v)=>Ok(json!({"revision":v.revision,"preferences":v.preferences,"providerConfig":v.provider_config,"modes":v.modes,"dictionary":v.dictionary,"usage":v.usage,"temporaryResult":v.temporary_result})),DbValue::Onboarding(v)=>wire(v),DbValue::Preferences(v)=>wire(v),DbValue::ProviderConfig(v)=>wire(v),
+    DbValue::Personalization(v)=>wire(v),DbValue::PersonalizationEvents(v)=>wire(v),
+    DbValue::Snapshot(v)=>Ok(json!({"personalization":v.personalization,"revision":v.revision,"preferences":v.preferences,"providerConfig":v.provider_config,"modes":v.modes,"dictionary":v.dictionary,"usage":v.usage,"temporaryResult":v.temporary_result})),DbValue::Onboarding(v)=>wire(v),DbValue::Preferences(v)=>wire(v),DbValue::ProviderConfig(v)=>wire(v),
     DbValue::Modes(v)=>wire(v),DbValue::Dictionary(v)=>wire(v),DbValue::Correction(v)=>wire(v),DbValue::Mode(v)=>wire(v),DbValue::ModeSnapshot(v)=>wire(v),
     DbValue::Detail(v)=>wire(v),DbValue::Source(v)=>wire(v),DbValue::Output(v)=>wire(v),
     DbValue::HistoryPage(v)=>wire(v),DbValue::Usage(v)=>wire(v),DbValue::UsageTotal(v)=>wire(v),DbValue::UsageEvent(v)=>wire(v),
@@ -260,7 +264,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
@@ -308,7 +312,7 @@ impl AppHub {
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
         if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.resizeRecorder"|"session.captionRendered"|"result.copy"|"recoverable.copy") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
         if !matches!(window,"main"|"recording"){return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
-        let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"usage.total"|"diagnostics.get"|"session.captionRendered");
+        let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"usage.total"|"personalization.get"|"personalization.stats"|"diagnostics.get"|"session.captionRendered");
         if !mutation{return self.execute_command(window,request).await;}
         let request_id=text(&request.payload,"requestId")?;
         if request_id.is_empty()||request_id.len()>128{return Err(ApiError::new("invalid_request_id","ipc","请求身份无效"));}
@@ -345,13 +349,14 @@ impl AppHub {
         let id=|field:&str|value.get(field).and_then(Value::as_str).unwrap_or("").to_owned();
         match name {
             "session.start"=>ReplayValue::Safe(value.clone()),
+            "personalization.save"=>ReplayValue::Personalization(value["version"].as_u64().unwrap_or(0)),
             "session.stop"|"session.selectMode"|"asr.retry"|"rewrite.retry"|"result.retrySave"|"recovery.activate"=>ReplayValue::Session(value.get("sessionId").or_else(||value.get("id")).and_then(Value::as_str).unwrap_or("").into(),value["generation"].as_u64().unwrap_or(0)),
             "dictionary.save"|"dictionary.import"|"dictionary.importTypeless"|"dictionary.delete"=>ReplayValue::Dictionary(value["version"].as_u64().unwrap_or(0)),
             "revision.correctTerm"=>ReplayValue::Correction(value.pointer("/detail/session/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/detail/output/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/dictionary/version").and_then(Value::as_u64),serde_json::from_value(value["dictionaryStatus"].clone()).unwrap_or(CorrectionDictionaryStatus::NotRequested)),
             "mode.save"=>ReplayValue::Mode(id("id"),value["revision"].as_u64().unwrap_or(0)),
             "revision.adopt"|"revision.edit"|"revision.restore"|"revision.undo"|"result.useSource"=>ReplayValue::Detail(value.pointer("/session/id").and_then(Value::as_str).unwrap_or("").into()),
             "history.rewrite"=>ReplayValue::Candidate(id("sessionId"),id("id")),
-            "mode.preview"=>ReplayValue::Acknowledged,
+            "mode.preview"|"personalization.compare"=>ReplayValue::Acknowledged,
             "shortcut.capture.begin"=>ReplayValue::Capture(id("captureId")),
             _=>ReplayValue::Safe(value.clone()),
         }
@@ -360,6 +365,7 @@ impl AppHub {
         let already=||ApiError::new("request_already_processed","ipc","此操作已处理；内容已变化，请刷新查看，不会重复执行");
         match value {
             ReplayValue::Safe(value)=>Ok(value),
+            ReplayValue::Personalization(version)=>{let snapshot=self.db.snapshot().personalization;if snapshot.version!=version{return Err(already());}wire(snapshot)},
             ReplayValue::Dictionary(version)=>{let snapshot=self.db.snapshot().dictionary;if snapshot.version!=version{return Err(already());}wire(snapshot)},
             ReplayValue::Correction(id,revision,dictionary_version,dictionary_status)=>{
                 let detail=db_detail(self.db_read(DbCommand::GetResult{session_id:id}).await.map_err(|_|already())?)?;
@@ -390,6 +396,12 @@ impl AppHub {
         // Never retain secret/preview/transcript-bearing requests in the idempotency cache.
         let result=match request.name.as_str() {
             "state.snapshot"=>return self.snapshot(window),
+            "personalization.get"=>self.personalization_get(),
+            "personalization.save"=>self.personalization_save(&p).await,
+            "personalization.compare"=>self.personalization_compare(&p).await,
+            "personalization.cancel"=>self.personalization_cancel(&p),
+            "personalization.feedback"=>self.personalization_feedback(&p).await,
+            "personalization.stats"=>self.personalization_stats(&p).await,
             "diagnostics.get"=>return wire(self.diagnostics.snapshot().map_err(|_|ApiError::new("diagnostics_unavailable","diagnostics","诊断记录暂不可用"))?),
             "session.captionRendered"=>{
                 if window!="recording"{return Err(ApiError::new("forbidden","ipc","此回执仅允许录音窗口"));}
@@ -511,7 +523,7 @@ impl AppHub {
             "app.quit"=>{self.native_action("quit",true)?;Ok(Value::Null)},
             _=>Err(ApiError::new("unknown_command","ipc","此操作未提供")),
         };
-        if result.is_ok() && !matches!(request.name.as_str(),"preferences.get"|"mode.list"|"dictionary.list"|"usage.today"|"usage.total"|"provider.status"|"audio.listDevices"|"history.list"|"history.get"|"credential.status"|"result.copy"|"recoverable.copy"|"mode.preview"|"mode.cancelPreview"|"history.cancelCandidate"|"shortcut.capture.begin"|"shortcut.capture.cancel"|"window.resizeRecorder"|"session.cancel"){self.changed();}
+        if result.is_ok() && !matches!(request.name.as_str(),"personalization.get"|"personalization.stats"|"personalization.compare"|"personalization.cancel"|"personalization.feedback"|"preferences.get"|"mode.list"|"dictionary.list"|"usage.today"|"usage.total"|"provider.status"|"audio.listDevices"|"history.list"|"history.get"|"credential.status"|"result.copy"|"recoverable.copy"|"mode.preview"|"mode.cancelPreview"|"history.cancelCandidate"|"shortcut.capture.begin"|"shortcut.capture.cancel"|"window.resizeRecorder"|"session.cancel"){self.changed();}
         result
     }
 
@@ -650,7 +662,8 @@ impl AppHub {
         let (_,mode)=preview_options(&p)?;
         let source_input=preview_source_input(&p)?;
         let cancel=CancellationToken::new();
-        let (config,dictionary,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;let (config,dictionary)=self.auxiliary_rewrite_snapshot();(config,dictionary,self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
+        let (snapshot,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;(self.db.snapshot(),self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
+        let (config,dictionary)=(snapshot.provider_config,snapshot.dictionary);
         let source=self.load_preview_source(source_input,&key).await?;
         rewrite::validate_source(&source.revision)?;
         cloud::rewrite_endpoint(&config)?;
@@ -659,16 +672,30 @@ impl AppHub {
         let lease=self.reserve_preview(&key,&source,cancel.clone(),epoch)?;
         let preview_mode=mode.clone().unwrap_or(ModeSnapshot{mode_id:"light".into(),name:"轻整理".into(),base_mode:BaseMode::Light,rules:String::new(),revision:1});
         let protocol=rewrite::manual_protocol_version(&config,&preview_mode,&source.revision);
+        let preview_context=personalization::context_for(&preview_mode,snapshot.preferences.app_writing.output_language,&snapshot.personalization);
+        {let mut inner=self.inner.lock().unwrap();if let Some(profile)=preview_context.as_ref().and_then(|c|c.personalization.as_ref()){
+            if personalization::revoked(&inner,profile){cancel.cancel();return Err(ApiError::new("cancelled","personalization","画像已停用或删除"));}
+            inner.personalization_workers.insert(operation.clone(),profile.clone());
+        }}
+        let started=std::time::Instant::now();
+        let profile_event=personalization::task_event(&key,personalization::PersonalizationEventKind::Preview,preview_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let _=self.record_personalization_event(profile_event.clone()).await;
         let config=&config;let secret=&secret;let dictionary=&dictionary;
+        let personal_config=&snapshot.personalization;
+        let language=snapshot.preferences.app_writing.output_language;
         let work=async {
             // User-requested trials are human-reviewed drafts, one call per
             // layout. Never use this result to authorize automatic delivery.
-            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {rewrite::rewrite_manual_candidate(config,secret,&mode,&source,dictionary,cancel).await.map(|candidate|candidate.draft)}).await?;
+            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {let context=personalization::context_for(&mode,language,personal_config);rewrite::rewrite_manual_candidate_with_writing_context(config,secret,&mode,&source,dictionary,cancel,context.as_ref()).await.map(|candidate|candidate.draft)}).await?;
             self.validate_preview_source(&source).await?;
             Ok::<_,ApiError>(result)
         };
-        let result=match (AuxiliaryFuture{future:Some(Box::pin(work)),lease:Some(lease)}).await{Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}return Err(error.for_operation("application",&key));}};
-        let mut i=self.inner.lock().unwrap();if cancel.is_cancelled()||!i.preview.as_ref().is_some_and(|(id,_)|id==&key){return Err(ApiError::new("cancelled","preview","试用已过期"));}i.preview=None;
+        let completed=(AuxiliaryFuture{future:Some(Box::pin(work)),lease:Some(lease)}).await;
+        let status=if cancel.is_cancelled()||completed.as_ref().err().is_some_and(|e|e.code=="cancelled"){personalization::PersonalizationEventStatus::Cancelled}else if completed.is_err(){personalization::PersonalizationEventStatus::Failed}else{personalization::PersonalizationEventStatus::Success};
+        let _=self.record_personalization_event(personalization::finished(&profile_event,status,started.elapsed().as_millis() as u64)).await;
+        let result=match completed{Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}return Err(error.for_operation("application",&key));}};
+        let expired={let mut i=self.inner.lock().unwrap();let expired=cancel.is_cancelled()||preview_context.as_ref().and_then(|c|c.personalization.as_ref()).is_some_and(|p|personalization::revoked(&i,p))||!i.preview.as_ref().is_some_and(|(id,_)|id==&key);if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}expired};
+        if expired{let _=self.record_personalization_event(personalization::finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,started.elapsed().as_millis() as u64)).await;return Err(ApiError::new("cancelled","preview","试用已过期"));}
         Ok(preview_response(&key,&source,result,protocol))
     }
 
@@ -689,7 +716,11 @@ impl AppHub {
             }
             rewrite::confirmed_candidate::validate(context,&detail.source)?;
         }
-        let (config,dictionary)=self.auxiliary_rewrite_snapshot();
+        let snapshot=self.db.snapshot();
+        let mut writing_context=personalization::context_for(&mode,snapshot.preferences.app_writing.output_language,&snapshot.personalization);
+        if let Some(confirmed)=&confirmed_context {if let Some(writing)=writing_context.as_mut(){writing.language=confirmed.language;}}
+        let reference=writing_context.as_ref().and_then(|context|context.personalization.clone());
+        let (config,dictionary)=(snapshot.provider_config,snapshot.dictionary);
         cloud::rewrite_endpoint(&config)?;
         let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
         let cancel=CancellationToken::new();
@@ -700,20 +731,34 @@ impl AppHub {
             if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","rewrite","请先结束快捷键录制"));}
             if current.source.id!=detail.source.id||current.output.as_ref().map(|o|o.id.as_str()).unwrap_or("")!=base{return Err(ApiError::new("revisionConflict","rewrite","记录已变化，请重新核对"));}
             if let Some(old)=i.candidate.take(){old.cancel.cancel();if let Some(guard)=old.adopting{guard.cancel();}}
-            i.candidate=Some(CandidateSlot{key:id.clone(),run:run.clone(),cancel:cancel.clone(),base,result:None,adopting:None});
-            i.auxiliary_workers.insert(operation.clone(),cancel.clone());AuxiliaryLease{hub:Arc::clone(self),key:operation}
+            if reference.as_ref().is_some_and(|p|personalization::revoked(&i,p)){return Err(ApiError::new("cancelled","personalization","画像已停用或删除，请重新整理"));}
+            i.candidate=Some(CandidateSlot{personalization:reference.clone(),key:id.clone(),run:run.clone(),cancel:cancel.clone(),base,result:None,adopting:None});
+            if let Some(profile)=reference.clone(){i.personalization_workers.insert(operation.clone(),profile);}
+            i.auxiliary_workers.insert(operation.clone(),cancel.clone());AuxiliaryLease{hub:Arc::clone(self),key:operation.clone()}
         };
+        let started=std::time::Instant::now();
+        let event_id=format!("candidate:{:x}",Sha256::digest(operation.as_bytes()));
+        let profile_event=personalization::task_event(&event_id,personalization::PersonalizationEventKind::Preview,writing_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let _=self.record_personalization_event(profile_event.clone()).await;
         let generation=async {
-            if let Some(context)=&confirmed_context {rewrite::confirmed_candidate::generate(&config,&secret,&mode,&detail.source,&dictionary,context,cancel.clone()).await}
-            else {rewrite::rewrite_manual_candidate(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone()).await}
+            if let Some(context)=&confirmed_context {rewrite::confirmed_candidate::generate_with_writing_context(&config,&secret,&mode,&detail.source,&dictionary,context,cancel.clone(),writing_context.as_ref()).await}
+            else {rewrite::rewrite_manual_candidate_with_writing_context(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone(),writing_context.as_ref()).await}
         };
-        let generated=match (AuxiliaryFuture{future:Some(Box::pin(generation)),lease:Some(lease)}).await {
+        let completed=(AuxiliaryFuture{future:Some(Box::pin(generation)),lease:Some(lease)}).await;
+        let status=if cancel.is_cancelled()||completed.as_ref().err().is_some_and(|e|e.code=="cancelled"){personalization::PersonalizationEventStatus::Cancelled}else if completed.as_ref().is_ok_and(|value|value.review_issues.is_empty()){personalization::PersonalizationEventStatus::Success}else{personalization::PersonalizationEventStatus::Failed};
+        let _=self.record_personalization_event(personalization::finished(&profile_event,status,started.elapsed().as_millis() as u64)).await;
+        let generated=match completed {
             Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.candidate.as_ref().is_some_and(|slot|slot.key==id&&slot.run==run){i.candidate=None;}return Err(ApiError::from(error).for_operation("application",&run));}
         };
-        let candidate=OutputRevision{writing_receipt:None,confirmed_context,id:run.clone(),session_id:id.clone(),parent_revision_id:None,base_revision_id:detail.output.as_ref().map(|o|o.id.clone()),source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:generated.draft.resolved_mode,rewrite_fallback:None,blocks:generated.draft.blocks,kind:RevisionKind::Adopt,creation_reason:if retry{CreationReason::Retry}else{CreationReason::History},created_at:now()};
-        let current=db_detail(self.db_read(DbCommand::GetResult{session_id:id.clone()}).await?)?;let mut i=self.inner.lock().unwrap();
-        if i.guards.get(&id).is_some_and(|g|g.is_cancelled())||cancel.is_cancelled()||!i.candidate.as_ref().is_some_and(|s|s.key==id&&s.run==run&&!s.cancel.is_cancelled())||current.output.as_ref().map(|o|o.id.as_str()).unwrap_or("")!=candidate.base_revision_id.as_deref().unwrap_or(""){return Err(ApiError::new("revisionConflict","rewrite","当前记录已变化，候选不能覆盖新版本"));}
-        let candidate=HistoryCandidate{revision:candidate,review_issues:generated.review_issues};
-        i.candidate.as_mut().unwrap().result=Some(candidate.clone());wire(candidate)
+        let candidate=OutputRevision{writing_receipt:personalization::receipt(writing_context.as_ref()),confirmed_context,id:run.clone(),session_id:id.clone(),parent_revision_id:None,base_revision_id:detail.output.as_ref().map(|o|o.id.clone()),source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:generated.draft.resolved_mode,rewrite_fallback:None,blocks:generated.draft.blocks,kind:RevisionKind::Adopt,creation_reason:if retry{CreationReason::Retry}else{CreationReason::History},created_at:now()};
+        let current=db_detail(self.db_read(DbCommand::GetResult{session_id:id.clone()}).await?)?;
+        let candidate={let mut i=self.inner.lock().unwrap();
+            if i.guards.get(&id).is_some_and(|g|g.is_cancelled())||cancel.is_cancelled()||!i.candidate.as_ref().is_some_and(|s|s.key==id&&s.run==run&&!s.cancel.is_cancelled())||current.output.as_ref().map(|o|o.id.as_str()).unwrap_or("")!=candidate.base_revision_id.as_deref().unwrap_or(""){None}
+            else {let candidate=HistoryCandidate{revision:candidate,review_issues:generated.review_issues};i.candidate.as_mut().unwrap().result=Some(candidate.clone());Some(candidate)}
+        };
+        if let Some(candidate)=candidate{wire(candidate)}else{
+            let _=self.record_personalization_event(personalization::finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,started.elapsed().as_millis() as u64)).await;
+            Err(ApiError::new("revisionConflict","rewrite","当前记录已变化，候选不能覆盖新版本"))
+        }
     }
 }

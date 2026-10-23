@@ -43,7 +43,7 @@ async fn execute_until(client:&reqwest::Client,config:&ProviderConfig,secret:&st
     let context=super::writing_context::for_mode(mode);
     execute_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context.as_ref()).await
 }
-async fn execute_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+pub(super) async fn execute_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
     context:Option<&crate::core::writing_context::WritingContext>)->Outcome {
     execute_until_with_review_format(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context,None).await
@@ -78,6 +78,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         if deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejected());}
         let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{return Err(rejected());};
         if let Some(context)=context {super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Repair)?;}
+        request.bind_personalization(context);
         checkpoint(&cancel,deadline)?;trace.calls+=1;trace.repair_attempted=true;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Repair).await?;
         let mut repaired=local_repair::apply(&content,&request,mode,source,&draft).map_err(safe_error)?;

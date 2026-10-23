@@ -11,6 +11,17 @@ use uuid::Uuid;
 const DATE: &str = "2026-10-04";
 const WAIT: Duration = Duration::from_secs(6);
 
+#[tokio::test]
+async fn personalization_actor_publishes_cas_config_and_separates_usage_metadata() {
+    let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();assert!(!db.snapshot().personalization.enabled);
+    let mut config=db.snapshot().personalization;config.enabled=true;config.preferences.sentence_style=SentenceStyle::Concise;
+    let saved=match invoke(&db,DbCommand::SavePersonalization{config,expected_version:1},None).await.unwrap(){DbValue::Personalization(saved)=>saved,other=>panic!("{other:?}")};
+    assert_eq!(db.snapshot().personalization,saved);assert_eq!(saved.version,2);
+    assert!(matches!(invoke(&db,DbCommand::SavePersonalization{config:saved.clone(),expected_version:1},None).await,Err(StoreError::Conflict{..})));
+    assert!(matches!(invoke(&db,DbCommand::GetPersonalizationEvents{since:None},None).await.unwrap(),DbValue::PersonalizationEvents(events) if events.is_empty()));
+    stop(&db).await;let reopened=DbClient::open_with_options(&file.0,options()).unwrap();assert_eq!(reopened.snapshot().personalization,saved);stop(&reopened).await;
+}
+
 struct DbPath(PathBuf);
 impl DbPath {
     fn new() -> Self {
@@ -781,7 +792,7 @@ async fn model_upgrade_bootstrap_snapshot_persists_and_preserves_manual_revert_o
     assert_eq!(version, reverted.version);
     assert_eq!(serde_json::from_str::<ProviderConfig>(&data).unwrap(), reverted);
     assert_eq!(count(&connection, "app_upgrades"), 1);
-    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 3);
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 4);
 }
 
 #[tokio::test]

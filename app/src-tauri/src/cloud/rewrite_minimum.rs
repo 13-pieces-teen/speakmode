@@ -23,6 +23,7 @@ pub struct MinimumRequest {
     mode_hash: String,
     terms: Option<ProtectedTerms>,
     english_format: bool,
+    personalization_hash: Option<String>,
 }
 pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision,
     dictionary: &DictionarySnapshot, protect_long: bool) -> Result<MinimumRequest, CloudError> {
@@ -53,7 +54,13 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
     if let Some(context)=context { super::writing_context::attach(&mut body,mode,source,context,super::writing_context::Stage::Generation)?; }
     super::format_requests::attach(&mut body,&source.text())?;
     super::spoken_format::attach(&mut body,source,english_format)?;
-    Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms,english_format})
+    let personalization_hash=context.and_then(|c|c.personalization.as_ref()).map(|_|hash(&body["messages"]));
+    Ok(MinimumRequest{body,source_hash:hash(source),mode_hash:hash(mode),terms,english_format,personalization_hash})
+}
+impl MinimumRequest {
+    pub(super) fn bind_personalization(&mut self,context:Option<&crate::core::writing_context::WritingContext>) {
+        self.personalization_hash=context.and_then(|c|c.personalization.as_ref()).map(|_|hash(&self.body["messages"]));
+    }
 }
 
 #[derive(Deserialize)]
@@ -61,7 +68,8 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
 struct WireDraft { resolved_mode: BaseMode, text: String }
 pub fn parse(content: &str, mode: &ModeSnapshot, source: &SourceRevision, request: &MinimumRequest) -> Result<RewriteResult,CloudError> {
     super::validate_source(source)?;
-    if request.source_hash!=hash(source) || request.mode_hash!=hash(mode) {
+    if request.source_hash!=hash(source) || request.mode_hash!=hash(mode)
+        || request.personalization_hash.as_ref().is_some_and(|expected|expected!=&hash(&request.body["messages"])) {
         return Err(CloudError::new("stale_rewrite","rewrite","整理对象已变化"));
     }
     if content.len()>1024*1024 {return Err(CloudError::new("response_too_large","rewrite","整理响应超过容量限制"));}

@@ -110,6 +110,8 @@ pub struct LiveSession {
 #[derive(Clone)]
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
 pub(crate) struct ActiveSession {
+    personalization:crate::core::personalization::PersonalizationConfig,
+    personalization_commit:Option<Arc<CommitGuard>>,
     onboarding_lesson:Option<OnboardingLesson>,
     diagnostic_trace:Option<TraceHandle>,caption_render_token:Option<String>,
     pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,dictionary:DictionarySnapshot,
@@ -130,6 +132,23 @@ pub(crate) struct ActiveSession {
     processing_worker_released:bool,db_pending:usize,cancel_pending:bool,
 }
 impl ActiveSession {
+    pub(super) fn revoke_personalization(&mut self,disabled:bool,deleted:&[String]) {
+        if let Some(profile)=self.output.as_mut().and_then(|o|o.writing_receipt.as_mut()).and_then(|r|r.personalization.as_mut()) {
+            if profile.profile_id.as_ref().is_some_and(|id|deleted.contains(id)){profile.clear_reference();}
+        }
+        let referenced=self.personalization.enabled&&(disabled||self.personalization.active_profile_id.as_ref().is_some_and(|id|deleted.contains(id)));
+        if !referenced{return;}
+        self.personalization=Default::default();
+        if !self.busy()&&self.pending.is_none(){return;}
+        self.stop.store(true,Ordering::SeqCst);self.cancel.cancel();self.discard_input_context();
+        self.original_delivery_revoked=true;
+        if let Some(permit)=&self.delivery_permit{permit.cancel_before_injection();}
+        if let Some(guard)=self.personalization_commit.take(){guard.cancel();}
+        // Retain the immutable ASR/checkpoint; only discard an uncommitted draft.
+        if self.pending.as_ref().is_some_and(|(_,p)|matches!(p,PendingCommit::Ready(_))){self.pending=None;}
+        self.phase=SessionPhase::Incomplete;
+        self.error=Some(ApiError::new("personalization_revoked","personalization","画像已停用或删除，当前个性化整理已停止；已有识别稿仍可复制或重新整理").for_session(&self.id,self.generation));
+    }
     fn discard_input_context(&mut self) {
         self.input_context=None;self.input_context_frozen=true;
         self.input_context_status=if self.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};
@@ -303,7 +322,7 @@ impl AppHub {
             let id=Uuid::new_v4().to_string();
             i.park_retryable_failure()?;
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{personalization:cache.personalization,personalization_commit:None,onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
@@ -749,6 +768,11 @@ impl AppHub {
             (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen)};
         self.publish_session();
         self.diagnostics.rewrite_started(trace.as_ref(),if writing_context.is_some(){rewrite::writing_context::VERSION}else{rewrite::production_protocol_version(&config,&mode)},policy.deadline.as_millis().min(u64::MAX as u128) as u64);
+        let profile_event_id=if reason==CreationReason::Retry{format!("{}:retry:{}",id,Uuid::new_v4())}else{id.clone()};
+        let event_kind=if reason!=CreationReason::NormalInitial||self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some()){personalization::PersonalizationEventKind::Preview}else{personalization::PersonalizationEventKind::Normal};
+        let profile_started=Instant::now();
+        let profile_event=personalization::task_event(&profile_event_id,event_kind,writing_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let _=self.record_personalization_event(profile_event.clone()).await;
         let rewrite_cancel=cancel.child_token();
         let observer_hub=Arc::downgrade(self);let observer_trace=trace.clone();
         let execution=rewrite::execution::RewriteExecution::observed(rewrite_deadline,move|event|{
@@ -766,6 +790,7 @@ impl AppHub {
         // replaced session, even if its future returned success after cutoff.
         if !self.valid_active(&id,generation){
             self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Cancelled,None,Some("cancelled"));
+            let _=self.record_personalization_event(personalization::finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,profile_started.elapsed().as_millis() as u64)).await;
             return;
         }
         // Synchronous decoding/validation can finish without yielding to the
@@ -789,6 +814,8 @@ impl AppHub {
                         && s.source.as_ref().is_some_and(|saved|saved==&source));
                 if !eligible {
                     self.diagnostics.rewrite_finished(trace.as_ref(),if error.code=="cancelled" {RewriteOutcome::Cancelled} else {RewriteOutcome::Failed},None,Some(&error.code));
+                    let status=if error.code=="cancelled"{personalization::PersonalizationEventStatus::Cancelled}else{personalization::PersonalizationEventStatus::Failed};
+                    let _=self.record_personalization_event(personalization::finished(&profile_event,status,profile_started.elapsed().as_millis() as u64)).await;
                     self.fail(&id,generation,error.into(),true);return;
                 }
                 self.diagnostics.mark(trace.as_ref(),Stage::RewriteFallbackSelected);
@@ -797,19 +824,23 @@ impl AppHub {
             },
         };
         if rewrite_fallback.is_some(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
-        let receipt=writing_context.as_ref().filter(|_|rewrite_fallback.is_none()).map(|context|crate::core::writing_context::WritingReceipt{scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
+        let status=if rewrite_fallback.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
+        let _=self.record_personalization_event(personalization::finished(&profile_event,status,profile_started.elapsed().as_millis() as u64)).await;
+        if !self.valid_active(&id,generation){return;}
+        let receipt=writing_context.as_ref().filter(|_|rewrite_fallback.is_none()).map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
         let output=OutputRevision{writing_receipt:receipt, confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}
         self.publish_session();self.changed();deliver(self,&id,generation);
     }
     fn prepare_output(&self,id:&str,generation:u64,output:OutputRevision)->Result<(String,Arc<CommitGuard>)> {
-        let guard=self.record_guard(id,generation);let mut i=self.inner.lock().unwrap();let s=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&(!s.cancel.is_cancelled()||s.phase==SessionPhase::Ready)).ok_or_else(||ApiError::new("cancelled","session","口述已取消").for_session(id,generation))?;
-        if guard.is_cancelled(){return Err(ApiError::new("cancelled","session","口述已取消").for_session(id,generation));}
+        let record_guard=self.record_guard(id,generation);let mut i=self.inner.lock().unwrap();let s=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&(!s.cancel.is_cancelled()||s.phase==SessionPhase::Ready)).ok_or_else(||ApiError::new("cancelled","session","口述已取消").for_session(id,generation))?;
+        if record_guard.is_cancelled(){return Err(ApiError::new("cancelled","session","口述已取消").for_session(id,generation));}
+        let guard=if output.writing_receipt.as_ref().is_some_and(|r|r.personalization.is_some()){let g=record_guard.operation();s.personalization_commit=Some(g.clone());g}else{record_guard};
         let pending_id=Uuid::new_v4().to_string();s.pending=Some((pending_id.clone(),PendingCommit::Ready(output)));s.db_pending+=1;Ok((pending_id,guard))
     }
     fn output_receipt(&self,id:&str,generation:u64,pending_id:String,output:OutputRevision,guard:Arc<CommitGuard>,result:Result<DbValue>)->Result<()> {
         let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.db_pending=s.db_pending.saturating_sub(1);
-            if result.is_ok()&&!guard.is_cancelled(){s.pending=None;s.output=Some(output);s.phase=SessionPhase::Ready;s.cache=None;s.cache_complete=false;s.error=None;
+            if result.is_ok()&&!guard.is_cancelled()&&!s.cancel.is_cancelled(){s.personalization_commit=None;s.pending=None;s.output=Some(output);s.phase=SessionPhase::Ready;s.cache=None;s.cache_complete=false;s.error=None;
                 self.diagnostics.mark(s.diagnostic_trace.as_ref(),Stage::ReadyCommitted);self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"ready",None);
                 s.delivery_worker_released=!(s.reason==CreationReason::NormalInitial&&s.prefs.delivery_mode==DeliveryMode::Direct&&!s.cancel.is_cancelled());}}
         result.map_err(|mut error|{error=error.for_session(id,generation);error.pending_commit_id=Some(pending_id);error.commit_stage=Some("ready".into());error.can_retry_save=true;error.retry_kind=Some("save".into());error})?;Ok(())
@@ -956,7 +987,7 @@ impl AppHub {
         let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
         {let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=generation||!s.view().can_retry_rewrite{return Err(ApiError::new("stale_session","recovery","整理请求已过期"));}
-            s.cancel=CancellationToken::new();s.phase=SessionPhase::Rewriting;s.reason=CreationReason::Retry;s.error=None;s.processing_worker_released=false;s.caption_render_token=None;
+            s.personalization=self.db.snapshot().personalization;s.cancel=CancellationToken::new();s.phase=SessionPhase::Rewriting;s.reason=CreationReason::Retry;s.error=None;s.processing_worker_released=false;s.caption_render_token=None;
             s.diagnostic_trace=self.diagnostics.begin(&s.id,s.generation,Origin::RewriteRetry,retry_intent,&s.config,&s.mode);self.diagnostics.attempt(s.diagnostic_trace.as_ref(),s.asr_attempt_id.as_deref().unwrap_or(""));
         }
         let processing=self.processing_lease(&id,generation);
@@ -973,7 +1004,7 @@ impl AppHub {
         let secrets=credentials::read_session(&config)?;
         let (generation,language,dictionary,cache,cancel,attempt)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=old_generation||!s.view().can_retry_asr||p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","识别请求已过期"));}
-            s.generation+=1;s.cancel=CancellationToken::new();s.phase=SessionPhase::FinalizingAsr;s.reason=CreationReason::Retry;s.error=None;s.captions.clear();s.processing_worker_released=false;
+            s.personalization=self.db.snapshot().personalization;s.generation+=1;s.cancel=CancellationToken::new();s.phase=SessionPhase::FinalizingAsr;s.reason=CreationReason::Retry;s.error=None;s.captions.clear();s.processing_worker_released=false;
             let attempt=Uuid::new_v4().to_string();s.asr_attempt_id=Some(attempt.clone());
             s.caption_render_token=None;s.provider_ready=false;
             s.diagnostic_trace=self.diagnostics.begin(&s.id,s.generation,Origin::AsrRetry,retry_intent,&s.config,&s.mode);self.diagnostics.attempt(s.diagnostic_trace.as_ref(),&attempt);

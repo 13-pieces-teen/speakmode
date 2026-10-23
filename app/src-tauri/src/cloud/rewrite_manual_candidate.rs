@@ -45,6 +45,28 @@ pub async fn rewrite_manual_candidate(config:&ProviderConfig, secret:&str,
     run(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,Duration::from_secs(20)).await
 }
 
+/// Personalized history candidates use the same frozen guidance and independent
+/// checks as live dictation. A rejected draft remains explicitly reviewable.
+pub(crate) async fn rewrite_manual_candidate_with_writing_context(config:&ProviderConfig,secret:&str,
+    mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<ManualCandidate,CloudError> {
+    let Some(context)=context else{return rewrite_manual_candidate(config,secret,mode,source,dictionary,cancel).await;};
+    let endpoint=rewrite_endpoint(config)?;
+    let outcome=minimum_pipeline::execute_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,
+        cancel,&endpoint,RewriteExecution::for_duration(Duration::from_secs(20)),None,Some(context)).await;
+    match outcome.result {
+        Ok(draft)=>Ok(ManualCandidate{draft,review_issues:Vec::new()}),
+        Err(error)=>{
+            if matches!(error.code.as_str(),"cancelled"|"rewrite_timeout"|"authentication_failed"|"rate_limited") {return Err(error);}
+            let draft=outcome.trace.repaired_draft.or(outcome.trace.draft).ok_or_else(||error.clone())?;
+            let issue=if review_admission(source,&draft).is_err(){ManualReviewIssue::MeaningChanged}
+                else if outcome.trace.final_review.or(outcome.trace.review).is_some(){ManualReviewIssue::ReviewRejected}
+                else{ManualReviewIssue::ReviewUnavailable};
+            Ok(ManualCandidate{draft,review_issues:vec![issue]})
+        }
+    }
+}
+
 pub(super) async fn run(client:&reqwest::Client, config:&ProviderConfig, secret:&str,
     mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot,
     cancel:CancellationToken, endpoint:&str, timeout:Duration)->Result<ManualCandidate,CloudError> {

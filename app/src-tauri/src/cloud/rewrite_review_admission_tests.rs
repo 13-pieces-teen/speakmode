@@ -33,6 +33,37 @@ fn review_admission_allows_cleanup_and_exact_unit_normalization() {
 }
 
 #[test]
+fn explicit_unitless_amounts_cannot_change_even_before_an_all_pass_reviewer() {
+    for (input,good,bad) in [
+        ("预算三千，暂时不发布。","预算3000，暂时不发布。","预算999，暂时不发布。"),
+        ("金额是三千。","金额是3000。","金额是999。"),
+        ("价格为3000。","价格为3000。","价格为999。"),
+        ("The budget is 3000.","The budget is 3000.","The budget is 999."),
+        ("The amount is 3000.","The amount is 3000.","The amount is 999."),
+    ] {
+        assert!(admitted(&[input],good),"{input} -> {good}");assert!(!admitted(&[input],bad),"{input} -> {bad}");
+    }
+    assert!(!admitted(&["预算三千，暂时不发布。"],"暂时不发布。"));
+    assert!(!admitted(&["暂时不发布。"],"预算999，暂时不发布。"));
+}
+
+#[test]
+fn unitless_amount_checks_resolve_only_existing_explicit_correction_scope() {
+    for (input,good,bad) in [
+        ("预算3000，不对，是3500。","预算3500。","预算3000。"),
+        ("预算3000，不对，是3500元。","预算3500元。","预算3000元。"),
+        ("价格三千，我说错了，是3500。","价格3500。","价格3000。"),
+    ] {
+        assert!(admitted(&[input],good),"{input} -> {good}");assert!(!admitted(&[input],bad),"{input} -> {bad}");
+    }
+    assert!(!admitted(&["甲预算3000，乙预算5000，我说错了，是3500。"],"甲预算3000，乙预算3500。"));
+    // Generic scalars/counts deliberately remain outside this finite admission
+    // check. Its pass is still not a semantic equivalence or owner proof.
+    assert!(admitted(&["这个编号3000。"],"这个编号999。"));
+    assert!(admitted(&["做一个工具。"],"做两个工具。"));
+}
+
+#[test]
 fn english_measurements_after_words_keep_value_and_unit_checks() {
     for (source, changed) in [
         ("The budget is 30 dollars.", "The budget is 40 dollars."),

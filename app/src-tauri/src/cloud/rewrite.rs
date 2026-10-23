@@ -87,6 +87,7 @@ pub mod scene_layout;
 #[path="rewrite_writing_context.rs"]
 pub mod writing_context;
 pub use manual_candidate::{ManualCandidate, ManualReviewIssue, rewrite_manual_candidate};
+pub(crate) use manual_candidate::rewrite_manual_candidate_with_writing_context;
 
 // Identifies the task contract independently of the selected provider/model.
 // Keep it in experiment receipts so prompt changes are not confused with a
