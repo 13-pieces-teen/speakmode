@@ -1,6 +1,6 @@
 //! Qwen wire adapter: final order is based on capture metadata/previous-item chain,
 //! never on completion arrival. Partial revisions are for display only.
-use super::{CloudError, endpoints};
+use super::{CloudError, asr_endpoint};
 use crate::core::{DictionarySnapshot, ProviderConfig, SourceItem};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use futures_util::{SinkExt, StreamExt};
@@ -336,7 +336,10 @@ fn session_update(language:&str,dictionary:&DictionarySnapshot)->Result<Value,Cl
 }
 
 pub async fn run(config:ProviderConfig, secret:String, language:String, dictionary:DictionarySnapshot, attempt:String, audio:mpsc::Receiver<AsrInput>, cancel:CancellationToken, callback:Arc<dyn Fn(AsrProgress)+Send+Sync>)->Result<Vec<SourceItem>,CloudError> {
-    let url=endpoints(&config)?.asr;
+    let url=asr_endpoint(&config)?;
+    if super::models::validate_recognition(&config,&language)?.protocol==super::models::AsrProtocol::GoogleTranscription {
+        return super::asr_google::run_at(config,secret,language,dictionary,attempt,audio,cancel,callback,url,Duration::from_secs(45)).await;
+    }
     if super::models::validate_recognition(&config,&language)?.protocol==super::models::AsrProtocol::TaskStreaming {
         return super::asr_task::run_at(config,secret,language,dictionary,attempt,audio,cancel,callback,url,Timeouts::default()).await;
     }

@@ -781,7 +781,13 @@ fn maintenance_entry()->Option<i32>{
                     let connection=rusqlite::Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(std::io::Error::other)?;
                     let encoded:String=connection.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|r|r.get(0)).map_err(std::io::Error::other)?;
                     let config:crate::core::ProviderConfig=serde_json::from_str(&encoded).map_err(std::io::Error::other)?;
-                    if config.region.is_some(){crate::cloud::credentials::delete(&config).map_err(|_|std::io::Error::other("current cloud credential cleanup incomplete"))?;}
+                    use crate::cloud::credentials::{self,CredentialStage};
+                    for stage in [CredentialStage::Asr,CredentialStage::Rewrite] {
+                        // A never-configured Aliyun stage has no region account.
+                        // Other invalid metadata must fail cleanup visibly.
+                        let unconfigured=stage.provider(&config)=="aliyun"&&config.region.is_none();
+                        if !unconfigured {credentials::delete_for(&config,stage).map_err(|_|std::io::Error::other("current cloud credential cleanup incomplete"))?;}
+                    }
                 }
             }
             if options.delete_data{crate::maintenance::delete_data(&directory,&directory)?;}

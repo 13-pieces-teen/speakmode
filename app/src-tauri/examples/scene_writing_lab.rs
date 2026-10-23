@@ -1,4 +1,5 @@
 //! Bounded three-arm text experiment. No app capture, audio, history or delivery.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use speakmode_lib::{cloud::{self, rewrite::{self, scene}}, core::{BaseMode, ModeSnapshot, ProviderConfig, SourceItem, SourceRevision}};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -23,7 +24,7 @@ fn config(path: &str) -> anyhow::Result<ProviderConfig> {
     let raw: String = db.query_row("SELECT data FROM provider_config WHERE singleton=1", [], |r| r.get(0))?;
     anyhow::ensure!(raw.len() <= 16 * 1024, "config too large");
     let config: ProviderConfig = serde_json::from_str(&raw)?;
-    cloud::endpoints(&config)?;
+    lab_provider_scope::rewrite_endpoint(&config)?;
     anyhow::ensure!(config.region.as_deref() == Some("beijing") && config.rewrite_model == "qwen3.8-flash", "experiment requires the frozen Beijing/qwen3.8-flash configuration");
     Ok(config)
 }
@@ -94,7 +95,7 @@ async fn main() -> anyhow::Result<()> {
         output.write_all(serde_json::to_string_pretty(&receipt)?.as_bytes())?; output.flush()?;
         println!("planned: {} cases, {} arms, <= {maximum} requests; no credentials/network", fixture.cases.len(), plan.len()); return Ok(());
     }
-    let secret = cloud::credentials::read(&config)?;
+    let secret = cloud::credentials::read_for(&config, cloud::credentials::CredentialStage::Rewrite)?;
     let mut calls = 0; let mut rows: Vec<Value> = Vec::new(); let mut fatal = false;
     for task in &plan {
         if fatal { rows.push(json!({"caseId":task["caseId"],"arm":task["arm"],"status":"not_run_fatal_provider"})); continue; }

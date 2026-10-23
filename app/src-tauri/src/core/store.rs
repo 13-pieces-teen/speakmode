@@ -275,7 +275,8 @@ impl Store {
         decode(self.connection.query_row("SELECT data FROM provider_config WHERE singleton=1", [], |r| r.get(0))?)
     }
     /// Product upgrades run only during application bootstrap, never when a tool opens Store.
-    /// Keep this additive table on schema v2 so an older application can still open the profile.
+    /// This additive table stays on schema v2. JSON configuration compatibility
+    /// is separate: older binaries may reject newly added provider fields.
     pub(crate) fn apply_app_upgrades(&mut self) -> StoreResult<()> {
         const UPGRADE: &str = "rewrite-model-0.2.11";
         let tx = CheckedTransaction {
@@ -288,7 +289,7 @@ impl Store {
             let (version, data): (u64, String) = tx.query_row("SELECT version,data FROM provider_config WHERE singleton=1", [], |row| Ok((row.get(0)?, row.get(1)?)))?;
             let mut config: ProviderConfig = decode(data)?;
             if config.version != version { return Err(StoreError::Serialization("provider configuration version does not match its row".into())); }
-            if config.provider == "aliyun" && config.region.as_deref() == Some("beijing") && config.rewrite_model == "qwen-flash" {
+            if config.provider == "aliyun" && config.rewrite_provider == "aliyun" && config.region.as_deref() == Some("beijing") && config.rewrite_model == "qwen-flash" {
                 config.rewrite_model = "qwen3.8-flash".into();
                 config.version = version.checked_add(1).ok_or_else(|| invalid("version overflow"))?;
                 tx.execute("UPDATE provider_config SET version=?1,data=?2 WHERE singleton=1", params![i64_checked(config.version)?, json(&config)?])?;
@@ -299,7 +300,12 @@ impl Store {
         tx.commit()
     }
     pub fn save_provider_config(&mut self, mut config: ProviderConfig, expected_version: u64) -> StoreResult<ProviderConfig> {
-        if config.provider != "aliyun" || !matches!(config.region.as_deref(), None | Some("beijing") | Some("singapore")) { return Err(invalid("unsupported provider or region")); }
+        if !matches!(config.provider.as_str(), "aliyun" | "google")
+            || !matches!(config.rewrite_provider.as_str(), "aliyun" | "openai" | "deepseek" | "kimi" | "zhipu" | "custom")
+            || !matches!(config.region.as_deref(), None | Some("beijing") | Some("singapore")) { return Err(invalid("unsupported provider or region")); }
+        if config.rewrite_provider == "custom" {
+            crate::cloud::custom_rewrite_endpoint(config.rewrite_endpoint.as_deref()).map_err(|_|invalid("invalid compatible endpoint"))?;
+        } else if config.rewrite_endpoint.is_some() { return Err(invalid("preset provider cannot override its endpoint")); }
         for value in [&config.asr_model, &config.rewrite_model, &config.adapter_version] { valid_id(value)?; }
         if let Some(workspace) = &config.workspace { valid_id(workspace)?; }
         config.version = expected_version.checked_add(1).ok_or_else(|| invalid("version overflow"))?;

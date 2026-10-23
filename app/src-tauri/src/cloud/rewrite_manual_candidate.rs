@@ -39,7 +39,7 @@ fn annotate(source:&SourceRevision,dictionary:&DictionarySnapshot,mut draft:Rewr
 pub async fn rewrite_manual_candidate(config:&ProviderConfig, secret:&str,
     mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot,
     cancel:CancellationToken)->Result<ManualCandidate,CloudError> {
-    let endpoint=endpoints(config)?.rewrite;
+    let endpoint=rewrite_endpoint(config)?;
     run(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,Duration::from_secs(20)).await
 }
 

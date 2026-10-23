@@ -171,7 +171,7 @@ async fn execute(client: &reqwest::Client, config: &ProviderConfig, secret: &str
 /// Explicit opt-in diagnostic. No credentials/config/history/capture/delivery access.
 pub async fn experiment(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision,
     scene: &SceneSnapshot, wait: Duration) -> Result<Outcome, CloudError> {
-    let endpoint = super::endpoints(config)?.rewrite;
+    let endpoint = super::rewrite_endpoint(config)?;
     Ok(execute(super::shared_client()?, config, secret, mode, source, scene,
         CancellationToken::new(), &endpoint, wait).await)
 }

@@ -10,6 +10,7 @@ use std::{collections::{HashMap,HashSet,VecDeque}, future::Future, pin::Pin, tas
 use sha2::{Digest,Sha256};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use credentials::CredentialStage;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all="camelCase")]
@@ -48,7 +49,29 @@ pub type EventSink=Arc<dyn Fn(AppEvent)+Send+Sync>;
 pub struct CommandRequest {pub name:String,#[serde(default)]pub payload:Value}
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
-pub struct ProviderStatus {pub config:ProviderConfig,pub configured:bool,pub credential_configured:bool,pub status:String,pub message:Option<String>}
+pub struct ProviderStatus {pub config:ProviderConfig,pub configured:bool,pub credential_configured:bool,pub asr_credential_configured:bool,pub rewrite_credential_configured:bool,pub status:String,pub message:Option<String>}
+
+#[derive(Clone, Copy, Default)]
+struct CredentialAvailability { asr: bool, rewrite: bool }
+impl CredentialAvailability {
+    fn read(config: &ProviderConfig) -> Self {
+        Self { asr: credentials::configured_for(config, CredentialStage::Asr).unwrap_or(false),
+            rewrite: credentials::configured_for(config, CredentialStage::Rewrite).unwrap_or(false) }
+    }
+    fn apply(self, inner: &mut Inner) {
+        inner.asr_key_configured = self.asr;
+        inner.rewrite_key_configured = self.rewrite;
+        inner.key_configured = self.asr && self.rewrite;
+    }
+}
+
+fn credential_stage(payload: &Value, config: &ProviderConfig) -> Result<CredentialStage> {
+    let stage = payload.get("stage").cloned().map(parse::<CredentialStage>).transpose()?.unwrap_or_default();
+    if payload.get("providerAccountRef").is_some_and(|value| value.as_str() != Some(stage.provider(config))) {
+        return Err(ApiError::new("credential_account_mismatch", "credentials", "Key 所属供应商与当前设置不一致，请重新核对"));
+    }
+    Ok(stage)
+}
 
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
@@ -107,6 +130,8 @@ pub(crate) struct Inner {
     cancelled_operation_ids:HashSet<String>,
     auxiliary_workers:HashMap<String,CancellationToken>,
     key_configured:bool,
+    asr_key_configured:bool,
+    rewrite_key_configured:bool,
     requests:HashMap<String,Arc<RequestRecord>>,
     request_order:VecDeque<String>,
     settings_pending:Option<String>,
@@ -234,8 +259,8 @@ impl AppHub {
         std::fs::create_dir_all(&data_dir).map_err(|_|ApiError::new("storage_unavailable","storage","无法创建本机数据目录"))?;
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
-        let key_configured=credentials::configured(&config).unwrap_or(false);
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
@@ -273,8 +298,10 @@ impl AppHub {
         if window!="main"{return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
         let config=cache.provider_config;
         let configuration=cloud::endpoints(&config);let valid=configuration.is_ok();
-        let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
-        provider["modelCatalog"]=wire(cloud::models::catalog())?;
+        let model_catalog=cloud::models::catalog_for(&config);
+        let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,asr_credential_configured:i.asr_key_configured,rewrite_credential_configured:i.rewrite_key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
+        provider["modelCatalog"]=wire(model_catalog)?;
+        provider["providerCatalog"]=wire(cloud::models::providers())?;
         Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"onboarding":{"progress":cache.onboarding,"active":i.onboarding.active,"shortcutPresses":i.onboarding.shortcut_presses},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
     }
 
@@ -386,16 +413,17 @@ impl AppHub {
             "provider.configure"=>{
                 let config:ProviderConfig=parse(p.get("config").cloned().unwrap_or(p.clone()))?;cloud::endpoints(&config)?;
                 let expected=p.get("expectedVersion").and_then(Value::as_u64).unwrap_or(config.version);let _reservation=self.reserve_settings()?;
-                let native_config=config.clone();let key=tokio::task::spawn_blocking(move||credentials::configured(&native_config).unwrap_or(false)).await.map_err(|_|ApiError::new("credential_unavailable","credentials","服务配置未完成"))?;
-                let saved=self.db_write(DbCommand::SaveProviderConfig{config,expected_version:expected},self.operation_guard(),DbPriority::Normal).await?;self.inner.lock().unwrap().key_configured=key;db_wire(saved)
+                let native_config=config.clone();let keys=tokio::task::spawn_blocking(move||CredentialAvailability::read(&native_config)).await.map_err(|_|ApiError::new("credential_unavailable","credentials","服务配置未完成"))?;
+                let saved=self.db_write(DbCommand::SaveProviderConfig{config,expected_version:expected},self.operation_guard(),DbPriority::Normal).await?;keys.apply(&mut self.inner.lock().unwrap());db_wire(saved)
             },
-            "credential.status"=>Ok(json!({"configured":self.inner.lock().unwrap().key_configured})),
+            "credential.status"=>{let i=self.inner.lock().unwrap();Ok(json!({"configured":i.key_configured,"asrCredentialConfigured":i.asr_key_configured,"rewriteCredentialConfigured":i.rewrite_key_configured}))},
             "credential.set"|"credential.delete"=>{
                 let _reservation=self.reserve_settings()?;let config=self.db.snapshot().provider_config;
                 if number(&p,"expectedProviderVersion")?!=config.version{return Err(ApiError::new("revisionConflict","credentials","服务配置已变化，请重新核对 Key 所属地域与空间"));}
+                let stage=credential_stage(&p,&config)?;
                 let delete=request.name=="credential.delete";let secret=if delete{None}else{Some(text(&p,"secret")?.to_owned())};let hub=Arc::clone(self);
-                tokio::task::spawn_blocking(move||{let _io=hub.settings_io.lock().unwrap();if let Some(secret)=secret{credentials::set(&config,&secret)}else{credentials::delete(&config)}}).await.map_err(|_|ApiError::new("credential_unavailable","credentials","Key 操作未完成"))??;
-                self.inner.lock().unwrap().key_configured=!delete;Ok(json!({"configured":!delete}))
+                let keys=tokio::task::spawn_blocking(move||{let _io=hub.settings_io.lock().unwrap();if let Some(secret)=secret{credentials::set_for(&config,stage,&secret)?;}else{credentials::delete_for(&config,stage)?;}Ok::<_,CloudError>(CredentialAvailability::read(&config))}).await.map_err(|_|ApiError::new("credential_unavailable","credentials","Key 操作未完成"))??;
+                keys.apply(&mut self.inner.lock().unwrap());Ok(json!({"configured":keys.asr&&keys.rewrite,"asrCredentialConfigured":keys.asr,"rewriteCredentialConfigured":keys.rewrite}))
             },
             "audio.listDevices"=>wire(platform::audio::enumerate_inputs()?),
             "history.list"=>db_wire(self.db_read(DbCommand::HistoryList{query:p.get("query").and_then(Value::as_str).unwrap_or("").into(),cursor:p.get("cursor").and_then(Value::as_u64).unwrap_or(0),limit:p.get("limit").and_then(Value::as_u64).unwrap_or(20)}).await?),
@@ -625,8 +653,8 @@ impl AppHub {
         let (config,dictionary,epoch)={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut i,&operation)?;let (config,dictionary)=self.auxiliary_rewrite_snapshot();(config,dictionary,self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
         let source=self.load_preview_source(source_input,&key).await?;
         rewrite::validate_source(&source.revision)?;
-        cloud::endpoints(&config)?;
-        let secret=credentials::read(&config)?;
+        cloud::rewrite_endpoint(&config)?;
+        let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
         self.validate_preview_source(&source).await?;
         let lease=self.reserve_preview(&key,&source,cancel.clone(),epoch)?;
         let preview_mode=mode.clone().unwrap_or(ModeSnapshot{mode_id:"light".into(),name:"轻整理".into(),base_mode:BaseMode::Light,rules:String::new(),revision:1});
@@ -662,8 +690,8 @@ impl AppHub {
             rewrite::confirmed_candidate::validate(context,&detail.source)?;
         }
         let (config,dictionary)=self.auxiliary_rewrite_snapshot();
-        cloud::endpoints(&config)?;
-        let secret=credentials::read(&config)?;
+        cloud::rewrite_endpoint(&config)?;
+        let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
         let cancel=CancellationToken::new();
         let current=db_detail(self.db_read(DbCommand::GetResult{session_id:id.clone()}).await?)?;
         let lease={let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;

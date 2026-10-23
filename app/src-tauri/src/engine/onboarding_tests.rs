@@ -11,7 +11,7 @@ async fn onboarding_live_document_probe() {
     let connection=rusqlite::Connection::open_with_flags(config_path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let config_json:String=connection.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|r|r.get(0)).unwrap();
     let config:ProviderConfig=serde_json::from_str(&config_json).unwrap();
-    let secret=credentials::read(&config).expect("configured native credential required");
+    let secret=credentials::read_for(&config,CredentialStage::Rewrite).expect("configured native rewrite credential required");
     let h=hub();install(&h,"practice-probe",SessionPhase::FinalizingAsr,true);
     let mode=h.db.mode_snapshot("document",None).unwrap();
     {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.onboarding_lesson=Some(OnboardingLesson::Document);s.prefs.delivery_mode=DeliveryMode::Preview;s.mode=mode;s.config=config.clone();}
@@ -20,7 +20,7 @@ async fn onboarding_live_document_probe() {
     h.checkpoint("practice-probe",7,frozen.clone()).unwrap();
     let began=Instant::now();h.finish_rewrite("practice-probe".into(),7,secret).await;
     let detail=h.db.get_result("practice-probe").unwrap();
-    let receipt=json!({"scope":"one fixed onboarding text; live configured rewrite and review; no audio, clipboard or host input","provider":config.provider,"model":config.rewrite_model,"elapsedMs":began.elapsed().as_millis(),"sourceUnchanged":detail.source==frozen,"output":detail.output});
+    let receipt=json!({"scope":"one fixed onboarding text; live configured rewrite and review; no audio, clipboard or host input","provider":config.rewrite_provider,"model":config.rewrite_model,"elapsedMs":began.elapsed().as_millis(),"sourceUnchanged":detail.source==frozen,"output":detail.output});
     serde_json::to_writer_pretty(file,&receipt).unwrap();
     assert!(detail.output.as_ref().is_some_and(|o|o.rewrite_fallback.is_none()),"live rewrite did not produce a reviewed output; see receipt");
     assert_eq!(detail.source,frozen);assert_eq!(usage_count(&h),1);

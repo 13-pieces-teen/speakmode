@@ -74,13 +74,13 @@ pub fn tense_changed(context:&ConfirmedContext,source:&SourceRevision,text:&str)
 
 pub async fn generate(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken)->Result<ManualCandidate,CloudError> {
-    let endpoint=endpoints(config)?.rewrite;
+    let endpoint=rewrite_endpoint(config)?;
     run(shared_client()?,config,secret,mode,source,dictionary,context,cancel,&endpoint,Duration::from_secs(20)).await.result
 }
 
 /// Explicit text experiment, sharing the exact history-candidate path.
 pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,context:&ConfirmedContext)->Result<Outcome,CloudError> {
-    let endpoint=endpoints(config)?.rewrite;
+    let endpoint=rewrite_endpoint(config)?;
     Ok(run(shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),context,CancellationToken::new(),&endpoint,Duration::from_secs(20)).await)
 }
 

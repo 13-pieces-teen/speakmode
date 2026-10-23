@@ -100,7 +100,7 @@ export function OnboardingFlow({state}:{state:OnboardingState}) {
           <h1 ref={heading} id="ob-heading" tabIndex={-1}>{label.title}</h1>
           <p className="ob-description">{label.description}</p>
           {step === 'welcome' && <div className="ob-promises"><span><KeyboardIcon/>一个快捷键</span><span><ChatBubbleIcon/>两次真实练习</span><span><LockClosedIcon/>由你掌控</span></div>}
-          {step === 'setup' && <div className="ob-setup-notes"><p><LockClosedIcon/>Key 仅保存在系统凭据保管库。</p><p>录音会发送到你配置的语音识别服务；识别文字会发送给整理模型。练习不采集其他应用的输入框上下文。</p><p>练习同样计入口述统计，文字遵循你的历史保存设置。</p></div>}
+          {step === 'setup' && <div className="ob-setup-notes"><p><LockClosedIcon/>Key 仅保存在系统凭据保管库。</p><p>识别与整理可以选择不同供应商。录音发送给识别服务，识别文字发送给整理服务；练习不采集其他应用的输入框上下文。</p><p>练习同样计入口述统计，文字遵循你的历史保存设置。</p></div>}
           {step === 'shortcut' && <div className="ob-shortcut-config"><ShortcutEditor value={shortcutLabel(desktop.preferences.shortcut)} disabled={busy} onChange={async (value,captureId) => {await desktop.command('preferences.update',{patch:{shortcut:shortcutCanonical(value)},expectedVersion:desktop.preferences.version,captureId});await desktop.refresh();}}/><p>如果按键没有反应，可以换一个快捷键；也可以先用录音按钮体验。</p></div>}
           {lesson && <Source>{sourceText}</Source>}
           {lesson && <p className="ob-lesson-note">本次练习使用「{lesson === 'chat' ? '聊天消息' : '文档写作'}」，结果留在右侧。日常使用仍采用你保存的设置。</p>}

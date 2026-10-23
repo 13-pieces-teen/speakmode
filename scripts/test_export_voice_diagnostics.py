@@ -31,6 +31,17 @@ def fixture():
 
 
 class ExportBoundaries(unittest.TestCase):
+    def test_provider_metadata_keeps_known_ids_and_redacts_custom_model_or_endpoint(self):
+        raw = fixture()
+        raw["traces"][0].update(provider="google", asrModel="gemini-3.5-transcribe", rewriteProvider="custom", rewriteModel="PRIVATE_SENTINEL", rewriteEndpoint="PRIVATE_SENTINEL")
+        clean = module.filter_snapshot(raw)
+        row = clean["traces"][0]
+        self.assertEqual(row["provider"], "google")
+        self.assertEqual(row["rewriteProvider"], "custom")
+        self.assertEqual(row["asrModel"], "gemini-3.5-transcribe")
+        self.assertIsNone(row["rewriteModel"])
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(clean))
+
     def test_request_timings_export_only_bounded_metadata(self):
         raw = dict(stage="generation", startMs=100, endMs=300, durationMs=200,
                    remainingBudgetMs=4999, outcome="responseReceived", prompt="PRIVATE_SENTINEL",

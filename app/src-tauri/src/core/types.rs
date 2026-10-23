@@ -69,7 +69,8 @@ impl Default for Preferences {
     }
 }
 
-/// No URL or secret fields: endpoints are constructed by the provider adapter.
+/// Credentials stay in native key storage. Only the explicit compatible provider
+/// accepts a user endpoint; preset endpoints are constructed by their adapters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderConfig {
@@ -79,15 +80,21 @@ pub struct ProviderConfig {
     pub workspace: Option<String>,
     pub asr_model: String,
     pub rewrite_model: String,
+    #[serde(default = "default_rewrite_provider")]
+    pub rewrite_provider: String,
+    #[serde(default)]
+    pub rewrite_endpoint: Option<String>,
     pub adapter_version: String,
 }
 impl Default for ProviderConfig {
     fn default() -> Self {
         Self { version: 1, provider: "aliyun".into(), region: None, workspace: None,
             asr_model: "qwen3-asr-flash-realtime".into(), rewrite_model: "qwen3.8-flash".into(),
+            rewrite_provider: default_rewrite_provider(), rewrite_endpoint: None,
             adapter_version: "qwen-realtime-v1".into() }
     }
 }
+fn default_rewrite_provider() -> String { "aliyun".into() }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

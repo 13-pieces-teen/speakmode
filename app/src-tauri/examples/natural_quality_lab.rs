@@ -3,6 +3,7 @@
 //! No history/audio reads, configuration writes, clipboard or native input.
 #![recursion_limit = "256"]
 
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use chrono::Utc;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -49,7 +50,7 @@ fn read_config(path: &Path) -> Result<ProviderConfig, CloudError> {
     if text.len() > 16 * 1024 { return Err(error("config_invalid", "云端配置超过容量限制")); }
     let config: ProviderConfig = serde_json::from_str(&text).map_err(|_| error("config_invalid", "云端配置格式无效"))?;
     // Existing endpoint validation permits only the configured official provider.
-    cloud::endpoints(&config)?;
+    lab_provider_scope::rewrite_endpoint(&config)?;
     Ok(config)
 }
 
@@ -113,7 +114,7 @@ fn plan(fixture: &Value, split: Split, config: &ProviderConfig) -> Result<Vec<Pl
     // model. The configured value remains recorded and is never overwritten.
     let mut experiment_config = config.clone();
     experiment_config.rewrite_model = "qwen3.8-flash".into();
-    cloud::endpoints(&experiment_config)?;
+    lab_provider_scope::rewrite_endpoint(&experiment_config)?;
     if split != Split::User && *fixture != self::fixture(split, None)?.0 {
         return Err(error("fixture_invalid", "不能替换冻结语料"));
     }
@@ -173,7 +174,7 @@ impl Evidence {
 
 async fn request(client: &reqwest::Client, config: &ProviderConfig, secret: &str, body: &Value) -> Result<Value, CloudError> {
     let operation = async {
-        let mut request = client.post(cloud::endpoints(config)?.rewrite).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
+        let mut request = client.post(lab_provider_scope::rewrite_endpoint(config)?).bearer_auth(secret).json(body).timeout(Duration::from_secs(20));
         if let Some(workspace) = config.workspace.as_deref().filter(|workspace| !workspace.is_empty()) {
             request = request.header("X-DashScope-WorkSpace", workspace);
         }
@@ -291,7 +292,7 @@ async fn run(config_path: &Path, out: &Path, split: Split, plan_only: bool, priv
     // Durable preregistration before any credential access or network request.
     evidence.write(&json!({"kind":"preregistration","receipt":receipt}), &receipt)?;
     if plan_only { println!("planned_only: {} {} calls; no credential access or network", split.name(), split.maximum_calls()); return Ok(()); }
-    let secret = match cloud::credentials::read(&config) {
+    let secret = match cloud::credentials::read_for(&config, cloud::credentials::CredentialStage::Rewrite) {
         Ok(secret) => secret,
         Err(failure) => {
             receipt["status"] = json!("halted"); receipt["error"] = safe(&failure);

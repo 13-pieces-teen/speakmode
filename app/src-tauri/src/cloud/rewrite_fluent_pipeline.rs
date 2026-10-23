@@ -38,10 +38,11 @@ fn admission_error(error: CloudError) -> CloudError {
 pub(super) async fn request_content(client: &Client, config: &ProviderConfig, secret: &str,
     endpoint: &str, body: &Value, cancel: &CancellationToken, deadline: Instant) -> Result<String, CloudError> {
     checkpoint(cancel, deadline)?;
+    let body = super::chat_request::for_provider(config, body)?;
     // The caller supplies its existing no-redirect client and allowlisted endpoint.
     let mut request = client.post(endpoint).timeout(deadline.saturating_duration_since(Instant::now()))
-        .bearer_auth(secret).json(body);
-    if let Some(workspace) = config.workspace.as_deref().filter(|value| !value.is_empty()) {
+        .bearer_auth(secret).json(&body);
+    if let Some(workspace) = config.workspace.as_deref().filter(|value| config.rewrite_provider == "aliyun" && !value.is_empty()) {
         request = request.header("X-DashScope-WorkSpace", workspace);
     }
     let mut response = request.send().await.map_err(transport_error)?;
@@ -64,7 +65,11 @@ pub(super) async fn request_content(client: &Client, config: &ProviderConfig, se
     if data.pointer("/choices/0/finish_reason").and_then(Value::as_str) != Some("stop") {
         return Err(CloudError::new("truncated_output", "rewrite", "整理响应未完整结束"));
     }
+    if data.pointer("/choices/0/message/refusal").is_some_and(|value| !value.is_null()) {
+        return Err(CloudError::new("rewrite_refused", "rewrite", "整理服务未能处理此内容，识别稿仍保留"));
+    }
     data.pointer("/choices/0/message/content").and_then(Value::as_str).map(str::to_owned)
+        .filter(|content| !content.trim().is_empty())
         .ok_or_else(|| CloudError::new("empty_output", "rewrite", "整理响应为空"))
 }
 

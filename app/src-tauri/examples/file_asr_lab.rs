@@ -1,6 +1,7 @@
 //! Opt-in file recovery experiment. No UI, database writes, auto retry or delivery.
 //! file_asr_lab --wav ABS --config-db ABS --out ABS [--language auto|zh|en]
 //! The receipt includes test transcription and stays in the explicit local output.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use base64::{Engine as _,engine::general_purpose::STANDARD};
 use chrono::Utc;
 use rusqlite::{Connection,OpenFlags};
@@ -87,7 +88,7 @@ async fn run()->Result<(),CloudError>{
     let connection=Connection::open_with_flags(db,OpenFlags::SQLITE_OPEN_READ_ONLY|OpenFlags::SQLITE_OPEN_NO_MUTEX).map_err(|_|error("config_unavailable"))?;
     let raw:String=connection.query_row("SELECT data FROM provider_config WHERE singleton=1",[],|row|row.get(0)).map_err(|_|error("config_unavailable"))?;
     let config:ProviderConfig=serde_json::from_str(&raw).map_err(|_|error("invalid_config"))?;drop(connection);
-    let endpoint=cloud::endpoints(&config)?.rewrite;
+    let endpoint=lab_provider_scope::file_asr_endpoint(&config)?;
     let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().map_err(|_|error("network_setup"))?;
     // Claim an immutable receipt before credential access or any network request.
     let mut output=OpenOptions::new().write(true).create_new(true).open(&out).map_err(|_|error("output_unavailable"))?;

@@ -1,5 +1,6 @@
 //! Two explicitly preregistered NEW synthetic requests, never an automatic r1 retry.
 //! Preserve rejected synthetic output to diagnose the production source mapping guard.
+#[path="lab_provider_scope/mod.rs"] mod lab_provider_scope;
 use chrono::Utc;
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Value, json};
@@ -22,7 +23,7 @@ fn config(path: &Path) -> Result<ProviderConfig, CloudError> {
         .map_err(|_| error("config_unavailable", "数据库中没有有效云端配置"))?;
     if text.len() > 16 * 1024 { return Err(error("config_invalid", "云端配置超过容量限制")); }
     let config: ProviderConfig = serde_json::from_str(&text).map_err(|_| error("config_invalid", "云端配置格式无效"))?;
-    cloud::endpoints(&config)?; Ok(config)
+    lab_provider_scope::rewrite_endpoint(&config)?; Ok(config)
 }
 fn source(path: &Path, run_id: &str) -> Result<(SourceRevision, String, String), CloudError> {
     absolute(path)?;
@@ -113,7 +114,7 @@ fn missing_refs(content: &str, source: &SourceRevision) -> Value {
 }
 async fn request(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, client: &reqwest::Client) -> Result<(String, Option<String>), CloudError> {
     let body = cloud::rewrite::request_body(config, mode, source)?;
-    let endpoint = cloud::endpoints(config)?.rewrite;
+    let endpoint = lab_provider_scope::rewrite_endpoint(config)?;
     let operation = async {
         let mut request = client.post(endpoint).timeout(Duration::from_secs(20)).bearer_auth(secret).json(&body);
         if let Some(workspace) = config.workspace.as_deref().filter(|value| !value.is_empty()) { request = request.header("X-DashScope-WorkSpace", workspace); }
@@ -170,7 +171,7 @@ async fn execute(source: SourceRevision, receipt_hash: String, fixture_hash: Str
         "configuration":{"region":config.region,"asrModel":config.asr_model,"rewriteModel":config.rewrite_model,"adapterVersion":config.adapter_version},
         "status":"running","results":[],"note":"Only successful HTTP message.content from this fixed synthetic source is retained; this is a new diagnostic experiment, not a repaired r1 result."});
     evidence.append(&json!({"kind":"header","metadata":receipt}))?; evidence.checkpoint(&receipt)?;
-    let secret = match cloud::credentials::read(&config) {
+    let secret = match cloud::credentials::read_for(&config, cloud::credentials::CredentialStage::Rewrite) {
         Ok(secret) => secret,
         Err(failure) => {
             receipt["status"] = json!("halted"); receipt["error"] = safe(&failure);
