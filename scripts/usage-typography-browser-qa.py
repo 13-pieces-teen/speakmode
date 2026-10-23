@@ -180,7 +180,7 @@ def main():
                 empty_today["totalUsage"]={"count":7,"sourceCharCount":1427,"captureDurationMs":212000}
                 def zero_day(page):
                     section=await_today(page,"0","0")
-                    expect(section).to_contain_text("今天还没有完成的口述")
+                    expect(section.locator(".usage-read-status")).to_have_text("今日暂无口述")
                     assert page.locator(".recent-item").count()==2
                     section.get_by_role("button",name="累计",exact=True).click()
                     section=page.get_by_role("region",name="累计概览",exact=True)
@@ -193,7 +193,7 @@ def main():
                 def pending(page):
                     section=page.get_by_role("region",name="今日概览",exact=True)
                     expect(section).to_have_attribute("aria-busy","true")
-                    expect(section).to_contain_text("正在读取已保存的用量")
+                    expect(section.locator(".usage-read-status")).to_have_text("正在读取…")
                     assert all("—" in v and "0" not in v for v in usage_metrics(page)),usage_metrics(page)
                     page.screenshot(path=str(args.out/"usage-initial-loading.png"))
                     page.evaluate("window.__speakmodeQA.usageMode='ready';window.__speakmodeQA.pendingUsage.splice(0).forEach(p=>p.resolve(p.value))")
@@ -204,7 +204,7 @@ def main():
                 failed=fixture();failed["usageMode"]="fail"
                 def failed_retry(page):
                     section=page.get_by_role("region",name="今日概览",exact=True)
-                    expect(section).to_contain_text("用量暂时未读到")
+                    expect(section.locator(".usage-read-status")).to_contain_text("读取失败")
                     assert all("—" in v for v in usage_metrics(page)),usage_metrics(page)
                     page.screenshot(path=str(args.out/"usage-initial-failure.png"))
                     page.evaluate("window.__speakmodeQA.usageMode='ready'")
@@ -217,7 +217,7 @@ def main():
                     section=await_today(page)
                     before=usage_metrics(page)
                     page.evaluate("window.__speakmodeQA.usageMode='fail';window.dispatchEvent(new Event('focus'))")
-                    expect(section).to_contain_text("更新失败，显示上次读取的用量")
+                    expect(section.locator(".usage-read-status")).to_contain_text("更新失败 · 旧值")
                     assert usage_metrics(page)==before
                     page.evaluate("window.__speakmodeQA.usageMode='ready'")
                     section.get_by_role("button",name="重新读取",exact=True).click()
@@ -283,7 +283,7 @@ def main():
                     expect(section).to_have_attribute("aria-busy","true")
                     page.clock.set_system_time(datetime.fromisoformat("2026-10-10T00:00:00+00:00"))
                     page.evaluate("window.__speakmodeQA.pendingUsage.splice(0).forEach(p=>p.resolve(p.value))")
-                    expect(section).to_contain_text("用量暂时未读到")
+                    expect(section.locator(".usage-read-status")).to_contain_text("读取失败")
                     expect(section).to_contain_text("2026 年 10 月 10 日")
                     assert all("—" in v for v in usage_metrics(page)),usage_metrics(page)
                     page.evaluate("const qa=window.__speakmodeQA;qa.usageMode='ready';qa.fixture.snapshot.usage={date:'2026-10-10',count:0,sourceCharCount:0,captureDurationMs:0}")
