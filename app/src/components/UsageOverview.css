@@ -5,10 +5,12 @@
 .usage-overview .usage-period p { margin: 3px 0 0; color: var(--sm-muted); font-size: 12px; line-height: 18px; }
 .usage-overview .usage-range { grid-column: 2; grid-row: 1; }
 .usage-overview .usage-metrics { grid-column: 1 / -1; grid-row: 2; gap: 12px; }
-.usage-overview .usage-metric { min-height: 94px; padding: 16px 20px; border: 0; border-radius: 20px; background: var(--sm-paper); }
-.usage-overview .usage-metric strong { max-width: 100%; color: var(--sm-ink); font-size: 32px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.usage-overview .usage-metric { --usage-value-size: 32px; container-type: inline-size; min-height: 94px; padding: 16px 20px; border: 0; border-radius: 20px; background: var(--sm-paper); }
+/* A nonzero global reduced-motion duration must not animate a value's fitted font size. */
+.usage-overview .usage-metric strong { max-width: 100%; color: var(--sm-ink); font-size: clamp(18px, calc((100cqi - var(--usage-unit-space, 18px)) / var(--usage-number-width)), var(--usage-value-size)); font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; transition-property: none; }
 .usage-overview .usage-metric dt { margin-top: 6px; color: var(--sm-muted); font-size: 13px; line-height: 20px; }
-.usage-overview .usage-metric dd { gap: 2px 5px; }
+.usage-overview .usage-metric dd { min-height: calc(var(--usage-value-size) * 1.2); gap: 2px 5px; line-height: 1.2; }
+.usage-overview .usage-duration { --usage-unit-space: 41px; }
 .usage-overview .usage-metric dd span { color: var(--sm-secondary); font-size: 13px; }
 .usage-info { grid-column: 3; grid-row: 1; align-self: center; }
 .usage-info summary { display: grid; place-items: center; width: 28px; height: 32px; border-radius: 8px; list-style: none; cursor: pointer; color: var(--sm-muted); }
@@ -18,18 +20,16 @@
 .usage-info[open] { display: contents; }
 .usage-info[open] summary { grid-column: 3; grid-row: 1; align-self: center; color: var(--sm-accent); }
 .usage-info p { grid-column: 1 / -1; grid-row: 3; margin: 0; padding: 10px 14px; background: var(--sm-canvas); border-radius: 10px; color: var(--sm-secondary); font-size: 12px; line-height: 1.8; }
-.usage-read-status { grid-column: 1 / -1; min-width: 0; font-size: 12px; line-height: 1.6; color: var(--sm-muted); }
-.usage-read-status:empty { display: none; }
+/* Reuse the subtitle line so reads, errors and empty days never add a grid row. */
+.usage-overview .usage-read-status { min-height: 18px; }
 .usage-read-status button { margin-left: 8px; padding: 0; border: 0; background: transparent; color: var(--sm-accent); font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 800px) {
-  .usage-overview .usage-metric, .usage-overview .usage-metric:first-child { padding: 16px; }
-  .usage-overview .usage-metric strong { font-size: 28px; }
+  .usage-overview .usage-metric, .usage-overview .usage-metric:first-child { --usage-value-size: 28px; padding: 16px; }
 }
 @media (max-width: 520px) {
   .home-page .usage-overview { margin-bottom: 20px; }
   .usage-overview .usage-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
   .usage-overview .usage-metric { min-height: 88px; border-radius: 16px; }
   .usage-overview .usage-metric:last-child { grid-column: 1 / -1; }
-  .usage-overview .usage-metric strong { font-size: 28px; }
 }
 @media (hover: hover) { .usage-info summary:hover { color: var(--sm-accent); background: var(--sm-hover); } }
