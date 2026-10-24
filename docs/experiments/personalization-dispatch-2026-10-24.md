@@ -46,4 +46,15 @@
 
 完整 Rust 执行通过后，构建脚本因缓存达到 12.052 GiB 而返回预算错误，不能称该次脚本整体成功。检查并按精确路径手动删除 8 个过时的本项目 debug 文件，释放 632,834,113 字节；保留最新 0.2.32 测试程序、源码、依赖、既有发布制品和日志，没有递归删除。收据为 `output/personalization-dispatch-cache-cleanup.json`。打包前重新执行预算检查；未提高原 12 GiB 上限。
 
+## 0.2.32 候选制品
+
+`output/releases/0.2.32-personalization-2026-10-24-r1/`：
+
+| 文件 | 字节数 | SHA256 |
+| --- | --- | --- |
+| SpeakMode_0.2.32_x64-setup.exe | 15,154,693 | F8C1A09F1A0C397B26F9F25AE1669B7433911720178F44669CC3436CA491DD4B |
+| SpeakMode.exe | 28,931,072 | F29A2E86F90D3CC06F8DC48F5721F2F5936256282EA28EF38FC50BA7BDD5C4EC |
+
+`artifacts.json` 绑定源码 commit `e12af44fbb7c031a4a132d9f98fc9800a9a58bb1`、app tree `0ea130fcf94fed09fa67560a24b042b9b02b146b`。`output/personalization-package-dispatch-0.2.32.log` 确认 TypeScript/Vite、MSVC release 与 NSIS 成功，退出 0，缓存 11.870 GiB，低于 12 GiB 上限。EXE 产品版本 0.2.32，复制后源／目标逐文件 SHA256 一致，未安装或启动。原 r4 制品和试用说明另存保留，六任务说明已注明 schema 5 兼容边界。
+
 模型复核误拒和六个真实录音任务仍待验收，PR 保持 Draft。
