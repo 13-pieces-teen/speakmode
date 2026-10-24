@@ -72,7 +72,7 @@ r4 的 `artifacts.json` 绑定源码 commit `88c5d4e3ef4fe9ac2808b6f4670cc82533e
 
 源代码审阅：[Draft PR #26](https://github.com/13-pieces-teen/speakmode/pull/26)。工程就绪与真实质量验收分别跟踪，不据此合并或安装。
 
-最新候选为 0.2.32 r1，完成选择／发送证据分离及统计故障处理；制品 SHA256、源码绑定与验证见 [请求统计记录](personalization-dispatch-2026-10-24.md)。其 schema 5 升级后旧程序无法打开数据库。以上 0.2.31 记录与制品保留为历史证据，不能冒充新版本语音质量结论。
+0.2.32 r1 完成选择／发送证据分离及统计故障处理，制品 SHA256、源码绑定与验证见 [请求统计记录](personalization-dispatch-2026-10-24.md)。最新 r2 修正旧模式的基础组路径；完整 1038 项回归、制品绑定及在 1 次无效响应后停止的分离复核实验见 [路由与复核记录](personalization-separated-review-2026-10-24.md)。schema 5 升级后旧程序无法打开数据库。以上历史制品保留，不能冒充新版本语音质量结论。
 
 ## 本轮发现并修复的问题
 

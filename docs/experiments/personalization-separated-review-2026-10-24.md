@@ -57,3 +57,16 @@
 本轮清理仅限已检查的过时 0.2.31 debug library 两个文件，释放 164,634,176 字节，收据为 `output/personalization-separated-cache-cleanup.json`；保留当前 0.2.32、既有发布制品、来源和日志，没有递归删除。
 
 模型误拒、普通生产期限下的收益、真实录音及六任务结果仍未完成。基础组路由修复是实际行为修正，分离复核仍只是未获效果证明的显式实验。
+
+## 修复版候选 r2
+
+`output/releases/0.2.32-personalization-2026-10-24-r2/`：
+
+| 文件 | 字节数 | SHA256 |
+| --- | --- | --- |
+| SpeakMode_0.2.32_x64-setup.exe | 15,155,568 | DD298EB9100178E87D45C10A4746620DEA2B3CB5C0D1B4699C3B20D00ACA7685 |
+| SpeakMode.exe | 28,932,608 | BF64180224B50B0C7C0C441EA24EA81EB96C4947CBB367E2C6BD76B63C97CB36 |
+
+manifest 绑定源码 commit `4fcd728089bf03f6fc6d172396039033dc8b4613`、app tree `45de20cb29832cca1265eadd7f7061ff1ae64bef`。`output/personalization-package-routing-0.2.32-r2.log` 确认前端、MSVC release、NSIS 完成，退出 0、缓存 11.798 GiB、无预算违规。EXE 产品版本 0.2.32，复制后逐文件哈希一致。未安装或启动，默认复核器未改变。
+
+版本仍为桌面 0.2.32／前端 0.4.29／schema 5。首次运行的数据库兼容边界与 r1 相同：旧版不能打开已升级数据库。原 r1 制品及试用说明保留，六任务说明改指 r2；已有任务不要求重录。
