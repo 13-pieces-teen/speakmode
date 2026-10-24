@@ -74,7 +74,7 @@ pub(super) fn hub() -> Arc<AppHub> {
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, asr_key_configured:false, rewrite_key_configured:false, requests: Default::default(),
             request_order: Default::default(),settings_pending:None,
         }),
-        db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
+        db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),personalization_statistics_incomplete:AtomicBool::new(false),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
         subscribers: Mutex::new(HashMap::new()), publication: Mutex::new(()),
         data_dir: test_data_directory(),
         hooks: Mutex::new(None), native_actions: Mutex::new(None), recorder_control: Mutex::new(None), stop_target_control: Mutex::new(None), native_io: Mutex::new(()),

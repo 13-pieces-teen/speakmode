@@ -63,9 +63,12 @@ EXTENSION = r"""
    if(name==='personalization.cancel'){if(payload.operationId!==window.__speakmodeQA.compareOperation)throw new Error('Wrong cancellation identity');window.__speakmodeQA.cancelled=true;return null;}
    if(name==='personalization.feedback'){if(Object.keys(payload).sort().join(',')!=='comparisonId,requestId,verdict')throw new Error('Unexpected feedback payload');window.__speakmodeQA.verdict=payload.verdict;return null;}
    if(name==='personalization.stats'){
+    if(window.__speakmodeQA.deferStats){window.__speakmodeQA.statsPending=true;await new Promise(resolve=>{window.__speakmodeQA.releaseStats=resolve;});window.__speakmodeQA.statsPending=false;}
+    if(window.__speakmodeQA.statsIncomplete)throw {code:'invalidState',messageKey:'personalization_statistics_incomplete'};
     if(window.__speakmodeQA.statsError)throw new Error('合成统计读取失败');
+    if(fixture.stats)return {...copy(fixture.stats),window:payload.window,since:payload.window==='week'?'2026-10-16':null};
     const result=window.__speakmodeQA.result,valid=result?.valid?1:0,verdict=window.__speakmodeQA.verdict;
-    return {window:payload.window,since:payload.window==='week'?'2026-10-16':null,normal:{total:0,personalized:0},preview:{total:0,personalized:0},
+    return {window:payload.window,since:payload.window==='week'?'2026-10-16':null,normal:{total:0,personalized:0,selected:0,legacyUnknown:0,interruptedUnknown:0,pending:0},preview:{total:0,personalized:0,selected:0,legacyUnknown:0,interruptedUnknown:0,pending:0},
      comparisons:{total:result?1:0,valid,failed:result&&!valid?1:0,fallback:0,cancelled:window.__speakmodeQA.cancelled?1:0,pending:0,feedback:{better:verdict==='better'?1:0,same:verdict==='same'?1:0,worse:verdict==='worse'?1:0,total:verdict?1:0}},scenes:[],records:[]};
    }
 """
@@ -107,7 +110,7 @@ def main():
     receipt=dict(scope=__doc__,cases=rows,pageErrors=errors,externalRequests=external)
     receipt['sourceSha256']={name:hashlib.sha256((qa.ROOT/name).read_bytes()).hexdigest() for name in ['app/src/pages/PersonalizationPage.tsx','app/src/pages/personalization.css','app/src/services/personalization.ts','scripts/personalization-browser-qa.py']}
     receipt['distSha256']={str(path.relative_to(qa.ROOT)):hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((qa.ROOT/'app/dist').rglob('*')) if path.is_file()}
-    cases=['empty-skip-global-style','save-failure-navigation-draft','revision-conflict','scene-override','three-identity-limit','unicode-limit','history-source','cleared-history-reference','scope-and-template-opt-in','scope-availability','comparison-success-feedback','comparison-partial-failure','cancel-late-success','disable-during-comparison','delete-reference','statistics-independent-failure','keyboard-layout']
+    cases=['empty-skip-global-style','save-failure-navigation-draft','revision-conflict','scene-override','three-identity-limit','unicode-limit','history-source','cleared-history-reference','scope-and-template-opt-in','scope-availability','comparison-success-feedback','comparison-partial-failure','cancel-late-success','disable-during-comparison','delete-reference','statistics-independent-failure','statistics-incomplete-latch','statistics-dispatch-boundary','keyboard-layout']
     with qa.managed_preview(args.url,args.out,True) as server,sync_playwright() as playwright:
         receipt['server']=server
         browser=playwright.chromium.launch(channel='msedge',headless=True)
@@ -122,6 +125,20 @@ def main():
                         profile=json.loads(json.dumps(data['config']['profiles'][0]));profile['id']=f'qa-profile-{index}';profile['name']=f'测试身份 {index}';data['config']['profiles'].append(profile)
                 if name=='cleared-history-reference':
                     data['detail']['output']['writingReceipt']=dict(scene='document',language='asSpoken',contextUsed=False,contractVersion='synthetic',personalization=dict(version=1,profileId=None,profileName=None,scene='document',background=None,rules=[],omitted=[],referenceCleared=True))
+                if name in ('statistics-dispatch-boundary','statistics-incomplete-latch'):
+                    normal=dict(total=8,personalized=2,selected=7,legacyUnknown=2,interruptedUnknown=1,pending=1)
+                    preview=dict(total=2,personalized=1,selected=2,legacyUnknown=1,interruptedUnknown=0,pending=0)
+                    variants=[('success',True,'started'),('failed',True,'started'),('success',True,None),('failed',True,'missing'),
+                              ('failed',True,'unknown'),('started',True,'notStarted'),('failed',True,'notStarted'),('success',False,'notStarted')]
+                    records=[]
+                    for index,(status,selected,dispatch) in enumerate(variants):
+                        record=dict(taskId=f'qa-dispatch-{index}',kind='normal',status=status,scene='document',profileId='qa-developer' if selected else None,
+                                    profileVersion=1,personalized=selected,createdAt=f'2026-10-24T10:00:{index:02d}Z',durationMs=100,feedback=None)
+                        if dispatch!='missing':record['referenceDispatch']=dispatch
+                        records.append(record)
+                    data['stats']=dict(normal=normal,preview=preview,
+                        comparisons=dict(total=0,valid=0,failed=0,fallback=0,cancelled=0,pending=0,feedback=dict(better=0,same=0,worse=0,total=0)),
+                        scenes=[dict(scene='document',count=normal['total'],**{key:value for key,value in normal.items() if key!='total'})],records=records)
                 context.add_init_script(bridge(data))
                 def route(route):
                     if urlparse(route.request.url).hostname not in ('127.0.0.1',None):external.append(route.request.url);route.abort()
@@ -286,6 +303,51 @@ def main():
                         page.evaluate('window.__speakmodeQA.statsError=false')
                         page.get_by_role('button',name='重新读取统计',exact=True).click()
                         expect(page.locator('.personalization-metrics')).to_be_visible()
+                    elif name=='statistics-incomplete-latch':
+                        section=page.locator('.personalization-statistics')
+                        expect(section.locator('.personalization-metrics > div').first).to_have_text('已发起含画像请求的普通整理2 / 8 次')
+                        page.evaluate('window.__speakmodeQA.statsIncomplete=true')
+                        page.get_by_role('combobox',name='统计时间范围').click()
+                        page.get_by_role('option',name='全部时间',exact=True).click()
+                        expect(section.get_by_role('alert')).to_contain_text('部分个性化统计未能保存，本次运行暂不展示汇总。')
+                        expect(section.locator('.personalization-metrics')).to_have_count(0)
+                        expect(section.locator('.personalization-records')).to_have_count(0)
+                        page.evaluate('window.__speakmodeQA.deferStats=true')
+                        page.get_by_role('button',name='重新读取统计',exact=True).click()
+                        expect(section.get_by_role('status')).to_have_text('正在读取统计…')
+                        expect(section.locator('.personalization-metrics')).to_have_count(0)
+                        assert page.evaluate('window.__speakmodeQA.statsPending') is True
+                        page.evaluate('window.__speakmodeQA.releaseStats()')
+                        expect(section.get_by_role('alert')).to_contain_text('部分个性化统计未能保存，本次运行暂不展示汇总。')
+                        expect(section.locator('.personalization-metrics')).to_have_count(0)
+                        expect(section.locator('.personalization-records')).to_have_count(0)
+                        expect(page.get_by_role('switch')).to_be_enabled()
+                        expect(page.get_by_role('button',name='对比整理',exact=True)).to_be_enabled()
+                        assert len(calls(page,'personalization.stats'))==3
+                        section.screenshot(path=str(args.out/'statistics-incomplete-latch.png'))
+                    elif name=='statistics-dispatch-boundary':
+                        metrics=page.locator('.personalization-metrics')
+                        expect(metrics.locator('> div').first).to_have_text('已发起含画像请求的普通整理2 / 8 次')
+                        section=page.locator('.personalization-statistics')
+                        expect(section).to_contain_text('分母为已记录的全部普通整理任务')
+                        expect(section).to_contain_text('不代表服务端收到、模型采用或质量提升')
+                        expect(section).to_contain_text('普通整理：已选择画像 7 次，其中旧记录发送状态无法核验 2 次，中断任务发送状态无法核验 1 次，进行中发送状态待确认 1 次。')
+                        expect(section).to_contain_text('预览单独统计：已发起含画像请求 1 / 2 次；已选择画像 2 次')
+                        page.get_by_text('按场合查看普通整理数量',exact=True).click()
+                        expect(section.locator('li')).to_have_text('文档2 / 8 次已发起含画像请求已选择画像 7 次 · 旧记录发送状态无法核验 2 次 · 中断任务发送状态无法核验 1 次 · 进行中发送状态待确认 1 次')
+                        page.get_by_text('近期任务记录',exact=True).click()
+                        records=section.locator('.personalization-records > div')
+                        expect(records).to_have_count(8)
+                        labels=['已发起含画像请求','已发起含画像请求','已选画像，发送状态无法核验（旧记录）','已选画像，发送状态无法核验（旧记录）',
+                                '已选画像，中断后发送状态无法核验','已选画像，发送状态待确认','已选画像，未发起含画像请求','未选择画像']
+                        for index,label in enumerate(labels):
+                            expect(records.nth(index).locator('small')).to_have_text(f'2026-10-24T10:00:{index:02d}Z · 画像 v1 · {label}')
+                        expect(records.nth(1)).to_contain_text('失败')
+                        expect(records.nth(5)).to_contain_text('进行中')
+                        expect(section.get_by_text('已参考画像',exact=True)).to_have_count(0)
+                        row['layouts']=[layout(page,width) for width in [1280,800,430]]
+                        page.set_viewport_size(dict(width=1280,height=900))
+                        section.screenshot(path=str(args.out/'statistics-dispatch-boundary.png'))
                     elif name=='keyboard-layout':
                         open_editor(page)
                         task=page.get_by_role('textbox',name='常见任务',exact=True)

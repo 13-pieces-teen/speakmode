@@ -83,9 +83,17 @@ pub async fn generate(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,sour
 pub(crate) async fn generate_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,
     writing:Option<&crate::core::writing_context::WritingContext>)->Result<ManualCandidate,CloudError> {
+    generate_with_writing_context_execution(config,secret,mode,source,dictionary,context,cancel,writing,
+        RewriteExecution::for_duration(Duration::from_secs(20))).await
+}
+
+pub(crate) async fn generate_with_writing_context_execution(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,
+    writing:Option<&crate::core::writing_context::WritingContext>,execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
+    execution.checkpoint(&cancel)?;
     let endpoint=rewrite_endpoint(config)?;
-    run_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,context,cancel,&endpoint,
-        Duration::from_secs(20),writing).await.result
+    run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,context,cancel,&endpoint,
+        execution,writing).await.result
 }
 
 /// Explicit text experiment, sharing the exact history-candidate path.
@@ -102,7 +110,14 @@ pub(super) async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&s
 pub(super) async fn run_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,endpoint:&str,wait:Duration,
     writing:Option<&crate::core::writing_context::WritingContext>)->Outcome {
-    let started=Instant::now();let deadline=started+wait;let mut trace=Trace::default();
+    run_until_with_writing_context(client,config,secret,mode,source,dictionary,context,cancel,endpoint,
+        RewriteExecution::for_duration(wait),writing).await
+}
+
+pub(super) async fn run_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,
+    writing:Option<&crate::core::writing_context::WritingContext>)->Outcome {
+    let started=Instant::now();let deadline=execution.deadline;let mut trace=Trace::default();
     let cancelled=||CloudError::new("cancelled","rewrite","候选已取消");
     let timeout=||CloudError::new("rewrite_timeout","rewrite","候选整理超时，请保留当前文本后重试");
     let job=async {
@@ -111,7 +126,7 @@ pub(super) async fn run_with_writing_context(client:&reqwest::Client,config:&Pro
         add_context(&mut request.body,context,false,mode,&reference,writing)?;
         request.bind_personalization(writing);
         trace.calls+=1;
-        let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
+        let content=fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
         request.validate_personalization(writing)?;
         let mut draft=minimum::parse(&content,mode,&reference,&request)?;
         normalize_draft_dictionary(&reference,dictionary,&mut draft);
@@ -132,7 +147,7 @@ pub(super) async fn run_with_writing_context(client:&reqwest::Client,config:&Pro
             request.bind_personalization(writing);
             trace.calls+=1;
             let reviewed=async {
-                let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
+                let content=fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
                 request.validate_personalization(writing)?;
                 semantic_review::parse_minimum(&content,&request,mode,&reference,&candidate.draft)
             }.await;

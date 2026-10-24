@@ -772,12 +772,14 @@ impl AppHub {
         let event_kind=if reason!=CreationReason::NormalInitial||self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some()){personalization::PersonalizationEventKind::Preview}else{personalization::PersonalizationEventKind::Normal};
         let profile_started=Instant::now();
         let profile_event=personalization::task_event(&profile_event_id,event_kind,writing_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let profile_dispatch=personalization::DispatchTracker::default();
         let _=self.record_personalization_event(profile_event.clone()).await;
         let rewrite_cancel=cancel.child_token();
         let observer_hub=Arc::downgrade(self);let observer_trace=trace.clone();
         let execution=rewrite::execution::RewriteExecution::observed(rewrite_deadline,move|event|{
             if let Some(hub)=observer_hub.upgrade(){hub.diagnostics.rewrite_request(observer_trace.as_ref(),event);}
         });
+        let execution=profile_dispatch.observe(execution,writing_context.as_ref());
         let generated=tokio::select! {
             biased;
             _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
@@ -790,7 +792,7 @@ impl AppHub {
         // replaced session, even if its future returned success after cutoff.
         if !self.valid_active(&id,generation){
             self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Cancelled,None,Some("cancelled"));
-            let _=self.record_personalization_event(personalization::finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,profile_started.elapsed().as_millis() as u64)).await;
+            let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,profile_started.elapsed().as_millis() as u64)).await;
             return;
         }
         // Synchronous decoding/validation can finish without yielding to the
@@ -815,7 +817,7 @@ impl AppHub {
                 if !eligible {
                     self.diagnostics.rewrite_finished(trace.as_ref(),if error.code=="cancelled" {RewriteOutcome::Cancelled} else {RewriteOutcome::Failed},None,Some(&error.code));
                     let status=if error.code=="cancelled"{personalization::PersonalizationEventStatus::Cancelled}else{personalization::PersonalizationEventStatus::Failed};
-                    let _=self.record_personalization_event(personalization::finished(&profile_event,status,profile_started.elapsed().as_millis() as u64)).await;
+                    let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64)).await;
                     self.fail(&id,generation,error.into(),true);return;
                 }
                 self.diagnostics.mark(trace.as_ref(),Stage::RewriteFallbackSelected);
@@ -825,7 +827,7 @@ impl AppHub {
         };
         if rewrite_fallback.is_some(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
         let status=if rewrite_fallback.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
-        let _=self.record_personalization_event(personalization::finished(&profile_event,status,profile_started.elapsed().as_millis() as u64)).await;
+        let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64)).await;
         if !self.valid_active(&id,generation){return;}
         let receipt=writing_context.as_ref().filter(|_|rewrite_fallback.is_none()).map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
         let output=OutputRevision{writing_receipt:receipt, confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};

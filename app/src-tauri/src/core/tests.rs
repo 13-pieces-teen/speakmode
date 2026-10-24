@@ -26,8 +26,10 @@ fn personal_config() -> PersonalizationConfig {
     PersonalizationConfig {enabled:true,active_profile_id:Some("developer".into()),profiles:vec![PersonalProfile{id:"developer".into(),name:"工作身份".into(),profession:"软件开发".into(),domain:"人工智能".into(),description:"只有本机画像详情中的特有背景".into(),tasks:vec!["项目进展".into()],audience:"同事".into(),scenes:vec![AppWritingScene::Technical],instructions:"连续叙述按话题分段".into()}],..Default::default()}
 }
 fn personalization_event(task_id:&str) -> PersonalizationEvent {
-    PersonalizationEvent {task_id:task_id.into(),kind:PersonalizationEventKind::Comparison,status:PersonalizationEventStatus::Started,scene:AppWritingScene::Technical,profile_id:Some("developer".into()),profile_version:2,personalized:false,created_at:"2026-10-23T10:00:00+08:00".into(),duration_ms:0,feedback:None}
+    PersonalizationEvent {task_id:task_id.into(),kind:PersonalizationEventKind::Comparison,status:PersonalizationEventStatus::Started,scene:AppWritingScene::Technical,profile_id:Some("developer".into()),profile_version:2,personalized:true,created_at:"2026-10-23T10:00:00+08:00".into(),duration_ms:0,reference_dispatch:Some(ReferenceDispatch::NotStarted),feedback:None}
 }
+
+include!("personalization_dispatch_tests.rs");
 
 #[test]
 fn restart_fails_unfinished_personalization_without_rewriting_history_or_feedback() {
@@ -53,7 +55,7 @@ fn restart_fails_unfinished_personalization_without_rewriting_history_or_feedbac
         let after=store.personalization_events(None).unwrap();assert_eq!(after.len(),before.len());
         for original in &before {
             let actual=after.iter().find(|event|event.task_id==original.task_id).unwrap();let mut expected=original.clone();
-            if expected.status==PersonalizationEventStatus::Started{expected.status=PersonalizationEventStatus::Failed;}
+            if expected.status==PersonalizationEventStatus::Started{expected.status=PersonalizationEventStatus::Failed;expected.reference_dispatch=Some(ReferenceDispatch::Unknown);}
             assert_eq!(actual,&expected);actual.validate().unwrap();
         }
         assert!(after.iter().all(|event|event.status!=PersonalizationEventStatus::Started));
@@ -265,7 +267,7 @@ fn dictionary_v2_migration_preserves_v1_preferences_modes_history_sources_and_us
     assert_eq!(store.get_result("v1-preserved").unwrap(),expected_detail);
     assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
     assert_eq!(store.dictionary().unwrap(),DictionarySnapshot::default());
-    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),4);
+    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),5);
     assert!(store.test_connection().execute("UPDATE sources SET data='changed'",[]).is_err());
     drop(store);fs::remove_file(file).unwrap();
 }
@@ -339,7 +341,7 @@ fn cancelled_dictionary_transaction_rolls_back_version_and_entire_batch() {
 fn migrations_and_preferences_survive_reopen_without_mode_or_key_fields() {
     let path=path();
     {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),7);}
-    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),4);
+    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),5);
     drop(store);fs::remove_file(path).unwrap();
 }
 #[test]

@@ -2,6 +2,10 @@
 use super::*;
 use crate::core::personalization::*;
 
+include!("personalization_statistics_failure_tests.rs");
+#[path="personalization_dispatch_tests.rs"]
+mod dispatch_tests;
+
 fn config()->PersonalizationConfig {
     PersonalizationConfig{enabled:true,active_profile_id:Some("dev".into()),profiles:vec![PersonalProfile{id:"dev".into(),name:"AI 后端".into(),profession:"软件开发".into(),domain:"AI 后端".into(),description:"工作背景哨兵".into(),tasks:vec!["技术沟通".into()],audience:"同事".into(),scenes:vec![AppWritingScene::Technical],instructions:"".into()}],preferences:ExpressionStyle{paragraphs:true,..Default::default()},..Default::default()}
 }
@@ -36,7 +40,8 @@ async fn ordinary_edits_freeze_next_task_and_receipt_uses_original_reference() {
     },None::<RewriteWaitPolicy>,|h,_,_|{h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;}).await;
     let detail=h.db.get_result("profile-frozen").unwrap();assert_eq!(detail.source,source("profile-frozen"));
     assert_eq!(detail.output.unwrap().writing_receipt.unwrap().personalization.unwrap().version,original.version);
-    let stats=command(&h,"personalization.stats",json!({"window":"all"})).await.unwrap();assert_eq!(stats["normal"]["total"],1);assert_eq!(stats["normal"]["personalized"],1);
+    let stats=command(&h,"personalization.stats",json!({"window":"all"})).await.unwrap();assert_eq!(stats["normal"]["total"],1);assert_eq!(stats["normal"]["selected"],1);
+    assert_eq!(stats["normal"]["personalized"],0,"injected generator never dispatched a request");assert_eq!(stats["records"][0]["referenceDispatch"],"notStarted");
     assert!(!stats.to_string().contains("工作背景哨兵"));
 }
 

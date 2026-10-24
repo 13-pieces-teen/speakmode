@@ -3,6 +3,7 @@ use super::*;
 pub(super) use crate::core::personalization::*;
 use crate::core::writing_context::{WritingContext, WritingReceipt, selected_scene};
 use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) fn context_for(mode:&ModeSnapshot, language:DraftLanguage, config:&PersonalizationConfig)->Option<WritingContext> {
     let scene=selected_scene(mode).unwrap_or_default();
@@ -15,10 +16,27 @@ pub(super) fn receipt(context:Option<&WritingContext>)->Option<WritingReceipt> {
 }
 pub(super) fn task_event(id:&str,kind:PersonalizationEventKind,context:Option<&WritingContext>,status:PersonalizationEventStatus,duration_ms:u64)->PersonalizationEvent {
     let reference=context.and_then(|c|c.personalization.as_ref());
-    PersonalizationEvent {task_id:id.into(),kind,status,scene:context.map_or(AppWritingScene::General,|c|c.scene),profile_id:reference.and_then(|p|p.profile_id.clone()),profile_version:reference.map_or(0,|p|p.version),personalized:reference.is_some(),created_at:now(),duration_ms,feedback:None}
+    PersonalizationEvent {task_id:id.into(),kind,status,scene:context.map_or(AppWritingScene::General,|c|c.scene),profile_id:reference.and_then(|p|p.profile_id.clone()),profile_version:reference.map_or(0,|p|p.version),personalized:reference.is_some(),reference_dispatch:Some(ReferenceDispatch::NotStarted),created_at:now(),duration_ms,feedback:None}
 }
 pub(super) fn finished(event:&PersonalizationEvent,status:PersonalizationEventStatus,duration_ms:u64)->PersonalizationEvent {
     let mut event=event.clone();event.status=status;event.duration_ms=duration_ms;event
+}
+/// One flag per task, shared by its generation/review/repair stages. The flag
+/// records the validated HTTP dispatch branch, not timing observer starts or
+/// provider receipt. No source, rule text or profile identity enters callbacks.
+#[derive(Clone, Default)]
+pub(super) struct DispatchTracker(Arc<AtomicBool>);
+impl DispatchTracker {
+    pub(super) fn observe(&self, execution:rewrite::execution::RewriteExecution, context:Option<&WritingContext>)->rewrite::execution::RewriteExecution {
+        if !context.is_some_and(|context|context.personalization.is_some()) {return execution;}
+        let dispatched=self.0.clone();
+        execution.with_dispatch_observer(move|event|{if event.personalization {dispatched.store(true,Ordering::SeqCst);}})
+    }
+    pub(super) fn finished(&self,event:&PersonalizationEvent,status:PersonalizationEventStatus,duration_ms:u64)->PersonalizationEvent {
+        let mut result=finished(event,status,duration_ms);
+        if event.personalized && self.0.load(Ordering::SeqCst) {result.reference_dispatch=Some(ReferenceDispatch::Started);}
+        result
+    }
 }
 pub(super) fn revoked(inner:&Inner, reference:&EffectivePersonalization)->bool {
     inner.personalization_revocations.get("*").is_some_and(|version|reference.version<*version)
@@ -100,13 +118,25 @@ impl AppHub {
         Ok(json!({"saved":true}))
     }
     pub(super) async fn record_personalization_event(&self,event:PersonalizationEvent)->Result<()> {
-        self.db_write(DbCommand::RecordPersonalizationEvent{event},self.operation_guard(),DbPriority::Normal).await?;Ok(())
+        let result=self.db_write(DbCommand::RecordPersonalizationEvent{event},self.operation_guard(),DbPriority::Normal).await.map(|_|());
+        if result.is_err(){self.personalization_statistics_incomplete.store(true,Ordering::SeqCst);}
+        result
+    }
+    fn require_complete_personalization_statistics(&self)->Result<()> {
+        if self.personalization_statistics_incomplete.load(Ordering::SeqCst) {
+            return Err(ApiError::new("personalization_statistics_incomplete","personalization","部分个性化统计未能保存，本次运行暂不展示汇总。统计失败不会删除识别稿或成稿，可以继续正常使用。"));
+        }
+        Ok(())
     }
     pub(super) async fn personalization_stats(&self,p:&Value)->Result<Value> {
         let window=p.get("window").and_then(Value::as_str).unwrap_or("week");
         if !matches!(window,"week"|"all"){return Err(ApiError::new("invalid_payload","personalization","统计时间范围无效"));}
+        self.require_complete_personalization_statistics()?;
         let since=(window=="week").then(||(chrono::Utc::now()-chrono::Duration::days(7)).to_rfc3339());
-        let DbValue::PersonalizationEvents(events)=self.db_read(DbCommand::GetPersonalizationEvents{since:since.clone()}).await? else{return Err(ApiError::new("storage_protocol","personalization","统计回执无效"));};
+        let read=self.db_read(DbCommand::GetPersonalizationEvents{since:since.clone()}).await;
+        // A concurrent task can lose its receipt while this read is queued.
+        self.require_complete_personalization_statistics()?;
+        let DbValue::PersonalizationEvents(events)=read? else{return Err(ApiError::new("storage_protocol","personalization","统计回执无效"));};
         Ok(statistics(window,since,events))
     }
     pub(super) async fn personalization_compare(self:&Arc<Self>,p:&Value)->Result<Value> {
@@ -135,12 +165,13 @@ impl AppHub {
             if source.kind=="history"{inner.preview_sources.insert(operation.clone(),source.revision.session_id.clone());}
             AuxiliaryLease{hub:Arc::clone(self),key:operation}
         };
-        let started=Instant::now();let event=PersonalizationEvent{task_id:id.clone(),kind:PersonalizationEventKind::Comparison,status:PersonalizationEventStatus::Started,scene:personalized.scene,profile_id:reference.profile_id.clone(),profile_version:reference.version,personalized:true,created_at:now(),duration_ms:0,feedback:None};
+        let started=Instant::now();let event=task_event(&id,PersonalizationEventKind::Comparison,Some(&personalized),PersonalizationEventStatus::Started,0);
+        let dispatch=DispatchTracker::default();let trial_dispatch=&dispatch;
         self.record_personalization_event(event.clone()).await?;
         let work=async {
             let config=&snapshot.provider_config;let dictionary=&snapshot.dictionary;let secret=&secret;let source=&source.revision;let mode=&mode;
             paired_trial(baseline,personalized,cancel.clone(),|context,token|async move {
-                let execution=rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(20));
+                let execution=trial_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(20)),Some(&context));
                 rewrite::rewrite_with_writing_context(config,secret,mode,source,dictionary,token,execution,&context).await
             }).await
         };
@@ -148,8 +179,8 @@ impl AppHub {
         let source_validation=self.validate_preview_source(&source).await;
         let cancelled=cancel.is_cancelled()||revoked(&self.inner.lock().unwrap(),&reference);
         let valid=!cancelled&&source_validation.is_ok()&&baseline.status=="success"&&personalized.status=="success";
-        let mut finished=event;finished.duration_ms=started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        finished.status=if cancelled{PersonalizationEventStatus::Cancelled}else if valid{PersonalizationEventStatus::Success}else{PersonalizationEventStatus::Failed};
+        let status=if cancelled{PersonalizationEventStatus::Cancelled}else if valid{PersonalizationEventStatus::Success}else{PersonalizationEventStatus::Failed};
+        let finished=dispatch.finished(&event,status,started.elapsed().as_millis().min(u64::MAX as u128) as u64);
         self.record_personalization_event(finished.clone()).await?;
         let revoked_after_save={let inner=self.inner.lock().unwrap();revoked(&inner,&reference)||inner.cancelled_operation_ids.contains(&format!("personalization:{id}"))};
         if cancelled||cancel.is_cancelled()||revoked_after_save {
@@ -161,16 +192,35 @@ impl AppHub {
     }
 }
 
+#[derive(Default, Serialize)]
+#[serde(rename_all="camelCase")]
+struct DispatchCounts {total:u64,personalized:u64,selected:u64,legacy_unknown:u64,interrupted_unknown:u64,pending:u64}
+impl DispatchCounts {
+    fn add(&mut self,event:&PersonalizationEvent) {
+        self.total+=1;
+        if !event.personalized {return;}
+        self.selected+=1;
+        match event.reference_dispatch {
+            Some(ReferenceDispatch::Started)=>self.personalized+=1,
+            Some(ReferenceDispatch::Unknown)=>self.interrupted_unknown+=1,
+            None=>self.legacy_unknown+=1,
+            Some(ReferenceDispatch::NotStarted) if event.status==PersonalizationEventStatus::Started=>self.pending+=1,
+            Some(ReferenceDispatch::NotStarted)=>{},
+        }
+    }
+}
 fn statistics(window:&str,since:Option<String>,events:Vec<PersonalizationEvent>)->Value {
-    let mut result=json!({"window":window,"since":since,"normal":{"total":0,"personalized":0},"preview":{"total":0,"personalized":0},"comparisons":{"total":0,"valid":0,"failed":0,"fallback":0,"cancelled":0,"pending":0,"feedback":{"better":0,"same":0,"worse":0,"total":0}},"scenes":[],"records":events});
-    let mut scenes:HashMap<String,(u64,u64)>=HashMap::new();
+    let mut result=json!({"window":window,"since":since,"comparisons":{"total":0,"valid":0,"failed":0,"fallback":0,"cancelled":0,"pending":0,"feedback":{"better":0,"same":0,"worse":0,"total":0}},"scenes":[],"records":events});
+    let mut normal=DispatchCounts::default();let mut preview=DispatchCounts::default();
+    let mut scenes:HashMap<String,DispatchCounts>=HashMap::new();
     let increment=|result:&mut Value,path:&str|{let value=result.pointer(path).and_then(Value::as_u64).unwrap_or(0);*result.pointer_mut(path).unwrap()=json!(value+1);};
     for event in &events {
         match event.kind {
             PersonalizationEventKind::Normal|PersonalizationEventKind::Preview=>{
-                let key=if event.kind==PersonalizationEventKind::Normal{"normal"}else{"preview"};increment(&mut result,&format!("/{key}/total"));
-                if event.personalized{increment(&mut result,&format!("/{key}/personalized"));}
-                if key=="normal"{let key=serde_json::to_value(event.scene).unwrap().as_str().unwrap().to_owned();let count=scenes.entry(key).or_default();count.0+=1;if event.personalized{count.1+=1;}}
+                if event.kind==PersonalizationEventKind::Normal {
+                    normal.add(event);
+                    let key=serde_json::to_value(event.scene).unwrap().as_str().unwrap().to_owned();scenes.entry(key).or_default().add(event);
+                }else{preview.add(event);}
             },
             PersonalizationEventKind::Comparison=>{
                 increment(&mut result,"/comparisons/total");
@@ -180,7 +230,11 @@ fn statistics(window:&str,since:Option<String>,events:Vec<PersonalizationEvent>)
             },
         }
     }
-    let mut rows:Vec<_>=scenes.into_iter().map(|(scene,(count,personalized))|json!({"scene":scene,"count":count,"personalized":personalized})).collect();rows.sort_by_key(|v|v["scene"].as_str().unwrap().to_owned());result["scenes"]=json!(rows);result
+    result["normal"]=json!(normal);result["preview"]=json!(preview);
+    let mut rows:Vec<_>=scenes.into_iter().map(|(scene,counts)|{
+        let mut value=json!(counts);let fields=value.as_object_mut().unwrap();fields.insert("scene".into(),json!(scene));
+        let count=fields.remove("total").unwrap();fields.insert("count".into(),count);value
+    }).collect();rows.sort_by_key(|v|v["scene"].as_str().unwrap().to_owned());result["scenes"]=json!(rows);result
 }
 
 #[cfg(test)]
@@ -212,5 +266,33 @@ mod tests {
         let (baseline,personalized)=contexts();let cancel=CancellationToken::new();let worker=cancel.clone();let calls=Arc::new(Mutex::new(0));let count=calls.clone();
         let (a,b)=paired_trial(baseline,personalized,cancel,move |_,_|{let worker=worker.clone();let count=count.clone();async move{*count.lock().unwrap()+=1;worker.cancel();Ok(draft("late"))}}).await;
         assert_eq!(*calls.lock().unwrap(),1);assert_eq!(a.status,"cancelled");assert_eq!(b.status,"cancelled");assert!(a.text.is_none());assert!(b.text.is_none());
+    }
+    #[tokio::test]
+    async fn baseline_http_then_cancellation_never_claims_personalized_dispatch() {
+        use crate::cloud::rewrite::minimum_pipeline::tests::{Server,Reply};
+        let (mut baseline,mut personalized)=contexts();baseline.language=DraftLanguage::AsSpoken;personalized.language=DraftLanguage::AsSpoken;
+        let mut config=ProviderConfig::default();config.region=Some("beijing".into());
+        let mode=ModeSnapshot{mode_id:"technical".into(),name:"技术".into(),base_mode:BaseMode::Light,rules:String::new(),revision:1};
+        let source=SourceRevision{id:"comparison-source".into(),session_id:"comparison".into(),asr_attempt_id:"synthetic".into(),generation:1,
+            provider:"synthetic".into(),model:"fixed".into(),adapter_version:"test".into(),complete:true,created_at:now(),
+            items:vec![SourceItem{id:"item-0".into(),provider_item_id:"0".into(),capture_order:0,text:"方案暂时不可行。".into(),is_final:true,start_ms:None,end_ms:None}]};
+        let event=task_event("comparison-baseline-cancel",PersonalizationEventKind::Comparison,Some(&personalized),PersonalizationEventStatus::Started,0);
+        let server=Server::new(vec![Reply::new("__ECHO_GUARDED_SOURCE__"),Reply::new(r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#)]).await;
+        let dispatch=DispatchTracker::default();let cancel=CancellationToken::new();let worker=&cancel;
+        let calls=std::sync::atomic::AtomicUsize::new(0);let client=reqwest::Client::builder().no_proxy().build().unwrap();
+        let (a,b)=paired_trial(baseline,personalized,cancel.clone(),|context,token|{
+            let execution=dispatch.observe(rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(3)),Some(&context));
+            let (client,config,mode,source,endpoint,calls)=(&client,&config,&mode,&source,server.endpoint.as_str(),&calls);
+            async move {
+                calls.fetch_add(1,Ordering::SeqCst);
+                let result=rewrite::minimum_pipeline::run_until_with_writing_context(client,config,"synthetic",mode,source,
+                    &DictionarySnapshot::default(),token,endpoint,execution,&context).await;
+                assert!(result.is_ok(),"local baseline must finish before cancellation");worker.cancel();result
+            }
+        }).await;
+        assert_eq!(server.count(),2);assert_eq!(calls.load(Ordering::SeqCst),1);
+        assert_eq!((a.status,b.status),("cancelled","cancelled"));
+        let finished=dispatch.finished(&event,PersonalizationEventStatus::Cancelled,1);
+        assert!(finished.personalized);assert_eq!(finished.reference_dispatch,Some(ReferenceDispatch::NotStarted));
     }
 }

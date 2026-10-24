@@ -43,7 +43,7 @@ fn assert_versioned_config(store: &Store, expected: &ProviderConfig) {
     assert_eq!(version, expected.version);
     assert_eq!(serde_json::from_str::<ProviderConfig>(&data).unwrap(), *expected);
     assert_eq!(store.provider_config().unwrap(), *expected);
-    assert_eq!(store.test_connection().pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 4);
+    assert_eq!(store.test_connection().pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 5);
 }
 fn assert_no_upgrade_table(store: &Store) {
     assert_eq!(store.test_connection().query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='app_upgrades'", [],

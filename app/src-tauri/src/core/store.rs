@@ -129,6 +129,10 @@ CREATE INDEX personalization_reference_profile ON personalization_references(pro
 PRAGMA user_version=4;
 "#;
 
+// Version barrier: older applications deny unknown event fields. Leave legacy
+// JSON untouched so its absent dispatch marker continues to mean unknown.
+const MIGRATION_V5: &str = "PRAGMA user_version=5;";
+
 #[derive(Clone)]
 struct MemorySession {
     record: SessionRecord,
@@ -154,7 +158,7 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 4 { return Err(invalid("database schema is newer than this application")); }
+        if version > 5 { return Err(invalid("database schema is newer than this application")); }
         if version == 0 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V1)?;
@@ -177,6 +181,11 @@ impl Store {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V4)?;
             tx.execute("INSERT INTO personalization_config(singleton,version,data) VALUES(1,1,?1)", [json(&PersonalizationConfig::default())?])?;
+            tx.commit()?;
+        }
+        if version < 5 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V5)?;
             tx.commit()?;
         }
         Ok(Self { connection, memory_sessions: HashMap::new(), latest_memory_ready: None,commit_guard:None,health })
@@ -740,6 +749,11 @@ impl Store {
             // failure state, not success or a fabricated user cancellation.
             // Preserve recorded duration: downtime is not processing latency.
             event.status=PersonalizationEventStatus::Failed;
+            // A process can stop after network dispatch but before its terminal
+            // receipt is durable. Pending selection is not proof of no send.
+            if event.personalized&&event.reference_dispatch==Some(ReferenceDispatch::NotStarted) {
+                event.reference_dispatch=Some(ReferenceDispatch::Unknown);
+            }
             let changed=tx.execute("UPDATE personalization_events SET data=?1 WHERE task_id=?2 AND data=?3",params![json(&event)?,task_id,data])?;
             if changed!=1{return Err(StoreError::Conflict{current:"personalization_recovery_changed".into()});}
         }

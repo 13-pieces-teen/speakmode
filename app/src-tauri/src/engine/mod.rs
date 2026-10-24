@@ -144,6 +144,9 @@ pub struct AppHub {
     pub(crate) inner:Mutex<Inner>,
     pub(crate) db:DbClient,
     db_command_workers:std::sync::atomic::AtomicUsize,
+    // Metadata only. Once a task receipt is lost, later successful writes do
+    // not establish a complete denominator for this process.
+    personalization_statistics_incomplete:std::sync::atomic::AtomicBool,
     settings_io:Mutex<()>,
     subscribers:Mutex<HashMap<String,EventSink>>,
     publication:Mutex<()>,
@@ -264,7 +267,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),personalization_statistics_incomplete:std::sync::atomic::AtomicBool::new(false),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
@@ -679,6 +682,7 @@ impl AppHub {
         }}
         let started=std::time::Instant::now();
         let profile_event=personalization::task_event(&key,personalization::PersonalizationEventKind::Preview,preview_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let profile_dispatch=personalization::DispatchTracker::default();let preview_dispatch=&profile_dispatch;
         let _=self.record_personalization_event(profile_event.clone()).await;
         let config=&config;let secret=&secret;let dictionary=&dictionary;
         let personal_config=&snapshot.personalization;
@@ -686,16 +690,20 @@ impl AppHub {
         let work=async {
             // User-requested trials are human-reviewed drafts, one call per
             // layout. Never use this result to authorize automatic delivery.
-            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {let context=personalization::context_for(&mode,language,personal_config);rewrite::rewrite_manual_candidate_with_writing_context(config,secret,&mode,&source,dictionary,cancel,context.as_ref()).await.map(|candidate|candidate.draft)}).await?;
+            let result=run_preview_rewrites(mode,&source.revision,cancel.clone(),|mode,source,cancel|async move {
+                let context=personalization::context_for(&mode,language,personal_config);
+                let execution=preview_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(std::time::Duration::from_secs(20)),context.as_ref());
+                rewrite::rewrite_manual_candidate_with_writing_context_execution(config,secret,&mode,&source,dictionary,cancel,context.as_ref(),execution).await.map(|candidate|candidate.draft)
+            }).await?;
             self.validate_preview_source(&source).await?;
             Ok::<_,ApiError>(result)
         };
         let completed=(AuxiliaryFuture{future:Some(Box::pin(work)),lease:Some(lease)}).await;
         let status=if cancel.is_cancelled()||completed.as_ref().err().is_some_and(|e|e.code=="cancelled"){personalization::PersonalizationEventStatus::Cancelled}else if completed.is_err(){personalization::PersonalizationEventStatus::Failed}else{personalization::PersonalizationEventStatus::Success};
-        let _=self.record_personalization_event(personalization::finished(&profile_event,status,started.elapsed().as_millis() as u64)).await;
+        let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,status,started.elapsed().as_millis() as u64)).await;
         let result=match completed{Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}return Err(error.for_operation("application",&key));}};
         let expired={let mut i=self.inner.lock().unwrap();let expired=cancel.is_cancelled()||preview_context.as_ref().and_then(|c|c.personalization.as_ref()).is_some_and(|p|personalization::revoked(&i,p))||!i.preview.as_ref().is_some_and(|(id,_)|id==&key);if i.preview.as_ref().is_some_and(|(id,_)|id==&key){i.preview=None;}expired};
-        if expired{let _=self.record_personalization_event(personalization::finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,started.elapsed().as_millis() as u64)).await;return Err(ApiError::new("cancelled","preview","试用已过期"));}
+        if expired{let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,started.elapsed().as_millis() as u64)).await;return Err(ApiError::new("cancelled","preview","试用已过期"));}
         Ok(preview_response(&key,&source,result,protocol))
     }
 
@@ -739,14 +747,16 @@ impl AppHub {
         let started=std::time::Instant::now();
         let event_id=format!("candidate:{:x}",Sha256::digest(operation.as_bytes()));
         let profile_event=personalization::task_event(&event_id,personalization::PersonalizationEventKind::Preview,writing_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let profile_dispatch=personalization::DispatchTracker::default();
         let _=self.record_personalization_event(profile_event.clone()).await;
         let generation=async {
-            if let Some(context)=&confirmed_context {rewrite::confirmed_candidate::generate_with_writing_context(&config,&secret,&mode,&detail.source,&dictionary,context,cancel.clone(),writing_context.as_ref()).await}
-            else {rewrite::rewrite_manual_candidate_with_writing_context(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone(),writing_context.as_ref()).await}
+            let execution=profile_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(std::time::Duration::from_secs(20)),writing_context.as_ref());
+            if let Some(context)=&confirmed_context {rewrite::confirmed_candidate::generate_with_writing_context_execution(&config,&secret,&mode,&detail.source,&dictionary,context,cancel.clone(),writing_context.as_ref(),execution).await}
+            else {rewrite::rewrite_manual_candidate_with_writing_context_execution(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone(),writing_context.as_ref(),execution).await}
         };
         let completed=(AuxiliaryFuture{future:Some(Box::pin(generation)),lease:Some(lease)}).await;
         let status=if cancel.is_cancelled()||completed.as_ref().err().is_some_and(|e|e.code=="cancelled"){personalization::PersonalizationEventStatus::Cancelled}else if completed.as_ref().is_ok_and(|value|value.review_issues.is_empty()){personalization::PersonalizationEventStatus::Success}else{personalization::PersonalizationEventStatus::Failed};
-        let _=self.record_personalization_event(personalization::finished(&profile_event,status,started.elapsed().as_millis() as u64)).await;
+        let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,status,started.elapsed().as_millis() as u64)).await;
         let generated=match completed {
             Ok(value)=>value,Err(error)=>{let mut i=self.inner.lock().unwrap();if i.candidate.as_ref().is_some_and(|slot|slot.key==id&&slot.run==run){i.candidate=None;}return Err(ApiError::from(error).for_operation("application",&run));}
         };
@@ -757,7 +767,7 @@ impl AppHub {
             else {let candidate=HistoryCandidate{revision:candidate,review_issues:generated.review_issues};i.candidate.as_mut().unwrap().result=Some(candidate.clone());Some(candidate)}
         };
         if let Some(candidate)=candidate{wire(candidate)}else{
-            let _=self.record_personalization_event(personalization::finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,started.elapsed().as_millis() as u64)).await;
+            let _=self.record_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,started.elapsed().as_millis() as u64)).await;
             Err(ApiError::new("revisionConflict","rewrite","当前记录已变化，候选不能覆盖新版本"))
         }
     }

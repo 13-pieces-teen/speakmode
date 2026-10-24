@@ -52,9 +52,22 @@ impl Store {
         let old:Option<String>=tx.query_row("SELECT data FROM personalization_events WHERE task_id=?1",[&event.task_id],|row|row.get(0)).optional()?;
         if let Some(old)=old {
             let old:PersonalizationEvent=decode(old)?;
+            old.validate().map_err(invalid)?;
             if old.kind!=event.kind || old.scene!=event.scene || old.profile_id!=event.profile_id || old.profile_version!=event.profile_version || old.created_at!=event.created_at
                 || (old.personalized&&!event.personalized) || (old.status!=PersonalizationEventStatus::Started&&old.status!=event.status&&event.status!=PersonalizationEventStatus::Cancelled) {
                 return Err(StoreError::Conflict{current:"personalization_event_identity_or_terminal_state".into()});
+            }
+            // Legacy records stay unknown. New tasks freeze reference selection,
+            // then can establish dispatch only while the task is still pending.
+            // A stale terminal receipt must neither invent nor erase evidence.
+            let dispatch_ok=match (old.reference_dispatch,event.reference_dispatch) {
+                (None,None)=>true,
+                (Some(ReferenceDispatch::NotStarted),Some(ReferenceDispatch::Started))=>old.status==PersonalizationEventStatus::Started,
+                (Some(previous),Some(next))=>previous==next,
+                _=>false,
+            };
+            if !dispatch_ok || (old.reference_dispatch.is_some()&&old.personalized!=event.personalized) {
+                return Err(StoreError::Conflict{current:"personalization_event_dispatch_evidence".into()});
             }
             // A retried completion receipt is not an explicit feedback edit.
             // Preserve the user's newer evaluation when an older clone is replayed.

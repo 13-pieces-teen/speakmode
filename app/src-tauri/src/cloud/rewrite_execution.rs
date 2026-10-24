@@ -20,17 +20,42 @@ pub(crate) struct RequestEvent {
     pub outcome: Option<RequestOutcome>,
 }
 
+/// The client has built a valid request and is entering its HTTP send future.
+/// This is not evidence of provider receipt, billing, or semantic acceptance.
+/// No request contents or profile identifiers are exposed to observers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DispatchEvent {
+    pub stage: RequestStage,
+    /// Only whether a top-level profile object exists in the adapted wire data.
+    pub personalization: bool,
+}
+
 #[derive(Clone)]
 pub(crate) struct RewriteExecution {
     pub deadline: Instant,
     observer: Option<Arc<dyn Fn(RequestEvent) + Send + Sync>>,
+    dispatch_observer: Option<Arc<dyn Fn(DispatchEvent) + Send + Sync>>,
 }
 impl RewriteExecution {
-    pub fn until(deadline: Instant) -> Self { Self { deadline, observer: None } }
+    pub fn until(deadline: Instant) -> Self { Self { deadline, observer: None, dispatch_observer: None } }
     pub fn for_duration(wait: Duration) -> Self { Self::until(Instant::now() + wait) }
     pub fn observed(deadline: Instant, observer: impl Fn(RequestEvent) + Send + Sync + 'static) -> Self {
-        Self { deadline, observer: Some(Arc::new(observer)) }
+        Self { deadline, observer: Some(Arc::new(observer)), dispatch_observer: None }
     }
+    /// Add task-level dispatch tracking without replacing existing timing or
+    /// dispatch observers, and without changing the caller-owned deadline.
+    pub fn with_dispatch_observer(mut self, observer: impl Fn(DispatchEvent) + Send + Sync + 'static) -> Self {
+        let previous = self.dispatch_observer.take();
+        self.dispatch_observer = Some(Arc::new(move |event| {
+            if let Some(previous) = &previous { previous(event); }
+            observer(event);
+        }));
+        self
+    }
+    pub(super) fn dispatch_started(&self, stage: RequestStage, personalization: bool) {
+        if let Some(observer) = &self.dispatch_observer { observer(DispatchEvent { stage, personalization }); }
+    }
+    pub(super) fn has_dispatch_observer(&self) -> bool { self.dispatch_observer.is_some() }
     pub fn checkpoint(&self, cancel: &CancellationToken) -> Result<(), CloudError> {
         if cancel.is_cancelled() { Err(CloudError::new("cancelled", "rewrite", "已取消整理")) }
         else if Instant::now() >= self.deadline { Err(CloudError::new("rewrite_timeout", "rewrite", "整理等待已结束，识别稿仍保留")) }

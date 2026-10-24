@@ -12,11 +12,12 @@ import type {AppWritingScene} from '../appWriting';
 import {clearDeletedPersonalizationReferences} from '../services/personalizationReferences';
 import './personalization.css';
 
+interface ReferenceCounts {personalized:number;selected:number;legacyUnknown:number;interruptedUnknown:number;pending:number}
 interface Statistics {
- window:'week'|'all';since:string|null;normal:{total:number;personalized:number};preview:{total:number;personalized:number};
+ window:'week'|'all';since:string|null;normal:ReferenceCounts&{total:number};preview:ReferenceCounts&{total:number};
  comparisons:{total:number;valid:number;failed:number;fallback:number;cancelled:number;pending:number;feedback:{better:number;same:number;worse:number;total:number}};
- scenes:{scene:AppWritingScene;count:number;personalized:number}[];
- records:{taskId:string;kind:'normal'|'preview'|'comparison';status:string;scene:AppWritingScene;profileId:string|null;profileVersion:number;personalized:boolean;createdAt:string;durationMs:number;feedback:PersonalizationVerdict|null}[];
+ scenes:(ReferenceCounts&{scene:AppWritingScene;count:number})[];
+ records:{taskId:string;kind:'normal'|'preview'|'comparison';status:string;scene:AppWritingScene;profileId:string|null;profileVersion:number;personalized:boolean;referenceDispatch?:'notStarted'|'started'|'unknown'|null;createdAt:string;durationMs:number;feedback:PersonalizationVerdict|null}[];
 }
 type ConfigRead=PersonalizationConfig&{capability?:{supported:boolean;protocol:string;modelQuality:string}};
 const copy=<T,>(value:T):T=>structuredClone(value);
@@ -46,9 +47,9 @@ export function PersonalizationPage({onDictionary,onSettings,onSkip}:{onDictiona
   finally{if(mounted.current&&run===readRun.current)setLoading(false);}
  },[desktop.available,desktop.command]);
  const readStats=useCallback(async()=>{
-  if(!desktop.available)return;const run=++statsRun.current;setStatsLoading(true);setStatsError('');
+  if(!desktop.available)return;const run=++statsRun.current;setStatsLoading(true);setStats(null);setStatsError('');
   try{const next=await desktop.command<Statistics>('personalization.stats',{window});if(mounted.current&&run===statsRun.current)setStats(next);}
-  catch(error){if(mounted.current&&run===statsRun.current)setStatsError(errorMessage(error));}
+  catch(error){if(mounted.current&&run===statsRun.current){const message=errorMessage(error);setStatsError(message==='personalization_statistics_incomplete'?'部分个性化统计未能保存，本次运行暂不展示汇总。统计失败不会删除识别稿或成稿，可以继续正常使用。':message);}}
   finally{if(mounted.current&&run===statsRun.current)setStatsLoading(false);}
  },[desktop.available,desktop.command,window]);
  useEffect(()=>{mounted.current=true;void read();return()=>{mounted.current=false;readRun.current++;statsRun.current++;const id=operation.current;if(id)void desktop.command('personalization.cancel',{operationId:id}).catch(()=>{});};},[read,desktop.command]);
@@ -165,5 +166,26 @@ function Comparison({result,feedback,busy,onFeedback}:{result:PersonalizationCom
  return <div className="personalization-comparison"><p className="personalization-caption">服务：{result.provider} · {result.model} · 场合：{sceneNames[result.scene]}。高亮只表示文本差异，不证明由某条规则造成。</p><div className="personalization-result-grid">{(['baseline','personalized'] as const).map(key=>{const side=result[key];return <article key={key} data-personalized={key==='personalized'}><header><h3>{key==='baseline'?'基础整理':'应用我的画像'}</h3><span>{({success:'已完成',failed:'失败',timeout:'超时',cancelled:'已取消',fallback:'已回退原文'} as Record<string,string>)[side.status]??side.status}</span></header>{side.text?<div className="personalization-result-text">{side.status==='success'&&result.baseline.status==='success'&&result.personalized.status==='success'?render(key==='baseline'?'before':'after'):side.text}</div>:<p className="personalization-caption">这组没有可展示的结果。{side.errorCode?`原因：${side.errorCode}`:''}</p>}</article>;})}</div>{result.identical&&result.valid&&<p className="personalization-identical">这段内容没有明显差异。可以换一段口述，或调整适用的表达习惯。</p>}<PersonalizationReference reference={result.reference}/>{result.valid&&<div className="personalization-rating"><span>哪份更符合你的表达？</span>{([['better','画像更符合我'],['same','差不多'],['worse','画像变差了']] as const).map(([value,label])=><Button key={value} aria-pressed={feedback===value} variant={feedback===value?'solid':'soft'} color={feedback===value?'blue':'gray'} disabled={busy} onClick={()=>onFeedback(value)}>{feedback===value&&<CheckIcon/>}{label}</Button>)}<small>只记录你的评价，不自动改变设置。</small></div>}</div>;
 }
 function StatisticsView({stats}:{stats:Statistics}){
- const comparisons=stats.comparisons;return <><div className="personalization-metrics"><div><span>参考画像的普通整理</span><strong>{stats.normal.personalized}<small> / {stats.normal.total} 次</small></strong></div><div><span>有效对照</span><strong>{comparisons.valid}<small> / {comparisons.total} 次</small></strong></div><div><span>已评价的有效对照</span><strong>{comparisons.feedback.total}<small> 次</small></strong></div></div><p className="personalization-caption">按任务去重，内部复核和重试不重复计数。预览另计：{stats.preview.personalized} / {stats.preview.total} 次参考画像。</p>{comparisons.feedback.total>0?<div className="personalization-feedback-counts"><span>更符合 {comparisons.feedback.better}</span><span>持平 {comparisons.feedback.same}</span><span>变差 {comparisons.feedback.worse}</span><small>分母：{comparisons.feedback.total} 次明确评价</small></div>:<p className="personalization-stats-empty">还没有对照评价。试写一段话，再告诉我们哪份更符合你。</p>}<p className="personalization-caption">对照状态：失败 {comparisons.failed} · 回退 {comparisons.fallback} · 取消 {comparisons.cancelled} · 进行中 {comparisons.pending}。参考次数代表使用情况，不代表质量提升。</p>{stats.scenes.length>0&&<details className="personalization-reference"><summary>按场合查看使用数量</summary><ul>{stats.scenes.map(item=><li key={item.scene}>{sceneNames[item.scene]}<span>{item.personalized} / {item.count} 次参考画像</span></li>)}</ul></details>}{stats.records.length>0&&<details className="personalization-reference"><summary>近期任务记录</summary><div className="personalization-records">{stats.records.map((record,index)=><div key={`${record.taskId}-${index}`}><span>{({normal:'普通整理',preview:'预览',comparison:'对照'} as const)[record.kind]} · {sceneNames[record.scene]} · {({started:'进行中',success:'完成',fallback:'原文回退',failed:'失败',cancelled:'取消'} as Record<string,string>)[record.status]??record.status}</span><small>{record.createdAt} · 画像 v{record.profileVersion} · {record.personalized?'已参考画像':'基础整理'}</small></div>)}</div></details>}</>;
+ const comparisons=stats.comparisons;
+ return <>
+  <div className="personalization-metrics">
+   <div><span>已发起含画像请求的普通整理</span><strong>{stats.normal.personalized}<small> / {stats.normal.total} 次</small></strong></div>
+   <div><span>有效对照</span><strong>{comparisons.valid}<small> / {comparisons.total} 次</small></strong></div>
+   <div><span>已评价的有效对照</span><strong>{comparisons.feedback.total}<small> 次</small></strong></div>
+  </div>
+  <p className="personalization-caption">分母为已记录的全部普通整理任务，按任务去重，复核和重试不重复计数。已发起表示客户端开始发送含画像内容的请求，不代表服务端收到、模型采用或质量提升。</p>
+  <p className="personalization-caption">普通整理：已选择画像 {stats.normal.selected??0} 次，其中旧记录发送状态无法核验 {stats.normal.legacyUnknown??0} 次，中断任务发送状态无法核验 {stats.normal.interruptedUnknown??0} 次，进行中发送状态待确认 {stats.normal.pending??0} 次。</p>
+  <p className="personalization-caption">预览单独统计：已发起含画像请求 {stats.preview.personalized} / {stats.preview.total} 次；已选择画像 {stats.preview.selected??0} 次，旧记录发送状态无法核验 {stats.preview.legacyUnknown??0} 次，中断任务发送状态无法核验 {stats.preview.interruptedUnknown??0} 次，进行中发送状态待确认 {stats.preview.pending??0} 次。</p>
+  {comparisons.feedback.total>0?<div className="personalization-feedback-counts"><span>更符合 {comparisons.feedback.better}</span><span>持平 {comparisons.feedback.same}</span><span>变差 {comparisons.feedback.worse}</span><small>分母：{comparisons.feedback.total} 次明确评价</small></div>:<p className="personalization-stats-empty">还没有对照评价。试写一段话，再告诉我们哪份更符合你。</p>}
+  <p className="personalization-caption">对照状态：失败 {comparisons.failed} · 回退 {comparisons.fallback} · 取消 {comparisons.cancelled} · 进行中 {comparisons.pending}。收益只统计有效对照中的明确评价。</p>
+  {stats.scenes.length>0&&<details className="personalization-reference"><summary>按场合查看普通整理数量</summary><ul>{stats.scenes.map(item=><li key={item.scene}>{sceneNames[item.scene]}<span>{item.personalized} / {item.count} 次已发起含画像请求</span><small>已选择画像 {item.selected??0} 次 · 旧记录发送状态无法核验 {item.legacyUnknown??0} 次 · 中断任务发送状态无法核验 {item.interruptedUnknown??0} 次 · 进行中发送状态待确认 {item.pending??0} 次</small></li>)}</ul></details>}
+  {stats.records.length>0&&<details className="personalization-reference"><summary>近期任务记录</summary><div className="personalization-records">{stats.records.map((record,index)=><div key={`${record.taskId}-${index}`}><span>{({normal:'普通整理',preview:'预览',comparison:'对照'} as const)[record.kind]} · {sceneNames[record.scene]} · {({started:'进行中',success:'完成',fallback:'原文回退',failed:'失败',cancelled:'取消'} as Record<string,string>)[record.status]??record.status}</span><small>{record.createdAt} · 画像 v{record.profileVersion} · {referenceDispatchLabel(record)}</small></div>)}</div></details>}
+ </>;
+}
+function referenceDispatchLabel(record:Statistics['records'][number]){
+ if(!record.personalized)return '未选择画像';
+ if(record.referenceDispatch==='started')return '已发起含画像请求';
+ if(record.referenceDispatch==='notStarted')return record.status==='started'?'已选画像，发送状态待确认':'已选画像，未发起含画像请求';
+ if(record.referenceDispatch==='unknown')return '已选画像，中断后发送状态无法核验';
+ return '已选画像，发送状态无法核验（旧记录）';
 }

@@ -50,10 +50,24 @@ pub async fn rewrite_manual_candidate(config:&ProviderConfig, secret:&str,
 pub(crate) async fn rewrite_manual_candidate_with_writing_context(config:&ProviderConfig,secret:&str,
     mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,
     context:Option<&crate::core::writing_context::WritingContext>)->Result<ManualCandidate,CloudError> {
-    let Some(context)=context else{return rewrite_manual_candidate(config,secret,mode,source,dictionary,cancel).await;};
+    rewrite_manual_candidate_with_writing_context_execution(config,secret,mode,source,dictionary,cancel,context,
+        RewriteExecution::for_duration(Duration::from_secs(20))).await
+}
+
+pub(crate) async fn rewrite_manual_candidate_with_writing_context_execution(config:&ProviderConfig,secret:&str,
+    mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,
+    context:Option<&crate::core::writing_context::WritingContext>,execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
+    execution.checkpoint(&cancel)?;
     let endpoint=rewrite_endpoint(config)?;
-    let outcome=minimum_pipeline::execute_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,
-        cancel,&endpoint,RewriteExecution::for_duration(Duration::from_secs(20)),None,Some(context)).await;
+    run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,context,execution).await
+}
+
+pub(super) async fn run_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,
+    mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,
+    endpoint:&str,context:Option<&crate::core::writing_context::WritingContext>,execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
+    let Some(context)=context else{return run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await;};
+    let outcome=minimum_pipeline::execute_until_with_writing_context(client,config,secret,mode,source,dictionary,
+        cancel,endpoint,execution,None,Some(context)).await;
     match outcome.result {
         Ok(draft)=>Ok(ManualCandidate{draft,review_issues:Vec::new()}),
         Err(error)=>{
@@ -70,7 +84,13 @@ pub(crate) async fn rewrite_manual_candidate_with_writing_context(config:&Provid
 pub(super) async fn run(client:&reqwest::Client, config:&ProviderConfig, secret:&str,
     mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot,
     cancel:CancellationToken, endpoint:&str, timeout:Duration)->Result<ManualCandidate,CloudError> {
-    let deadline=Instant::now()+timeout;
+    run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,RewriteExecution::for_duration(timeout)).await
+}
+
+pub(super) async fn run_until(client:&reqwest::Client, config:&ProviderConfig, secret:&str,
+    mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot,
+    cancel:CancellationToken, endpoint:&str, execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
+    let deadline=execution.deadline;
     let cancelled=||CloudError::new("cancelled","rewrite","候选已取消");
     let timed_out=||CloudError::new("rewrite_timeout","rewrite","生成候选超时，当前文本保持不变");
     let job=async {
@@ -82,7 +102,7 @@ pub(super) async fn run(client:&reqwest::Client, config:&ProviderConfig, secret:
             if uses_guarded_long(source) { long_request_body(config,mode,source,dictionary)? }
             else { fluent_request_body(config,mode,source,dictionary)? }
         } else { baseline_request_body(config,mode,source)? };
-        let content=fluent_pipeline::request_content(client,config,secret,endpoint,&body,&cancel,deadline).await?;
+        let content=fluent_pipeline::request_observed(client,config,secret,endpoint,&body,&cancel,&execution,RequestStage::Generation).await?;
         if let Some(request)=&minimum_request{annotate(source,dictionary,minimum::parse(&content,mode,source,request)?)}
         else{decode(config,mode,source,dictionary,&content)}
     };

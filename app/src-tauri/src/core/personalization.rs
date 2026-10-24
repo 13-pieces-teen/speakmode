@@ -192,6 +192,18 @@ pub enum PersonalizationEventStatus { Started, Success, Fallback, Failed, Cancel
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PersonalizationFeedback { Better, Same, Worse }
+/// Client transport dispatch evidence, not provider receipt or model quality.
+/// An absent marker belongs to legacy records and cannot establish dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReferenceDispatch {
+    /// No callback observed yet. For a pending task this is not proof of no send.
+    NotStarted,
+    /// The client began dispatching a request containing the frozen reference.
+    Started,
+    /// A selected task was interrupted before a durable terminal receipt.
+    Unknown,
+}
 /// Metadata only. Source text, rule text and profession fields must never enter diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -199,12 +211,15 @@ pub struct PersonalizationEvent {
     pub task_id: String, pub kind: PersonalizationEventKind, pub status: PersonalizationEventStatus,
     pub scene: AppWritingScene, pub profile_id: Option<String>, pub profile_version: u64,
     pub personalized: bool, pub created_at: String, pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_dispatch: Option<ReferenceDispatch>,
     pub feedback: Option<PersonalizationFeedback>,
 }
 impl PersonalizationEvent {
     pub fn validate(&self) -> Result<(), &'static str> {
         if !personalization_id_ok(&self.task_id) || self.profile_id.as_deref().is_some_and(|id| !personalization_id_ok(id)) || self.profile_version > i64::MAX as u64 || self.duration_ms > i64::MAX as u64 { return Err("personalization_event_identity"); }
         if self.created_at.len()>64 || chrono::DateTime::parse_from_rfc3339(&self.created_at).is_err() { return Err("personalization_event_time"); }
+        if matches!(self.reference_dispatch,Some(ReferenceDispatch::Started|ReferenceDispatch::Unknown))&&!self.personalized { return Err("personalization_dispatch_requires_reference"); }
         if self.feedback.is_some() && (self.kind != PersonalizationEventKind::Comparison || self.status != PersonalizationEventStatus::Success) { return Err("personalization_feedback_requires_valid_comparison"); }
         Ok(())
     }
