@@ -8,6 +8,7 @@ import {useDesktop} from '../services/DesktopProvider';
 import {errorMessage} from '../services/bridge';
 import {useNavigationGuard} from '../components/NavigationGuard';
 import {fromDetail,type Dictation} from '../model';
+import {clearDeletedPersonalizationReferences} from '../services/personalizationReferences';
 import './history.css';
 export function HistoryPage({selectedId,onSelect}:{selectedId:string|null;onSelect:(id:string|null)=>void}){
  const desktop=useDesktop(),navigation=useNavigationGuard();const [query,setQuery]=useState(desktop.query),[error,setError]=useState(''),[loading,setLoading]=useState(false);
@@ -15,7 +16,7 @@ export function HistoryPage({selectedId,onSelect}:{selectedId:string|null;onSele
  const searchRef=useRef<HTMLInputElement>(null),searchRun=useRef(0);const loadRef=useRef(desktop.loadRecord);loadRef.current=desktop.loadRecord;
  useEffect(()=>()=>{searchRun.current++;},[]);
  const listed=desktop.records.find(r=>r.id===selectedId);
- const selected=listed?.detail?listed:desktop.temporaryResult?.session.id===selectedId?fromDetail(desktop.temporaryResult,true):fetched?.id===selectedId?fetched:listed;
+ const selected=clearDeletedPersonalizationReferences(listed?.detail?listed:desktop.temporaryResult?.session.id===selectedId?fromDetail(desktop.temporaryResult,true):fetched?.id===selectedId?fetched:listed,desktop.personalizationReferences);
  useEffect(()=>{if(!selectedId||selected?.detail){setLoading(false);return;}let active=true;setLoading(true);setError('');void loadRef.current(selectedId).then(record=>{if(active)setFetched(record);}).catch(e=>{if(active)setError(errorMessage(e));}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[selectedId,selected?.detail]);
  const grouped=new Map<string,typeof desktop.records>();for(const record of desktop.records){const group=grouped.get(record.group)??[];group.push(record);grouped.set(record.group,group);}
  function search(value:string){navigation.request(()=>{const run=++searchRun.current;onSelect(null);setQuery(value);setError('');void desktop.searchHistory(value).catch(e=>{if(run===searchRun.current)setError(errorMessage(e));});});}

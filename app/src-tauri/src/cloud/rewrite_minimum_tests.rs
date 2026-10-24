@@ -99,7 +99,40 @@ async fn ordered_review_runs_through_real_http_without_bypassing_review(){
     let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
         CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,None,Some(semantic_review::MinimumReviewFormat::Ordered)).await;
     assert!(out.result.is_ok());assert_eq!(out.trace.calls,2);assert_eq!(server.count(),2);assert_eq!(source,before);
-    assert_eq!(out.trace.review.unwrap().protocol_version,semantic_review::ORDERED_REVIEW_VERSION);
+    let review=out.trace.review.unwrap();
+    assert_eq!(review.protocol_version,semantic_review::ORDERED_REVIEW_VERSION);
+    assert_eq!(review.reviewer_wire_protocol_version,semantic_review::ORDERED_REVIEW_VERSION);
+}
+#[tokio::test]
+async fn writing_contract_label_does_not_hide_named_or_ordered_reviewer_wire_metadata(){
+    let input="请先检查麦克风，暂时不要发布。";
+    for format in [semantic_review::MinimumReviewFormat::Named,semantic_review::MinimumReviewFormat::Ordered] {
+        let expected=if format==semantic_review::MinimumReviewFormat::Ordered {
+            semantic_review::ORDERED_REVIEW_VERSION
+        }else{semantic_review::MINIMUM_REVIEW_VERSION};
+        for accept in [true,false] {
+            let mut value:Value=serde_json::from_str(ACCEPT).unwrap();
+            let scope=if accept {"pass"}else{"fail"};
+            value["decision"]=json!(if accept {"accept"}else{"reject"});value["checks"]["scope"]=json!(scope);
+            if format==semantic_review::MinimumReviewFormat::Ordered {
+                value["checks"]=json!(["pass","pass",scope,"pass","pass"]);
+            }
+            let server=Server::new(vec![Reply::draft(input),Reply::new(value.to_string())]).await;
+            let (config,mut mode,source)=fixture(input);mode.mode_id="email".into();
+            let context=super::super::writing_context::for_mode(&mode).unwrap();
+            let before=source.clone();
+            let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
+                CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,Some(&context),Some(format)).await;
+            assert_eq!(out.result.is_ok(),accept);assert_eq!(out.trace.calls,2);assert_eq!(server.count(),2);
+            assert!(!out.trace.repair_attempted);assert_eq!(source,before);
+            if !accept {assert_eq!(out.result.as_ref().err().unwrap().code,"rewrite_semantic_rejected");}
+            let serialized=serde_json::to_value(&out.trace).unwrap();
+            assert_eq!(serialized["review"]["protocolVersion"],super::super::writing_context::VERSION);
+            assert_eq!(serialized["review"]["reviewerWireProtocolVersion"],expected);
+            let requests=server.requests.lock().unwrap();
+            assert!(requests[1]["messages"][0]["content"].as_str().unwrap().contains(expected));
+        }
+    }
 }
 #[tokio::test]
 async fn malformed_ordered_review_never_authorizes_a_draft(){

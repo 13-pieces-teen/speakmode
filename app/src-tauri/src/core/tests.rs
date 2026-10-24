@@ -30,6 +30,69 @@ fn personalization_event(task_id:&str) -> PersonalizationEvent {
 }
 
 #[test]
+fn restart_fails_unfinished_personalization_without_rewriting_history_or_feedback() {
+    let file=path();let saved;let historical;let mut before=Vec::new();
+    {
+        let mut store=Store::open(&file).unwrap();saved=store.save_personalization(personal_config(),1).unwrap();
+        historical=ready(&mut store,"restart-history",StoragePolicy::History);
+        for (id,kind) in [("unfinished-comparison",PersonalizationEventKind::Comparison),("unfinished-normal",PersonalizationEventKind::Normal),("unfinished-preview",PersonalizationEventKind::Preview)] {
+            let mut event=personalization_event(id);event.kind=kind;event.personalized=true;event.duration_ms=17;
+            store.record_personalization_event(event.clone()).unwrap();before.push(event);
+        }
+        for (id,status) in [("completed",PersonalizationEventStatus::Success),("raw-fallback",PersonalizationEventStatus::Fallback),("already-failed",PersonalizationEventStatus::Failed),("user-cancelled",PersonalizationEventStatus::Cancelled)] {
+            let mut event=personalization_event(id);event.status=status;event.personalized=true;event.duration_ms=321;
+            if status==PersonalizationEventStatus::Success{event.feedback=Some(PersonalizationFeedback::Better);}
+            store.record_personalization_event(event.clone()).unwrap();before.push(event);
+        }
+    }
+    {
+        let mut store=Store::open(&file).unwrap();
+        // Opening a connection alone is not authority to interrupt live work.
+        assert_eq!(store.personalization_events(None).unwrap().iter().filter(|event|event.status==PersonalizationEventStatus::Started).count(),3);
+        store.recover_after_restart().unwrap();
+        let after=store.personalization_events(None).unwrap();assert_eq!(after.len(),before.len());
+        for original in &before {
+            let actual=after.iter().find(|event|event.task_id==original.task_id).unwrap();let mut expected=original.clone();
+            if expected.status==PersonalizationEventStatus::Started{expected.status=PersonalizationEventStatus::Failed;}
+            assert_eq!(actual,&expected);actual.validate().unwrap();
+        }
+        assert!(after.iter().all(|event|event.status!=PersonalizationEventStatus::Started));
+        assert_eq!(store.personalization().unwrap(),saved);assert_eq!(store.get_result("restart-history").unwrap(),historical);
+        let mut late=before[0].clone();late.status=PersonalizationEventStatus::Success;
+        assert!(matches!(store.record_personalization_event(late),Err(StoreError::Conflict{..})),"the old process cannot finish a recovered job");
+        assert!(store.set_personalization_feedback("unfinished-comparison",PersonalizationFeedback::Better).is_err());
+        let raw=|store:&Store|store.test_connection().prepare("SELECT task_id,data FROM personalization_events ORDER BY task_id").unwrap().query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        let once=raw(&store);store.recover_after_restart().unwrap();assert_eq!(raw(&store),once,"recovery is idempotent");
+    }
+    let mut store=Store::open(&file).unwrap();store.recover_after_restart().unwrap();
+    assert_eq!(store.personalization_events(None).unwrap().iter().filter(|event|event.status==PersonalizationEventStatus::Failed).count(),4);
+    assert_eq!(store.get_result("restart-history").unwrap(),historical);drop(store);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn restart_event_recovery_is_atomic_and_leaves_invalid_statistics_unchanged() {
+    let mut store=Store::in_memory().unwrap();
+    store.checkpoint_source(seed("unfinished-source",StoragePolicy::History),source("unfinished-source")).unwrap();
+    for id in ["first-pending","second-pending"]{store.record_personalization_event(personalization_event(id)).unwrap();}
+    let malformed="{not valid event json";
+    store.test_connection().execute("INSERT INTO personalization_events(task_id,created_at,data) VALUES('invalid-statistics','2026-10-23',?1)",[malformed]).unwrap();
+    store.test_connection().execute_batch("CREATE TRIGGER abort_event_recovery BEFORE UPDATE ON personalization_events WHEN NEW.task_id='second-pending' BEGIN SELECT RAISE(ABORT,'synthetic recovery failure'); END;").unwrap();
+    assert!(store.recover_after_restart().is_err());
+    assert_eq!(store.get_result("unfinished-source").unwrap().session.status,StoredSessionStatus::Checkpointed);
+    let data=|id:&str|store.test_connection().query_row("SELECT data FROM personalization_events WHERE task_id=?1",[id],|row|row.get::<_,String>(0)).unwrap();
+    for id in ["first-pending","second-pending"]{assert_eq!(serde_json::from_str::<PersonalizationEvent>(&data(id)).unwrap().status,PersonalizationEventStatus::Started);}
+    store.test_connection().execute_batch("DROP TRIGGER abort_event_recovery;").unwrap();
+    store.recover_after_restart().unwrap();
+    assert_eq!(store.get_result("unfinished-source").unwrap().session.status,StoredSessionStatus::Interrupted);
+    assert_eq!(store.test_connection().query_row("SELECT data FROM personalization_events WHERE task_id='invalid-statistics'",[],|row|row.get::<_,String>(0)).unwrap(),malformed);
+    for id in ["first-pending","second-pending"] {
+        let data:String=store.test_connection().query_row("SELECT data FROM personalization_events WHERE task_id=?1",[id],|row|row.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<PersonalizationEvent>(&data).unwrap().status,PersonalizationEventStatus::Failed);
+    }
+    assert!(store.personalization_events(None).is_err(),"corrupt statistics remain a read error, never fabricated valid events");
+}
+
+#[test]
 fn personalization_config_cas_survives_reopen_without_changing_shared_settings() {
     let file=path();let saved;
     {let mut store=Store::open(&file).unwrap();assert_eq!(store.personalization().unwrap(),PersonalizationConfig::default());

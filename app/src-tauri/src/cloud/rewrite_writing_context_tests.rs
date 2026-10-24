@@ -217,16 +217,30 @@ async fn context_repair_preserves_same_hints_and_requires_full_final_review() {
     let input="嗯，呃呃，就是就是，我我觉得方案暂时不可行。预算3500元。";
     let rough="嗯，呃呃，就是就是，我我觉得方案暂时不可行。";
     let replacement="我觉得方案暂时不可行。";
-    let server=Server::new(vec![Reply::draft(input),Reply::new(ACCEPT),
-        Reply::new(json!({"replacements":[{"id":"r0","text":replacement}]}).to_string()),
-        Reply::new(rejection("方案暂时不可行", "方案暂时不可行", "facts"))]).await;
     let context=context(AppWritingScene::Document);
-    let out=run_context(&server,input,&context,Duration::from_secs(4)).await;
-    assert!(input.starts_with(rough));assert_eq!(out.result.err().unwrap().code,"rewrite_semantic_rejected");
-    assert_eq!(server.count(),4);assert!(!out.trace.native_deletion_verified);
-    let requests=server.requests.lock().unwrap();
-    let first=data(&requests[0])["writingContext"].clone();
-    assert!(requests.iter().all(|request|data(request)["writingContext"]==first));
+    let (config,mode,source)=fixture(input);
+    for format in [semantic_review::MinimumReviewFormat::Named,semantic_review::MinimumReviewFormat::Ordered] {
+        let server=Server::new(vec![Reply::draft(input),Reply::new(ACCEPT),
+            Reply::new(json!({"replacements":[{"id":"r0","text":replacement}]}).to_string()),
+            Reply::new(rejection("方案暂时不可行", "方案暂时不可行", "facts"))]).await;
+        let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
+            CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,Some(&context),Some(format)).await;
+        assert!(input.starts_with(rough));assert_eq!(out.result.err().unwrap().code,"rewrite_semantic_rejected");
+        assert_eq!(server.count(),4);assert!(!out.trace.native_deletion_verified);
+        let expected=if format==semantic_review::MinimumReviewFormat::Ordered {
+            semantic_review::ORDERED_REVIEW_VERSION
+        }else{semantic_review::MINIMUM_REVIEW_VERSION};
+        let serialized=serde_json::to_value(&out.trace).unwrap();
+        for key in ["review","finalReview"] {
+            assert_eq!(serialized[key]["protocolVersion"],super::super::super::writing_context::VERSION);
+            assert_eq!(serialized[key]["reviewerWireProtocolVersion"],expected);
+        }
+        assert!(out.trace.review.as_ref().unwrap().accepted());
+        assert!(!out.trace.final_review.as_ref().unwrap().accepted());
+        let requests=server.requests.lock().unwrap();
+        let first=data(&requests[0])["writingContext"].clone();
+        assert!(requests.iter().all(|request|data(request)["writingContext"]==first));
+    }
 }
 
 #[tokio::test]

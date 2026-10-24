@@ -23,10 +23,10 @@
 | 检查 | 当前结果 | 证据与边界 |
 | --- | --- | --- |
 | Windows desktop 编译 | PASS | `personalization-check-r2.log`；使用现有 MSVC 工具链及共享缓存 |
-| 完整 Rust library 测试 | PASS：999 passed，0 failed，4 ignored | `personalization-email-v4-final-tests.log`；包含真实 SQLite、协调器、mock HTTP、字母/单位及邮件合同/词法回归；不使用麦克风或真实模型 |
-| TypeScript 与 Vite 构建 | PASS | `personalization-integrated-build.log`；前端版本 0.4.28，含主分支最新统计切换修复 |
-| 前端配置校验 | PASS：11/11 | `personalization-helper-20261023.json` |
-| 隔离 Edge 行为检查 | PASS：17/17 | `personalization-ui-20261023-integrated/receipt.json`；合成 IPC，无外部请求、pageErrors 为 0 |
+| Rust library 测试 | PASS：完整 1003 passed，0 failed，4 ignored；另 1 项新增 actor 回归通过 | `personalization-lifecycle-final-tests.log`、`personalization-lifecycle-owner-restart-test.log`；完整快照在新增 actor 用例之前，未把过滤运行称为再跑全库；不使用麦克风或真实模型 |
+| TypeScript 与 Vite 构建 | PASS | `personalization-lifecycle-frontend-build.log`；前端版本 0.4.28 |
+| 前端配置／引用组件校验 | PASS：11/11、11/11 | `personalization-lifecycle-helper-check.log`、`personalization-reference-component-check.log`；后者使用合成 hooks/IPC |
+| 隔离 Edge 行为检查 | PASS：原有 17/17、新增 2/2 | `personalization-lifecycle-browser-20261024/receipt.json`、`personalization-reference-browser-20261024-r1/receipt.json`；合成 IPC，无外部请求、pageErrors 为 0 |
 | 窗口与键盘 | PASS | 1280、800、430 宽度，键盘页签、减少动态效果；已查看截图 |
 | 安装包与 EXE | PASS | 修复版 `personalization-package-quality-r2.log`，退出 0；文件版本均为 0.2.31。未安装或启动 |
 | 职业／习惯消融的真实模型质量 | 已执行，质量门槛未证明 | 4 条开发、60 条冻结文本；包含回退、误拦及被放行的保真疑点，不能宣称职业增益；见整理对照报告 |
@@ -91,12 +91,14 @@ r3 的 `artifacts.json` 绑定源码 commit `22368c0d43dab593c9bbb38fb7f7ee0cf2c
 | 场合作用范围及全局覆盖 | 已实施，domain／engine／UI 检查通过 | 跨场合真实误用率待测 |
 | 单一语言／词典配置来源 | 已实施 | 不作为新增画像收益统计 |
 | 本地版本保存、冻结、三阶段一致 | 已实施，CAS／重启／协议绑定检查通过 | 真实模型执行偏好率待测 |
-| 真实对照、参考、反馈与统计 | 已实施，取消／失败／分母检查通过 | 四组固定文本已执行，尚无用户收益结论 |
+| 真实对照、参考、反馈与统计 | 已实施；删除缓存／重启收尾已修复，参考计数的实际发送口径仍待修 | 四组固定文本已执行，尚无用户收益结论；不能把当前参考次数当实际发出请求数 |
 | 删除与 MemoryOnly | 已实施，侧表清除及内存策略检查通过 | 未宣称磁盘取证级擦除 |
 | 多供应商 | 共用受验证的整理协议和画像输入路径 | 各服务实际质量与费用待测，界面标注未实测 |
 | 文本消融及真实语音试点 | 文本首轮完成；语音待执行 | 首轮不证明质量门槛通过；用户先做 6 个任务，后续再扩充试点 |
 
 ## 接下来的验收
+
+2026-10-24 的生命周期审计及未完成项见 [补充记录](personalization-lifecycle-2026-10-24.md)。缓存清理、重启收尾与协议记录有独立工程证据；实际发送口径、模型误拒和真人任务不能据此视为已完成。
 
 依照 PRD 固定相同源文和服务配置，分别比较基础整理、仅职业、完整画像和移除全部职业信息的习惯配置。先确认小批结果符合保真与调用预算，再扩大到冻结的独立材料；同时记录负例、失败、原文回退与取消，不能只保留成功样本。
 

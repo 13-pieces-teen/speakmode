@@ -74,6 +74,8 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
         request.validate_personalization(context)?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        // Keep the legacy writing-contract label while retaining the separately
+        // recorded reviewer wire contract from this exact prepared request.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if review.accepted() && local_repair::residue_hint(source,&draft).is_none(){return Ok(draft);}
@@ -100,6 +102,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::FinalReview).await?;
         request.validate_personalization(context)?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&repaired).map_err(safe_error)?;
+        // Final review records its own request-derived wire contract as well.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if !review.accepted() || local_repair::residue_hint(source,&repaired).is_some(){return Err(rejected());}

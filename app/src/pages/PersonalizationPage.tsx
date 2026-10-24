@@ -9,6 +9,7 @@ import {candidateDiff} from '../components/candidateDiff';
 import {errorMessage} from '../services/bridge';
 import {hasPersonalizationForScene,isPersonalizationConfig,personalizationConflict,personalizationError,sceneNames,scenes,styleOptions,templates,type PersonalizationComparison,type PersonalizationConfig,type PersonalizationProfile,type PersonalizationStyle,type PersonalizationVerdict} from '../services/personalization';
 import type {AppWritingScene} from '../appWriting';
+import {clearDeletedPersonalizationReferences} from '../services/personalizationReferences';
 import './personalization.css';
 
 interface Statistics {
@@ -31,6 +32,7 @@ export function PersonalizationPage({onDictionary,onSettings,onSkip}:{onDictiona
  const [comparison,setComparison]=useState<PersonalizationComparison|null>(null),[comparing,setComparing]=useState(false),[cancelPending,setCancelPending]=useState(false),[compareError,setCompareError]=useState(''),[feedback,setFeedback]=useState<PersonalizationVerdict|null>(null),[feedbackBusy,setFeedbackBusy]=useState(false);
  const [sourceKind,setSourceKind]=useState<'sample'|'paste'|'history'>('sample'),[text,setText]=useState('今天同步三件事。登录页已经完成。支付页还在联调，预计周五完成。发布前先补一轮回归测试，通过以后再上线。'),[historyId,setHistoryId]=useState(''),[modeId,setModeId]=useState(desktop.preferences.defaultModeId);
  const mounted=useRef(false),readRun=useRef(0),statsRun=useRef(0),operation=useRef<string|null>(null),cancelRequested=useRef(false),savingRef=useRef(false),compareRef=useRef(false),draftRef=useRef(draft),savedRef=useRef(saved);
+ useEffect(()=>{setComparison(previous=>clearDeletedPersonalizationReferences(previous,desktop.personalizationReferences));},[desktop.personalizationReferences]);
  draftRef.current=draft;savedRef.current=saved;
  const dirty=Boolean(saved&&draft&&JSON.stringify(savedWithoutCapability(saved))!==JSON.stringify(draft));
  const invalid=draft?personalizationError(draft):'';
@@ -127,7 +129,7 @@ export function PersonalizationPage({onDictionary,onSettings,onSkip}:{onDictiona
     {(!saved?.enabled||dirty)&&<p className="personalization-caption">{dirty?'请先保存画像修改，再运行对照。':'启用并保存“使用我的画像”，即可试写；无需填写职业。'}</p>}
     {compareError&&<p className="personalization-error" role="alert">{compareError}</p>}
     {comparing&&<p role="status" className="personalization-running"><ReloadIcon/>正在整理两份真实结果，原文已固定…</p>}
-    {comparison&&<Comparison result={comparison} feedback={feedback} busy={feedbackBusy} onFeedback={verdict=>void rate(verdict)}/>}
+    {comparison&&<Comparison result={clearDeletedPersonalizationReferences(comparison,desktop.personalizationReferences)} feedback={feedback} busy={feedbackBusy} onFeedback={verdict=>void rate(verdict)}/>}
     {!comparison&&!comparing&&<div className="personalization-compare-empty"><span>基础整理</span><span>应用我的画像</span><p>运行后查看两份真实结果和差异。相同的结果也会如实显示。</p></div>}
    </section>
    <section className="personalization-statistics surface" aria-labelledby="personalization-stats-title"><header className="section-heading"><h2 id="personalization-stats-title">使用记录</h2><Select.Root value={window} onValueChange={value=>setWindow(value as 'week'|'all')}><Select.Trigger aria-label="统计时间范围"/><Select.Content><Select.Item value="week">最近 7 天</Select.Item><Select.Item value="all">全部时间</Select.Item></Select.Content></Select.Root></header>{statsError?<div className="personalization-error" role="alert"><p>{statsError}</p><Button variant="soft" onClick={()=>void readStats()}>重新读取统计</Button></div>:stats?<StatisticsView stats={stats}/>:<p role="status" className="personalization-caption">{statsLoading?'正在读取统计…':'还没有使用记录。'}</p>}</section>

@@ -122,6 +122,10 @@ pub struct SemanticReview {
     pub issues: Vec<Issue>,
     pub binding: ReviewBinding,
     pub protocol_version: &'static str,
+    /// Locally selected underlying five-check wire contract. Wrapper labels may
+    /// replace protocol_version, but never this request-derived metadata. Ordered
+    /// requests still support legacy named checks; this is not the response shape.
+    pub reviewer_wire_protocol_version: &'static str,
 }
 
 impl SemanticReview {
@@ -260,6 +264,7 @@ pub fn parse_minimum(content:&str,request:&MinimumReviewRequest,mode:&ModeSnapsh
     }
     let mut review=parse_bound(content,&request.binding,source,draft,request.ordered)?;
     review.protocol_version=request.protocol_version;
+    review.reviewer_wire_protocol_version=request.protocol_version;
     Ok(review)
 }
 
@@ -313,7 +318,8 @@ fn parse_bound(content:&str,binding:&ReviewBinding,source:&SourceRevision,draft:
     for issue in &wire.issues {check_issue(issue,&source_text,draft_text)?;}
     // A model's five passes cannot waive native spelling/letter-list guards.
     if all_pass {super::spoken_format::validate(source,&draft.blocks)?;}
-    Ok(SemanticReview { decision:wire.decision,checks,issues:wire.issues,binding:binding.clone(),protocol_version:SEMANTIC_REVIEW_PROMPT_VERSION })
+    Ok(SemanticReview { decision:wire.decision,checks,issues:wire.issues,binding:binding.clone(),
+        protocol_version:SEMANTIC_REVIEW_PROMPT_VERSION,reviewer_wire_protocol_version:SEMANTIC_REVIEW_PROMPT_VERSION })
 }
 
 #[cfg(test)]
@@ -342,6 +348,7 @@ mod tests {
         let request=prepare(&ProviderConfig::default(),&mode,&source,&draft).unwrap();
         let review=parse(&response().to_string(),&request.binding,&source,&draft).unwrap();
         assert!(review.accepted());assert_eq!(source,original_source);assert_eq!(draft.blocks[0].text,original_text);
+        assert_eq!(serde_json::to_value(&review).unwrap()["reviewerWireProtocolVersion"],SEMANTIC_REVIEW_PROMPT_VERSION);
         assert_eq!(request.body["max_tokens"],512);assert_eq!(request.body["temperature"],0);
         let body=request.body.to_string();assert!(!body.contains(&request.binding.source_sha256));assert!(!body.contains(&request.binding.draft_sha256));
     }

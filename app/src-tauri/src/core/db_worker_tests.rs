@@ -22,6 +22,32 @@ async fn personalization_actor_publishes_cas_config_and_separates_usage_metadata
     stop(&db).await;let reopened=DbClient::open_with_options(&file.0,options()).unwrap();assert_eq!(reopened.snapshot().personalization,saved);stop(&reopened).await;
 }
 
+#[tokio::test]
+async fn personalization_owner_recovers_only_previous_process_jobs_before_accepting_new_work() {
+    let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();
+    let event=PersonalizationEvent{task_id:"previous-process-pending".into(),kind:PersonalizationEventKind::Comparison,status:PersonalizationEventStatus::Started,
+        scene:AppWritingScene::Technical,profile_id:None,profile_version:1,personalized:true,created_at:"2026-10-23T10:00:00+08:00".into(),duration_ms:17,feedback:None};
+    invoke(&db,DbCommand::RecordPersonalizationEvent{event:event.clone()},None).await.unwrap();
+    let mut completed=event.clone();completed.task_id="completed-with-feedback".into();completed.status=PersonalizationEventStatus::Success;completed.feedback=Some(PersonalizationFeedback::Same);
+    invoke(&db,DbCommand::RecordPersonalizationEvent{event:completed.clone()},None).await.unwrap();
+    stop(&db).await;
+    let reopened=DbClient::open_with_options(&file.0,options()).unwrap();
+    let DbValue::PersonalizationEvents(events)=invoke(&reopened,DbCommand::GetPersonalizationEvents{since:None},None).await.unwrap() else{panic!("events required");};
+    let mut recovered=event.clone();recovered.status=PersonalizationEventStatus::Failed;
+    assert!(events.contains(&recovered));assert!(events.contains(&completed));
+    let mut live=event;live.task_id="new-process-live".into();
+    invoke(&reopened,DbCommand::RecordPersonalizationEvent{event:live.clone()},None).await.unwrap();
+    for _ in 0..2 {
+        let DbValue::PersonalizationEvents(events)=invoke(&reopened,DbCommand::GetPersonalizationEvents{since:None},None).await.unwrap() else{panic!("events required");};
+        assert!(events.contains(&live),"ordinary reads cannot interrupt a live owner's task");
+    }
+    stop(&reopened).await;
+    let last=DbClient::open_with_options(&file.0,options()).unwrap();
+    let DbValue::PersonalizationEvents(events)=invoke(&last,DbCommand::GetPersonalizationEvents{since:None},None).await.unwrap() else{panic!("events required");};
+    live.status=PersonalizationEventStatus::Failed;assert!(events.contains(&live));assert!(events.contains(&completed));
+    stop(&last).await;
+}
+
 struct DbPath(PathBuf);
 impl DbPath {
     fn new() -> Self {

@@ -4,11 +4,13 @@ fn request(format:MinimumReviewFormat)->(ModeSnapshot,SourceRevision,RewriteResu
  let r=prepare_minimum_with_format(&ProviderConfig::default(),&mode,&source,&draft,format).unwrap();(mode,source,draft,r)
 }
 fn verdict()->Value{json!({"decision":"accept","checks":["pass","pass","pass","pass","pass"],"issues":[]})}
+fn named_verdict()->Value{json!({"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]})}
 #[test]
 fn ordered_review_keeps_five_independent_checks_and_original_bindings(){
  let (m,s,d,r)=request(MinimumReviewFormat::Ordered);
  let original=s.clone();let review=parse_minimum(&verdict().to_string(),&r,&m,&s,&d).unwrap();
- assert!(review.accepted());assert_eq!(review.protocol_version,ORDERED_REVIEW_VERSION);assert_eq!(s,original);
+ assert!(review.accepted());assert_eq!(review.protocol_version,ORDERED_REVIEW_VERSION);
+ assert_eq!(review.reviewer_wire_protocol_version,ORDERED_REVIEW_VERSION);assert_eq!(s,original);
  for i in 0..5 {for status in ["fail","uncertain"] {
   let mut v=verdict();v["decision"]=json!("reject");v["checks"][i]=json!(status);
   let review=parse_minimum(&v.to_string(),&r,&m,&s,&d).unwrap();assert!(!review.accepted());
@@ -51,6 +53,28 @@ fn explicit_english_context_retains_its_existing_review_schema(){
  context.language=crate::core::DraftLanguage::English;
  let r=prepare_minimum_with_writing_context_and_format(&ProviderConfig::default(),&m,&s,&d,Some(&context),MinimumReviewFormat::Ordered).unwrap();
  assert!(!r.ordered);assert!(parse_minimum(&verdict().to_string(),&r,&m,&s,&d).is_err());
+ let review=parse_minimum(&named_verdict().to_string(),&r,&m,&s,&d).unwrap();
+ assert!(review.accepted());assert_eq!(review.reviewer_wire_protocol_version,MINIMUM_REVIEW_VERSION);
+}
+#[test]
+fn review_wire_metadata_is_local_and_legacy_named_checks_remain_supported(){
+ for format in [MinimumReviewFormat::Named,MinimumReviewFormat::Ordered] {
+  let (m,s,d,r)=request(format);
+  let expected=if format==MinimumReviewFormat::Ordered {ORDERED_REVIEW_VERSION}else{MINIMUM_REVIEW_VERSION};
+  let original=r.body.clone();
+  // Ordered contracts already allow named legacy responses; metadata describes
+  // the prepared contract, not a model-supplied version or response container.
+  let value=named_verdict();
+  let review=parse_minimum(&value.to_string(),&r,&m,&s,&d).unwrap();
+  let serialized=serde_json::to_value(&review).unwrap();
+  assert!(review.accepted());assert_eq!(serialized["protocolVersion"],expected);
+  assert_eq!(serialized["reviewerWireProtocolVersion"],expected);assert_eq!(r.body,original);
+  assert!(!r.body.to_string().contains("reviewerWireProtocolVersion"));
+  for field in ["protocolVersion","reviewerWireProtocolVersion"] {
+   let mut invalid=value.clone();invalid[field]=json!(expected);
+   assert!(parse_minimum(&invalid.to_string(),&r,&m,&s,&d).is_err(),"versions must not enter the model response schema");
+  }
+ }
 }
 #[test]
 fn ordered_default_is_limited_to_the_evaluated_model_region_and_feature(){

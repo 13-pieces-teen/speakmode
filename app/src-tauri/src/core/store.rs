@@ -719,11 +719,30 @@ impl Store {
         tx.commit_guarded(guard.as_deref(),CommitKind::Cleanup,||{})?;Ok(result)
     }
 
+    /// Called by the owning DB worker before it accepts any new jobs. A plain
+    /// Store::open/read must never terminate work belonging to a live owner.
     pub fn recover_after_restart(&mut self) -> StoreResult<()> {
         let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;
         tx.execute("UPDATE sessions SET status='interrupted' WHERE status='checkpointed'",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unconfirmed',reason='interruptedBeforeReceipt' WHERE state='prepared'",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unconfirmed',reason='interrupted' WHERE state='dispatched'",[])?;
+        let pending={
+            let mut statement=tx.prepare("SELECT task_id,data FROM personalization_events")?;
+            let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (task_id,data) in pending {
+            // Invalid statistics remain visible as read errors; they must not
+            // prevent ordinary session recovery or be silently rewritten.
+            let Ok(mut event)=serde_json::from_str::<PersonalizationEvent>(&data) else{continue;};
+            if event.task_id!=task_id || event.validate().is_err() || event.status!=PersonalizationEventStatus::Started {continue;}
+            // The old process cannot complete these jobs. Use the existing
+            // failure state, not success or a fabricated user cancellation.
+            // Preserve recorded duration: downtime is not processing latency.
+            event.status=PersonalizationEventStatus::Failed;
+            let changed=tx.execute("UPDATE personalization_events SET data=?1 WHERE task_id=?2 AND data=?3",params![json(&event)?,task_id,data])?;
+            if changed!=1{return Err(StoreError::Conflict{current:"personalization_recovery_changed".into()});}
+        }
         tx.commit()?;
         Ok(())
     }
