@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 #[cfg(test)]#[path="rewrite_ordered_review_tests.rs"]mod ordered_tests;
 #[path="rewrite_coverage_lab.rs"]
 pub mod coverage_lab;
+#[path="rewrite_personalization_review_lab.rs"]
+pub mod preference_lab;
 pub const SEMANTIC_REVIEW_PROMPT_VERSION: &str = "semantic-review-compact-v3";
 pub const MINIMUM_REVIEW_VERSION: &str = if cfg!(feature="experimental-english-dictation") { "minimum-review-v4" } else { "minimum-review-v3" };
 pub const ORDERED_REVIEW_VERSION: &str = "minimum-review-ordered-v1";

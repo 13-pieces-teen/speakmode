@@ -40,7 +40,18 @@ async fn observed_production_path_has_balanced_content_free_events(){
     assert_eq!(out.trace.requests.len(),2);assert_eq!(source,before);
     let events=events.lock().unwrap();assert_eq!(events.len(),4);
     assert_eq!(events.iter().map(|e|(e.stage,e.event)).collect::<Vec<_>>(),vec![("generation","started"),("generation","finished"),("review","started"),("review","finished")]);
-    assert!(events.iter().all(|event|!serde_json::to_string(event).unwrap().contains("3000")));
+    for event in events.iter() {
+        // A duration such as 0.130003ms can contain the source's digits by
+        // coincidence. Verify the content-free DTO structure and string domain
+        // rather than searching numeric telemetry for a source substring.
+        let value=serde_json::to_value(event).unwrap();let fields=value.as_object().unwrap();
+        assert!(fields.keys().all(|key|matches!(key.as_str(),"stage"|"event"|"durationMs"|"remainingBudgetMs"|"outcome")));
+        assert!(matches!(value["stage"].as_str(),Some("generation"|"review"|"repair"|"finalReview")));
+        assert!(matches!(value["event"].as_str(),Some("started"|"finished")));
+        assert!(value["remainingBudgetMs"].is_u64());
+        assert!(value["durationMs"].is_null()||value["durationMs"].as_f64().is_some_and(|duration|duration.is_finite()&&duration>=0.));
+        assert!(value["outcome"].is_null()||matches!(value["outcome"].as_str(),Some("responseReceived"|"failed"|"cancelled"|"timedOut"|"interrupted")));
+    }
 }
 
 #[tokio::test]

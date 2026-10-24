@@ -3,6 +3,7 @@ use super::*;
 use crate::core::personalization::*;
 
 include!("personalization_statistics_failure_tests.rs");
+include!("personalization_routing_tests.rs");
 #[path="personalization_dispatch_tests.rs"]
 mod dispatch_tests;
 

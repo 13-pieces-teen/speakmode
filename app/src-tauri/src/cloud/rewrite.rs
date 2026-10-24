@@ -536,7 +536,18 @@ pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode
 
 pub(crate) async fn rewrite_with_execution(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken, execution: RewriteExecution) -> Result<RewriteResult, CloudError> {
     let endpoint = rewrite_endpoint(config)?;
-    rewrite_with_client_execution(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution).await
+    rewrite_with_client_optional_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,None).await
+}
+
+/// Normal dictation and its profile-off comparison share this route selection.
+/// None preserves the existing provider/mode contract, not an empty context.
+pub(crate) async fn rewrite_with_optional_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,execution:RewriteExecution,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<RewriteResult,CloudError> {
+    match context {
+        Some(context)=>rewrite_with_writing_context(config,secret,mode,source,dictionary,cancel,execution,context).await,
+        None=>rewrite_with_execution(config,secret,mode,source,dictionary,cancel,execution).await,
+    }
 }
 
 /// Caller freezes context with the stop-time target. No capture, persistence or
@@ -546,7 +557,18 @@ pub(crate) async fn rewrite_with_writing_context(config:&ProviderConfig,secret:&
     context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError> {
     execution.checkpoint(&cancel)?;
     let endpoint=rewrite_endpoint(config)?;
-    minimum_pipeline::run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,context).await
+    rewrite_with_client_optional_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,Some(context)).await
+}
+
+// Endpoint/client substitution is for local transport regressions. Both public
+// context choices delegate here without changing deadlines or source identity.
+pub(crate) async fn rewrite_with_client_optional_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<RewriteResult,CloudError> {
+    match context {
+        Some(context)=>minimum_pipeline::run_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,context).await,
+        None=>rewrite_with_client_execution(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await,
+    }
 }
 
 pub(crate) fn validate_source(source:&SourceRevision)->Result<(),CloudError> {

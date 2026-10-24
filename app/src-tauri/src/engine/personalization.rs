@@ -11,6 +11,16 @@ pub(super) fn context_for(mode:&ModeSnapshot, language:DraftLanguage, config:&Pe
     if personalization.is_none() && selected_scene(mode).is_none() && mode.mode_id!="auto" && language==DraftLanguage::AsSpoken { return None; }
     Some(WritingContext {scene,language,input:None,personalization})
 }
+/// Match normal dictation with no captured host input. Enabling collection
+/// still retains the empty general context used by the normal legacy route.
+pub(super) fn context_for_preferences(mode:&ModeSnapshot, preferences:&AppWritingPreferences, config:&PersonalizationConfig)->Option<WritingContext> {
+    let scene=selected_scene(mode).unwrap_or_default();
+    let personalization=config.freeze(scene);
+    let automatic=mode.mode_id=="auto"&&mode.rules.is_empty();
+    let legacy_none=selected_scene(mode).is_none()&&!automatic&&!preferences.input_context_enabled&&preferences.output_language==DraftLanguage::AsSpoken;
+    if legacy_none&&personalization.is_none(){return None;}
+    Some(WritingContext{scene,language:preferences.output_language,input:None,personalization})
+}
 pub(super) fn receipt(context:Option<&WritingContext>)->Option<WritingReceipt> {
     context.map(|c|WritingReceipt{scene:c.scene,language:c.language,context_used:c.input.is_some(),contract_version:rewrite::writing_context::VERSION.into(),personalization:c.personalization.clone()})
 }
@@ -62,10 +72,10 @@ impl ComparisonArm {
 }
 /// Each arm gets the ordinary total budget. Cancellation drops the actual
 /// request before the lease, and never starts the second arm after cancellation.
-async fn paired_trial<F,Fut>(baseline:WritingContext,personalized:WritingContext,cancel:CancellationToken,mut call:F)->(ComparisonArm,ComparisonArm)
-where F:FnMut(WritingContext,CancellationToken)->Fut,Fut:Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
+async fn paired_trial<F,Fut>(baseline:Option<WritingContext>,personalized:WritingContext,cancel:CancellationToken,mut call:F)->(ComparisonArm,ComparisonArm)
+where F:FnMut(Option<WritingContext>,CancellationToken)->Fut,Fut:Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
     let mut arms=Vec::new();
-    for context in [baseline,personalized] {
+    for context in [baseline,Some(personalized)] {
         let result=if cancel.is_cancelled(){Err(preview_cancelled())}else{
             tokio::select!{biased;_=cancel.cancelled()=>Err(preview_cancelled()),result=call(context,cancel.child_token())=>result}
         };
@@ -148,9 +158,11 @@ impl AppHub {
         };
         let (snapshot,epoch)={let mut inner=self.inner.lock().unwrap();self.auxiliary_available()?;claim_operation(&mut inner,&operation)?;(self.db.snapshot(),self.lifecycle_epoch.load(std::sync::atomic::Ordering::SeqCst))};
         let mode:ModeSnapshot=snapshot.modes.iter().find(|mode|Some(mode.id.as_str())==p.get("modeId").and_then(Value::as_str).or(Some(snapshot.preferences.default_mode_id.as_str()))).cloned().ok_or_else(||ApiError::new("notFound","personalization","整理场合不存在"))?.into();
-        let personalized=context_for(&mode,snapshot.preferences.app_writing.output_language,&snapshot.personalization)
+        let personalized=context_for_preferences(&mode,&snapshot.preferences.app_writing,&snapshot.personalization)
             .filter(|context|context.personalization.is_some()).ok_or_else(||ApiError::new("personalization_not_applicable","personalization","请启用画像，并为当前场合设置背景或表达偏好"))?;
-        let reference=personalized.personalization.clone().unwrap();let mut baseline=personalized.clone();baseline.personalization=None;
+        let reference=personalized.personalization.clone().unwrap();
+        let mut profile_off=snapshot.personalization.clone();profile_off.enabled=false;
+        let baseline=context_for_preferences(&mode,&snapshot.preferences.app_writing,&profile_off);
         let source=self.load_preview_source(source_input,&id).await?;rewrite::validate_source(&source.revision)?;
         cloud::rewrite_endpoint(&snapshot.provider_config)?;
         let secret=credentials::read_for(&snapshot.provider_config,CredentialStage::Rewrite)?;
@@ -171,8 +183,8 @@ impl AppHub {
         let work=async {
             let config=&snapshot.provider_config;let dictionary=&snapshot.dictionary;let secret=&secret;let source=&source.revision;let mode=&mode;
             paired_trial(baseline,personalized,cancel.clone(),|context,token|async move {
-                let execution=trial_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(20)),Some(&context));
-                rewrite::rewrite_with_writing_context(config,secret,mode,source,dictionary,token,execution,&context).await
+                let execution=trial_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(20)),context.as_ref());
+                rewrite::rewrite_with_optional_context(config,secret,mode,source,dictionary,token,execution,context.as_ref()).await
             }).await
         };
         let (baseline,personalized)=(AuxiliaryFuture{future:Some(Box::pin(work)),lease:Some(lease)}).await;
@@ -240,24 +252,24 @@ fn statistics(window:&str,since:Option<String>,events:Vec<PersonalizationEvent>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn contexts()->(WritingContext,WritingContext) {
+    fn contexts()->(Option<WritingContext>,WritingContext) {
         let config=PersonalizationConfig{enabled:true,preferences:ExpressionStyle{paragraphs:true,..Default::default()},..Default::default()};
         let mode=ModeSnapshot{mode_id:"technical".into(),name:"技术".into(),base_mode:BaseMode::Light,rules:"保留条件".into(),revision:2};
         let personalized=context_for(&mode,DraftLanguage::English,&config).unwrap();
-        let mut baseline=personalized.clone();baseline.personalization=None;(baseline,personalized)
+        let mut baseline=personalized.clone();baseline.personalization=None;(Some(baseline),personalized)
     }
     fn draft(text:&str)->rewrite::RewriteResult {rewrite::RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![OutputBlock{id:"fixture".into(),text:text.into(),source_refs:vec!["original-source".into()]}]}}
     #[tokio::test]
     async fn paired_calls_change_only_new_profile_and_keep_language_scene_and_input() {
         let (baseline,personalized)=contexts();let expected=baseline.clone();let observed=Arc::new(Mutex::new(Vec::new()));let calls=observed.clone();
         let (a,b)=paired_trial(baseline,personalized,CancellationToken::new(),move |context,_|{let calls=calls.clone();async move {calls.lock().unwrap().push(context);Ok(draft("原有事实"))}}).await;
-        let calls=observed.lock().unwrap();assert_eq!(calls.len(),2);assert_eq!(calls[0],expected);let mut stripped=calls[1].clone();assert!(stripped.personalization.take().is_some());assert_eq!(stripped,expected);
+        let calls=observed.lock().unwrap();assert_eq!(calls.len(),2);assert_eq!(calls[0],expected);let mut stripped=calls[1].clone().unwrap();assert!(stripped.personalization.take().is_some());assert_eq!(Some(stripped),expected);
         assert_eq!(a.status,"success");assert_eq!(b.status,"success");assert_eq!(a.text,b.text,"same output is not a claimed improvement");
     }
     #[tokio::test]
     async fn paired_failure_is_exposed_without_substituting_fixture_or_source_success() {
         let (baseline,personalized)=contexts();let (a,b)=paired_trial(baseline,personalized,CancellationToken::new(),|context,_|async move {
-            if context.personalization.is_none(){Err(CloudError::new("rewrite_timeout","rewrite","timeout"))}else{Ok(draft("真实第二组"))}
+            if context.as_ref().is_none_or(|context|context.personalization.is_none()){Err(CloudError::new("rewrite_timeout","rewrite","timeout"))}else{Ok(draft("真实第二组"))}
         }).await;
         assert_eq!(a.status,"timeout");assert!(a.text.is_none());assert_eq!(b.status,"success");assert_eq!(b.text.as_deref(),Some("真实第二组"));
     }
@@ -268,9 +280,19 @@ mod tests {
         assert_eq!(*calls.lock().unwrap(),1);assert_eq!(a.status,"cancelled");assert_eq!(b.status,"cancelled");assert!(a.text.is_none());assert!(b.text.is_none());
     }
     #[tokio::test]
+    async fn legacy_none_baseline_stays_none_and_cancellation_prevents_personalized_arm() {
+        let (_,personalized)=contexts();let cancel=CancellationToken::new();let worker=cancel.clone();
+        let calls=Arc::new(Mutex::new(0));let count=calls.clone();
+        let (a,b)=paired_trial(None,personalized,cancel,move|context,_|{let worker=worker.clone();let count=count.clone();async move {
+            assert!(context.is_none(),"legacy baseline must not acquire an empty writing contract");
+            *count.lock().unwrap()+=1;worker.cancel();Ok(draft("late baseline"))
+        }}).await;
+        assert_eq!(*calls.lock().unwrap(),1);assert_eq!((a.status,b.status),("cancelled","cancelled"));assert!(a.text.is_none()&&b.text.is_none());
+    }
+    #[tokio::test]
     async fn baseline_http_then_cancellation_never_claims_personalized_dispatch() {
         use crate::cloud::rewrite::minimum_pipeline::tests::{Server,Reply};
-        let (mut baseline,mut personalized)=contexts();baseline.language=DraftLanguage::AsSpoken;personalized.language=DraftLanguage::AsSpoken;
+        let (mut baseline,mut personalized)=contexts();baseline.as_mut().unwrap().language=DraftLanguage::AsSpoken;personalized.language=DraftLanguage::AsSpoken;
         let mut config=ProviderConfig::default();config.region=Some("beijing".into());
         let mode=ModeSnapshot{mode_id:"technical".into(),name:"技术".into(),base_mode:BaseMode::Light,rules:String::new(),revision:1};
         let source=SourceRevision{id:"comparison-source".into(),session_id:"comparison".into(),asr_attempt_id:"synthetic".into(),generation:1,
@@ -281,12 +303,12 @@ mod tests {
         let dispatch=DispatchTracker::default();let cancel=CancellationToken::new();let worker=&cancel;
         let calls=std::sync::atomic::AtomicUsize::new(0);let client=reqwest::Client::builder().no_proxy().build().unwrap();
         let (a,b)=paired_trial(baseline,personalized,cancel.clone(),|context,token|{
-            let execution=dispatch.observe(rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(3)),Some(&context));
+            let execution=dispatch.observe(rewrite::execution::RewriteExecution::for_duration(Duration::from_secs(3)),context.as_ref());
             let (client,config,mode,source,endpoint,calls)=(&client,&config,&mode,&source,server.endpoint.as_str(),&calls);
             async move {
                 calls.fetch_add(1,Ordering::SeqCst);
                 let result=rewrite::minimum_pipeline::run_until_with_writing_context(client,config,"synthetic",mode,source,
-                    &DictionarySnapshot::default(),token,endpoint,execution,&context).await;
+                    &DictionarySnapshot::default(),token,endpoint,execution,context.as_ref().unwrap()).await;
                 assert!(result.is_ok(),"local baseline must finish before cancellation");worker.cancel();result
             }
         }).await;

@@ -704,9 +704,7 @@ impl AppHub {
         // dictionary that the user may have changed while speaking.
         let Some(dictionary)=self.recording_rewrite_dictionary(&id,generation)else{return;};
         self.finish_rewrite_with_context_policy(id,generation,move|config,mode,source,cancel,execution,context|async move{
-            if let Some(context)=context {
-                rewrite::rewrite_with_writing_context(&config,&secret,&mode,&source,&dictionary,cancel,execution,&context).await
-            } else {rewrite::rewrite_with_execution(&config,&secret,&mode,&source,&dictionary,cancel,execution).await}
+            rewrite::rewrite_with_optional_context(&config,&secret,&mode,&source,&dictionary,cancel,execution,context.as_ref()).await
         },None::<RewriteWaitPolicy>,|hub,id,generation| {
             let hub=Arc::clone(hub);let id=id.to_owned();
             tokio::task::spawn_blocking(move||hub.initial_delivery(&id,generation));
