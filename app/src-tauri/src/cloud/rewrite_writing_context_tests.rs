@@ -473,13 +473,13 @@ async fn email_body_candidate_reaches_independent_review_with_all_original_sourc
 }
 
 #[tokio::test]
-async fn email_authoring_contract_does_not_waive_existing_native_request_guards() {
+async fn email_authoring_contract_omits_only_finite_drafting_prefixes() {
     for (source,output) in [
         ("帮我分段回邮件，收到地址证明后继续核对。","收到地址证明后继续核对。"),
         ("能不能帮我回邮件，收到地址证明后继续核对。","收到地址证明后继续核对。"),
     ] {
         let server=Server::new(vec![Reply::draft(output),Reply::new(ACCEPT)]).await;
         let out=run_context(&server,source,&context(AppWritingScene::Email),Duration::from_secs(3)).await;
-        assert!(out.result.is_err());assert_eq!(server.count(),1);assert!(out.trace.review.is_none());
+        assert!(out.result.is_ok(),"{:?}",out.result.err());assert_eq!(server.count(),2);assert!(out.trace.review.is_some());
     }
 }

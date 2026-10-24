@@ -65,7 +65,7 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
         super::format_draft_spoken(&mut draft,super::spoken_english(source,context));
         trace.draft=Some(draft.clone());
-        super::review_admission(source,&draft).map_err(safe_error)?;
+        super::review_admission_with_writing_context(mode,source,&draft,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&draft)?;}
         checkpoint(&cancel,deadline)?;
         let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&draft,context,
@@ -86,9 +86,9 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         checkpoint(&cancel,deadline)?;trace.calls+=1;trace.repair_attempted=true;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Repair).await?;
         request.validate_personalization(context)?;
-        let mut repaired=local_repair::apply(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        let mut repaired=local_repair::apply_with_writing_context(&content,&request,mode,source,&draft,context).map_err(safe_error)?;
         super::format_draft_spoken(&mut repaired,super::spoken_english(source,context));
-        super::review_admission(source,&repaired).map_err(safe_error)?;
+        super::review_admission_with_writing_context(mode,source,&repaired,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&repaired)?;}
         trace.repaired_draft=Some(repaired.clone());checkpoint(&cancel,deadline)?;
         if repaired.blocks[0].text==draft.blocks[0].text{return Err(rejected());}

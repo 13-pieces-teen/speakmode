@@ -26,6 +26,11 @@ pub(super) fn review_admission(source: &SourceRevision, blocks: &[OutputBlock]) 
     review_admission::validate(source, blocks)
 }
 
+pub(super) fn review_admission_with_email_omission(source: &SourceRevision, blocks: &[OutputBlock],
+    omission: Option<&super::email_authoring::Omission<'_>>) -> Result<(), CloudError> {
+    review_admission::validate_with_email_omission(source, blocks, omission)
+}
+
 /// Offline experiment evidence only. Never called by acceptance or delivery.
 pub(super) fn admission_evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> serde_json::Value {
     review_admission::evidence(source, blocks)

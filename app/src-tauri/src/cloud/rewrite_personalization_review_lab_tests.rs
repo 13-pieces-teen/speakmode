@@ -60,6 +60,49 @@ fn exact_contract_replacement_fails_closed_on_missing_or_ambiguous_base_text() {
 }
 
 #[test]
+fn fixed_lab_contract_replacement_preserves_explicit_issue_bounds_in_both_protocols() {
+    let(config,mode,source,draft,context)=fixture();
+    let bounds="sourceQuote 和 draftQuote 必须各为1–80个 Unicode 字符且非空白，分别逐字来自对应文本的连续片段；reason 必须为1–100个 Unicode 字符且非空白，只说明问题，不写替换稿。";
+    let control=prepare(&config,&mode,&source,&draft,Some(&context),false).unwrap();
+    let candidate=prepare(&config,&mode,&source,&draft,Some(&context),true).unwrap();
+    let control_prompt=control.body["messages"][0]["content"].as_str().unwrap();
+    let candidate_prompt=candidate.body["messages"][0]["content"].as_str().unwrap();
+    assert_eq!(control_prompt.matches(BASE_RESPONSE).count(),1);
+    assert_eq!(control_prompt.matches(bounds).count(),1);assert_eq!(candidate_prompt.matches(bounds).count(),1);
+    assert!(candidate_prompt.contains("最多两处"));assert!(candidate_prompt.contains("通过时 issues=[]"));
+    assert!(!candidate_prompt.contains(BASE_RESPONSE));assert_eq!(candidate_prompt.matches(SPLIT_RESPONSE).count(),1);
+    assert_eq!(VERSION,"personalization-separated-review-lab-v2");
+    assert_eq!(control.metadata.baseline_review_version,"minimum-review-v5");
+    assert_eq!(candidate.metadata.baseline_review_version,"minimum-review-v5");
+    // An older frozen prompt cannot be silently patched after the bounds change.
+    let old=BASE_RESPONSE.replace(bounds,"");
+    assert!(replace_exact(&old,BASE_RESPONSE,SPLIT_RESPONSE).is_err());
+    assert_eq!(control.body["messages"][1],candidate.body["messages"][1]);
+}
+
+#[test]
+fn split_lab_uses_the_same_unicode_reason_and_quote_validation_as_the_named_control() {
+    let(config,mode,source,draft,context)=fixture();
+    for separated in [false,true] {
+        let request=prepare(&config,&mode,&source,&draft,Some(&context),separated).unwrap();
+        let mut rejected=verdict(&request);rejected["decision"]=json!("reject");
+        let checks=if separated{"contentChecks"}else{"checks"};rejected[checks]["cleanup"]=json!("fail");
+        rejected["issues"]=json!([{"dimension":"cleanup","sourceQuote":"八百元","draftQuote":"八百元","reason":"💬".repeat(100)}]);
+        let(review,_,_)=parsed(&rejected,&request,&mode,&source,&draft,Some(&context)).unwrap();assert!(!review.accepted());
+        for reason in [String::new()," \t\n".into(),"💬".repeat(101)] {
+            let mut invalid=rejected.clone();invalid["issues"][0]["reason"]=json!(reason);
+            assert!(parsed(&invalid,&request,&mode,&source,&draft,Some(&context)).is_err());
+        }
+        for field in ["sourceQuote","draftQuote"] {
+            for quote in [""," ","伪造摘录"] {
+                let mut invalid=rejected.clone();invalid["issues"][0][field]=json!(quote);
+                assert!(parsed(&invalid,&request,&mode,&source,&draft,Some(&context)).is_err());
+            }
+        }
+    }
+}
+
+#[test]
 fn conflicting_preferences_are_separate_from_fidelity_and_baseline_has_no_invented_preference_verdict() {
     let(config,mode,source,draft,context)=fixture();
     let candidate=prepare(&config,&mode,&source,&draft,Some(&context),true).unwrap();

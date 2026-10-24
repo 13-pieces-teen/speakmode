@@ -12,6 +12,8 @@ mod writing_context_tests;
 mod personalization_lab_tests;
 #[path="rewrite_personalization_quality_regression_tests.rs"]
 mod personalization_quality_regression_tests;
+#[path="rewrite_email_authoring_tests.rs"]
+mod email_authoring_tests;
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 

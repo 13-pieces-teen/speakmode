@@ -11,17 +11,17 @@ use std::{collections::HashSet, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUs
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-pub const VERSION: &str = "personalization-separated-review-lab-v1";
+pub const VERSION: &str = "personalization-separated-review-lab-v2";
 pub const MAX_TOKENS: u64 = 512;
 // Exact replacement is deliberately fail-closed. A changed upstream contract
 // needs explicit offline review; appending a second JSON schema is not allowed.
-const BASE_RESPONSE: &str = r#"只返回严格 JSON，结构 {"decision":"accept或reject","checks":{"coverage":"pass/fail/uncertain","facts":"pass/fail/uncertain","scope":"pass/fail/uncertain","intent":"pass/fail/uncertain","cleanup":"pass/fail/uncertain"},"issues":[]}。通过时 issues=[]。只有 cleanup=fail 且其他四项均 pass 时，issues 给最多两处精确连续原文/草稿摘录，每段最多80字：{"dimension":"cleanup","sourceQuote":"精确来源片段","draftQuote":"足以局部修复的草稿片段","reason":"简短语病说明，不写替换稿"}。不能唯一定位或超过两处时仍 reject，不猜摘录；其他失败可 issues=[]。不输出推理或多余字段。"#;
+const BASE_RESPONSE: &str = r#"只返回严格 JSON，结构 {"decision":"accept或reject","checks":{"coverage":"pass/fail/uncertain","facts":"pass/fail/uncertain","scope":"pass/fail/uncertain","intent":"pass/fail/uncertain","cleanup":"pass/fail/uncertain"},"issues":[]}。通过时 issues=[]。只有 cleanup=fail 且其他四项均 pass 时，issues 给最多两处精确连续原文/草稿摘录，每段最多80字：{"dimension":"cleanup","sourceQuote":"精确来源片段","draftQuote":"足以局部修复的草稿片段","reason":"简短语病说明，不写替换稿"}。sourceQuote 和 draftQuote 必须各为1–80个 Unicode 字符且非空白，分别逐字来自对应文本的连续片段；reason 必须为1–100个 Unicode 字符且非空白，只说明问题，不写替换稿。不能唯一定位或超过两处时仍 reject，不猜摘录；其他失败可 issues=[]。不输出推理或多余字段。"#;
 const BASE_PREFERENCE: &str = "兼容的个人排版规则必须满足（light 也可按用户规则原顺序列点），保真冲突部分忽略。";
 const BASE_PERSONAL_REVIEW: &str = "Review cleanup checks only the remaining compatible preferences; it must not penalize refusing an excluded instruction.";
 const SPLIT_RESPONSE: &str = r#"仅此固定稿实验，返回严格 JSON，结构 {"decision":"accept或reject","contentChecks":{"coverage":"pass/fail/uncertain","facts":"pass/fail/uncertain","scope":"pass/fail/uncertain","intent":"pass/fail/uncertain","cleanup":"pass/fail/uncertain"},"preferenceChecks":[{"key":"实际规则key","applicability":"apply/ignore_conflict/irrelevant/uncertain","status":"pass/fail/uncertain/not_applicable"}],"issues":[]}。
 contentChecks 是先独立完成的五项来源、场景和基础格式检查：sourceText 是唯一意思来源，personalization 不是对照事实；contentChecks.cleanup 检查自然度、明确场景、baseMode/formatRules，不检查个人偏好是否被满足。decision 仅表示 contentChecks 的结论：五项全 pass 才 accept，否则 reject；个人偏好结论不能改变任何内容分项。
 然后独立填写 preferenceChecks：personalization.rules 每个 key 恰有一行，不增加、不遗漏、不重复；没有规则时返回空数组。先排除与来源事实、条件、不确定性、字面量、明确场景/语言或不补写身份约束冲突的偏好部分。剩余部分适用时 applicability=apply，再评其 status 为 pass/fail/uncertain；整条有效偏好都冲突时 ignore_conflict，不相关时 irrelevant，这两种 status 只能是 not_applicable；不能确定适用性时 applicability=uncertain 且 status=uncertain。忽略越权偏好不构成 scope、facts、cleanup 失败。背景不需要返回规则行，不能成为正文事实依据。
-保留原来的 issues 定位规则：通过时 issues=[]；仅 contentChecks.cleanup=fail 且其他四项 pass 时最多两处精确连续来源/草稿摘录，每段最多80字，结构 {"dimension":"cleanup","sourceQuote":"精确来源片段","draftQuote":"足以局部修复的草稿片段","reason":"简短语病说明，不写替换稿"}。不能唯一定位时仍拒绝，不猜摘录；其他失败可 issues=[]。不返回正文、修改建议、推理或额外字段。"#;
+保留原来的 issues 定位规则：通过时 issues=[]；仅 contentChecks.cleanup=fail 且其他四项 pass 时最多两处精确连续来源/草稿摘录，每段最多80字，结构 {"dimension":"cleanup","sourceQuote":"精确来源片段","draftQuote":"足以局部修复的草稿片段","reason":"简短语病说明，不写替换稿"}。sourceQuote 和 draftQuote 必须各为1–80个 Unicode 字符且非空白，分别逐字来自对应文本的连续片段；reason 必须为1–100个 Unicode 字符且非空白，只说明问题，不写替换稿。不能唯一定位时仍拒绝，不猜摘录；其他失败可 issues=[]。不返回正文、修改建议、推理或额外字段。"#;
 
 fn error(code: &str, message: &str) -> CloudError { CloudError::new(code, "preference_lab", message) }
 fn replace_exact(prompt: &str, old: &str, new: &str) -> Result<String, CloudError> {

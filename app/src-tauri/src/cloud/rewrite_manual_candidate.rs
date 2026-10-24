@@ -73,7 +73,7 @@ pub(super) async fn run_until_with_writing_context(client:&reqwest::Client,confi
         Err(error)=>{
             if matches!(error.code.as_str(),"cancelled"|"rewrite_timeout"|"authentication_failed"|"rate_limited") {return Err(error);}
             let draft=outcome.trace.repaired_draft.or(outcome.trace.draft).ok_or_else(||error.clone())?;
-            let issue=if review_admission(source,&draft).is_err(){ManualReviewIssue::MeaningChanged}
+            let issue=if review_admission_with_writing_context(mode,source,&draft,Some(context)).is_err(){ManualReviewIssue::MeaningChanged}
                 else if outcome.trace.final_review.or(outcome.trace.review).is_some(){ManualReviewIssue::ReviewRejected}
                 else{ManualReviewIssue::ReviewUnavailable};
             Ok(ManualCandidate{draft,review_issues:vec![issue]})
@@ -90,6 +90,12 @@ pub(super) async fn run(client:&reqwest::Client, config:&ProviderConfig, secret:
 pub(super) async fn run_until(client:&reqwest::Client, config:&ProviderConfig, secret:&str,
     mode:&ModeSnapshot, source:&SourceRevision, dictionary:&DictionarySnapshot,
     cancel:CancellationToken, endpoint:&str, execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
+    // A valid Email wrapper exception requires the independent reviewer. Keep
+    // the legacy strict annotation guard intact for generation-only candidates.
+    if mode.mode_id=="email" {
+        let context=writing_context::for_mode(mode).expect("explicit email scene");
+        return Box::pin(run_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,Some(&context),execution)).await;
+    }
     let deadline=execution.deadline;
     let cancelled=||CloudError::new("cancelled","rewrite","候选已取消");
     let timed_out=||CloudError::new("rewrite_timeout","rewrite","生成候选超时，当前文本保持不变");

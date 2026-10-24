@@ -30,7 +30,8 @@ Short single-purpose counterexample: source 'Could you confirm receipt when you 
 
 // Fixed scene authority, appended after personal preferences in every stage.
 // This changes presentation permission only; it never changes the source or
-// waives literal/format/qualifier admission, review or local repair boundaries.
+// changes substantive source guards, independent review or repair boundaries.
+// Only the finite, source-bound drafting span may be omitted by native guards.
 const EMAIL_AUTHORING_POLICY: &str = r#"EMAIL BODY AUTHORING CONTRACT v1
 For this effective email scene, produce a send-ready email body using only the complete frozen source. Omit an unambiguous drafting-only authoring wrapper addressed to the assistant, such as “帮我回一下” or “帮我写封邮件”. This is the only exception to the general spoken-request retention rule; it does not authorize performing any substantive action or answering from outside knowledge. When the addressee or wrapper boundary is unclear, preserve the uncertain wording rather than guess.
 Preserve substantive content even when it occurs inside or before that wrapper: the specific document/material, customer question, recipient identity and relationships, amounts, conditions, negation, uncertainty, timing and the exact scope of commitments. Restate those details naturally in the body; do not replace a named material with generic “补件” or remove the question because a proposed reply follows it. A request addressed to the email recipient, such as “请补地址证明”, remains a request in the body and is never a drafting wrapper. Quoted speech and code remain exact.
@@ -75,7 +76,11 @@ Generation, independent review and local repair use the SAME frozen personalizat
 pub(super) fn attach(body: &mut Value, mode: &ModeSnapshot, source: &SourceRevision,
     context: &WritingContext, stage: Stage) -> Result<(), CloudError> {
     context.validate().map_err(|_|CloudError::new("invalid_writing_context", "rewrite", "输入位置上下文无效"))?;
-    if context.language==DraftLanguage::English {super::format_requests::require_verifiable_english(&source.text())?;}
+    let omission=super::email_authoring::omission(mode,source,Some(context));
+    if context.language==DraftLanguage::English {
+        if omission.is_some() {super::format_requests::require_verifiable_english_with_email_omission(&source.text(),omission.as_ref())?;}
+        else {super::format_requests::require_verifiable_english(&source.text())?;}
+    }
     let mut data: Value = serde_json::from_str(body["messages"][1]["content"].as_str()
         .ok_or_else(invalid_request)?).map_err(|_|invalid_request())?;
     let original = body["messages"][0]["content"].as_str().ok_or_else(invalid_request)?;
@@ -110,7 +115,8 @@ pub(super) fn attach(body: &mut Value, mode: &ModeSnapshot, source: &SourceRevis
         data["sourceFragments"] = json!(source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>());
     }
     body["messages"][1]["content"] = json!(data.to_string());
-    super::format_requests::attach(body,&source.text())?;
+    if omission.is_some() {super::format_requests::attach_with_email_omission(body,&source.text(),omission.as_ref())?;}
+    else {super::format_requests::attach(body,&source.text())?;}
     super::spoken_format::attach(body,source,super::spoken_english(source,Some(context)))?;
     Ok(())
 }

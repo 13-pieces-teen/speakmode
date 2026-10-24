@@ -53,7 +53,9 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
     if english { data["sourceFragments"] = json!(source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>()); }
     body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("minimum edit data serialize"));
     if let Some(context)=context { super::writing_context::attach(&mut body,mode,source,context,super::writing_context::Stage::Generation)?; }
-    super::format_requests::attach(&mut body,&source.text())?;
+    let omission=super::email_authoring::omission(mode,source,context);
+    if omission.is_some() {super::format_requests::attach_with_email_omission(&mut body,&source.text(),omission.as_ref())?;}
+    else {super::format_requests::attach(&mut body,&source.text())?;}
     super::spoken_format::attach(&mut body,source,english_format)?;
     let personalization_hash=context.and_then(|c|c.personalization.as_ref()).map(|_|hash(&body["messages"]));
     let personalization_snapshot_hash=context.and_then(|c|c.personalization.as_ref()).map(hash);

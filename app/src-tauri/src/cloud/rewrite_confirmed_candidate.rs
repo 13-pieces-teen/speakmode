@@ -137,7 +137,7 @@ pub(super) async fn run_until_with_writing_context(client:&reqwest::Client,confi
         let mut candidate=ManualCandidate{draft,review_issues:Vec::new()};
         trace.draft=Some(candidate.draft.clone());
         if !confirmations_present(context,&candidate.draft.blocks[0].text) {candidate.review_issues.push(ManualReviewIssue::ConfirmedTextChanged);}
-        if let Err(error)=review_admission(&reference,&candidate.draft) {
+        if let Err(error)=review_admission_with_writing_context(mode,&reference,&candidate.draft,writing) {
             candidate.review_issues.push(if literals::validate(&reference.text(),&candidate.draft.blocks[0].text).is_err(){ManualReviewIssue::LiteralsChanged}
                 else if error.message.contains("数值"){ManualReviewIssue::ValuesChanged}else{ManualReviewIssue::MeaningChanged});
             trace.review_error=Some(error);
