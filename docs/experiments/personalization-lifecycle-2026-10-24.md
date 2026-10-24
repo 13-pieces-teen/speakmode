@@ -47,6 +47,8 @@
 | 新增删除缓存浏览器回归 | 2/2 PASS | `personalization-reference-browser-20261024-r1/receipt.json`；实际 Edge，模拟旧后端参考，无外部请求、pageErrors 为 0 |
 | TypeScript / Vite | PASS | `personalization-lifecycle-frontend-build.log` |
 
+供手动试用的 r4 已完成前端／MSVC／NSIS 构建，退出 0，未安装或启动。制品、SHA256 与源码绑定见 [实施记录](personalization-0.2.31-2026-10-23.md)；该构建不改变下列未完成项。
+
 ## 尚未完成的 P0
 
 “已参考画像”当前依据冻结快照是否存在，而不是含画像请求是否真正开始发送。普通／预览任务可以在本地校验或请求前取消时已经记录 true；对照也可能在基础组取消，从未启动画像组。故这些计数不能作为实际已发送画像请求或质量收益证据。既有事件也无法凭当前 true 值可靠追溯到供应商收件。

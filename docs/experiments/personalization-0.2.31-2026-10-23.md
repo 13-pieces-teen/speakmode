@@ -61,6 +61,15 @@
 
 r3 的 `artifacts.json` 绑定源码 commit `22368c0d43dab593c9bbb38fb7f7ee0cf2c292f5`、app tree `ce5800b4c87ef41dd536aa4e41407ac89cadf3e9`，协议为 `situational-dictation-v4` / `PERSONAL EXPRESSION CONTRACT v2`。`personalization-package-email-r3.log` 确认 TypeScript/Vite、MSVC release 与 NSIS 成功，退出 0；复制后逐文件哈希一致。构建缓存 11.851 GiB，低于 12 GiB 预算。未安装或启动；新版包不代表剩余模型误拒与真人质量已验收。
 
+当前供手动试用的 r4 更新了删除缓存、重启任务收尾和复核协议记录，位置为 `output/releases/0.2.31-personalization-2026-10-24-r4/`：
+
+| 文件 | 字节数 | SHA256 |
+| --- | --- | --- |
+| SpeakMode_0.2.31_x64-setup.exe | 15,146,739 | A37D29724BD95603F9A0BECAFF421E1A675569E7D0B7DB721F08A8D32B28E951 |
+| SpeakMode.exe | 28,910,080 | 281947653497F32D51497506886801489F7EC8B88233B4A8C2B04CDF6C034D18 |
+
+r4 的 `artifacts.json` 绑定源码 commit `88c5d4e3ef4fe9ac2808b6f4670cc82533e885ed`、app tree `d688f3f681c19b308caa7a96a558705a2f44f01c`。`personalization-package-lifecycle-r4.log` 确认前端、MSVC release 和 NSIS 成功，退出 0；复制后哈希一致。构建缓存 11.852 GiB，低于 12 GiB 预算，未安装或启动。参考计数的实际发送口径和真实质量门槛仍待完成，不能用制品生成代替验收。
+
 源代码审阅：[Draft PR #26](https://github.com/13-pieces-teen/speakmode/pull/26)。工程就绪与真实质量验收分别跟踪，不据此合并或安装。
 
 ## 本轮发现并修复的问题
