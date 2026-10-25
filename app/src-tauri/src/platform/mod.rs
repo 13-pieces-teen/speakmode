@@ -16,6 +16,10 @@ pub enum TargetCaptureFailure {
     StopAnchorUnavailable,
     #[error("stop focus changed")]
     StopFocusChanged,
+    #[error("input activity changed")]
+    InputActivityChanged,
+    #[error("input activity monitor unavailable")]
+    InputActivityUnavailable,
     #[error("target is not editable")]
     TargetNotEditable,
     #[error("target capability unsupported")]
@@ -28,6 +32,8 @@ impl TargetCaptureFailure {
         match self {
             Self::StopAnchorUnavailable => "stopAnchorUnavailable",
             Self::StopFocusChanged => "stopFocusChanged",
+            Self::InputActivityChanged => "inputActivityChanged",
+            Self::InputActivityUnavailable => "inputActivityUnavailable",
             Self::TargetNotEditable => "targetNotEditable",
             Self::TargetCapabilityUnsupported => "targetCapabilityUnsupported",
             Self::TargetInspectionTimeout => "targetInspectionTimeout",
@@ -37,6 +43,8 @@ impl TargetCaptureFailure {
         match self {
             Self::StopAnchorUnavailable => "stop_anchor_unavailable",
             Self::StopFocusChanged => "stop_focus_changed",
+            Self::InputActivityChanged => "input_activity_changed",
+            Self::InputActivityUnavailable => "input_activity_unavailable",
             Self::TargetNotEditable => "target_not_editable",
             Self::TargetCapabilityUnsupported => "target_capability_unsupported",
             Self::TargetInspectionTimeout => "target_inspection_timeout",
@@ -46,6 +54,8 @@ impl TargetCaptureFailure {
         match self {
             Self::StopAnchorUnavailable => "录音已结束，未能确定停止时的输入窗口；成稿已保留",
             Self::StopFocusChanged => "停止后输入位置已改变，本次未自动输入；成稿已保留",
+            Self::InputActivityChanged => "整理期间检测到点击、滚动或键盘操作，本次未自动输入；成稿已保留",
+            Self::InputActivityUnavailable => "未能确认整理期间的输入状态，本次未自动输入；成稿已保留",
             Self::TargetNotEditable => "当前目标不是可写输入位置，本次未自动输入；成稿已保留",
             Self::TargetCapabilityUnsupported => "当前应用未提供可验证的输入位置，本次未自动输入；成稿已保留",
             Self::TargetInspectionTimeout => "输入位置检查超时，本次未自动输入；成稿已保留",

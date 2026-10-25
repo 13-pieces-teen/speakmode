@@ -266,6 +266,7 @@ fn emit_key(ctx: &HookContext, event: KeyEvent, origin: KeyOrigin) {
 }
 
 fn lifecycle_event(event: Lifecycle) {
+    super::activity::invalidate();
     HOOK_CONTEXT.with(|cell| {
         if let Some(ctx) = cell.borrow_mut().as_mut() {
             // Invalidate at the native event boundary, before a queued worker
@@ -501,6 +502,7 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
             }
             return;
         }
+        let _activity_owner = super::activity::Owner::enter();
         let _ = ready_tx.send(Ok(()));
 
         // Message loop - required for low-level hooks to function.
@@ -525,6 +527,7 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
             // drain loop) -- WM_POWERBROADCAST always, WM_WTSSESSION_CHANGE
             // on builds that send rather than post it.
             if outcome.reinstall_hooks || take_reinstall_request() {
+                super::activity::invalidate();
                 unsafe {
                     if reinstall_hooks(&mut kb_hook, &mut mouse_hook) {
                         // At most a few lines per unlock/resume, and it makes
@@ -540,6 +543,7 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
 
             // Wait for messages or timeout — unlike thread::sleep, this returns
             // immediately when a message arrives, so hook callbacks are never delayed.
+            super::activity::heartbeat();
             wait_for_message_or_timeout(HOOK_LOOP_TIMEOUT_MS);
         }
 
@@ -612,6 +616,9 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
             let is_extended = (kb_struct.flags.0 & LLKHF_EXTENDED.0) != 0;
 
             let is_key_down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+
+            super::activity::observe(wparam.0 as u32,
+                matches!(kb_struct.dwExtraInfo, MENU_MASK_EXTRA_INFO | crate::STANDALONE_MENU_MASK_EXTRA_INFO | 0x534D_5041));
 
             // Our own injected menu mask: pass it through untouched. It
             // exists solely for the shell's benefit and must not update
@@ -749,6 +756,8 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
     if code < 0 {
         return CallNextHookEx(None, code, wparam, lparam);
     }
+
+    super::activity::observe(wparam.0 as u32, false);
 
     // Only button transitions matter; bail out early for moves and wheel
     // events so the hot path stays free of state access.

@@ -397,7 +397,12 @@ impl AppHub {
     }
 
     async fn stop_session_at(self:&Arc<Self>,p:&Value,intent:Instant)->Result<Value> {
-        self.stop_session_at_with_target_result(p,intent,||platform::delivery::capture_foreground_anchor().map(Some),|anchor|platform::delivery::capture_target_for_anchor(&anchor).map(Some)).await
+        // Synchronous stop metadata precedes worker scheduling and any Mode
+        // return. It is used by automatic keyboard routing when a provider
+        // cannot expose the caret. Mere pointer motion does not change it.
+        let activity=platform::delivery::capture_compatibility_activity();
+        self.stop_session_at_with_target_result(p,intent,||platform::delivery::capture_foreground_anchor().map(Some),move|anchor|
+            platform::delivery::capture_target_for_anchor_with_activity(&anchor,activity).map(Some)).await
     }
     async fn stop_session_at_with_target_result(self:&Arc<Self>,p:&Value,intent:Instant,
         anchor:impl FnOnce()->platform::Result<Option<platform::delivery::ForegroundAnchor>>,
@@ -877,7 +882,7 @@ impl AppHub {
         };
         let eligible={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!self.quitting.load(Ordering::SeqCst)&&!s.original_delivery_revoked&&s.phase==SessionPhase::Ready&&s.prefs.delivery_mode==DeliveryMode::Direct&&s.reason==CreationReason::NormalInitial).and_then(|s|s.output.clone().map(|output|(if target_timed_out{None}else{s.target.clone()},output,s.target_capture_failure_reason.clone())))};
         let Some((target,output,capture_failure))=eligible else{let _=self.native_action("recording",false);if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.phase==SessionPhase::Ready&&!s.cancel.is_cancelled()&&s.prefs.delivery_mode==DeliveryMode::Preview){let _=self.native_action("showMain",true);}return;};
-        let rejection=match &target{None=>Some(if target_timed_out{"targetInspectionTimeout"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some("targetChangedBeforeDelivery"),_=>None};
+        let rejection=match &target{None=>Some(if target_timed_out{"targetInspectionTimeout"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some(if target.compatibility.is_some(){"compatibilityTargetChanged"}else{"targetChangedBeforeDelivery"}),_=>None};
         // A skipped automatic delivery is still a once-only decision. Preserve
         // an opaque ledger receipt even when no input target could be captured.
         let fingerprint=target.as_ref().map(|target|format!("{}:{}:{}",target.hwnd,target.process_id,target.process_created_at)).unwrap_or_else(||"unavailableAtStop".into());

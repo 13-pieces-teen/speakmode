@@ -1475,7 +1475,7 @@ async fn committed_first_adoption_receipt_after_delete_keeps_usage_without_reviv
 }
 
 fn delivery_target_fixture()->platform::delivery::TargetSnapshot {
-    platform::delivery::TargetSnapshot{hwnd:123,process_id:456,focused_hwnd:123,runtime_id:vec![1,2],selection:Some((0,0)),process_created_at:789}
+    platform::delivery::TargetSnapshot{hwnd:123,process_id:456,focused_hwnd:123,runtime_id:vec![1,2],selection:Some((0,0)),process_created_at:789,compatibility:None}
 }
 fn delivery_anchor_fixture()->platform::delivery::ForegroundAnchor {
     let target=delivery_target_fixture();platform::delivery::ForegroundAnchor{hwnd:target.hwnd,process_id:target.process_id,

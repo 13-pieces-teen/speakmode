@@ -35,6 +35,13 @@ await test('Stop target diagnostics distinguish lost focus, unsupported fields a
   assert(!feedback.message.includes(code));
  }
 });
+await test('Interaction veto and unavailable observer explain recovery without adding a user mode',()=>{
+ for(const [reason,words] of [['inputActivityChanged','点击、滚动或键盘'],['inputActivityUnavailable','未能确认输入状态'],['compatibilityTargetChanged','窗口或键鼠']]){
+  const feedback=deliveryFeedback(session('ready','skipped',reason));
+  assert(feedback.warning&&feedback.canCopyOutput&&feedback.canViewOutput);
+  assert(feedback.message.includes(words));assert(!feedback.message.includes(reason));
+ }
+});
 await test('Unknown future failure reasons remain readable without showing internal codes',()=>{
  for(const state of ['skipped','failed']){
   const feedback=deliveryFeedback(session('ready',state,'opaque_future_reason'));
@@ -69,6 +76,8 @@ await test('Higher-integrity target explains manual copy and viewing without ele
 // Exercise the real recorder render and button handler with synthetic hooks and
 // a command spy. No React effects, DOM, app window, clipboard or audio is started.
 const recorderSource=await readFile(root+'/app/src/windows/RecorderWindow.tsx','utf8');
+const modesSource=await readFile(root+'/app/src/modes.ts','utf8');
+await writeFile(out+'/modes-check.mjs',ts.transpileModule(modesSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);
 const stubsPath=out+'/recorder-test-stubs.mjs';
 await writeFile(stubsPath,`
 let desktop;
@@ -79,17 +88,19 @@ export const useEffect=()=>{};
 export const useRef=current=>({current});
 export const useState=initial=>[typeof initial==='function'?initial():initial,()=>{}];
 export const useModes=()=>({label:value=>value,modes:[]});
-export const useRecorderSize=()=>'';
+export const useRecorderSize=()=>({error:'',menuReady:true});
 export const errorMessage=error=>String(error);
 export const fromModeId=value=>value,toModeId=value=>value,builtinModes=[];
+export const isPersonalMode=()=>false,scenarioOptions=()=>[];
 export const Button='button',Popover={Root:'popoverRoot',Trigger:'popoverTrigger',Content:'popoverContent'};
 export const CheckIcon='check',ChevronDownIcon='chevron',Cross2Icon='cross',ModeIcon='mode';
-export const CaptionStrip='caption',RecorderWaveform='waveform',fragment='fragment';
+export const CaptionStrip='caption',RecorderWaveform='waveform',fragment='fragment',Fragment='fragment';
 export const element=(type,props,...children)=>({type,props:{...props,children:children.length===1?children[0]:children}});
 `);
 const imports=new Map([
  ['../services/deliveryFeedback',pathToFileURL(out+'/delivery-feedback-check.mjs').href],
- ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../hooks/useModes','../components/ui','../model','../modes','../services/bridge','./useRecorderSize','./CaptionStrip','./RecorderWaveform'].map(name=>[name,pathToFileURL(stubsPath).href]),
+ ['../modes',pathToFileURL(out+'/modes-check.mjs').href],
+ ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../hooks/useModes','../components/ui','../model','../services/bridge','./useRecorderSize','./CaptionStrip','./RecorderWaveform'].map(name=>[name,pathToFileURL(stubsPath).href]),
 ]);
 const replaceImports=context=>node=>ts.visitNode(node,function visit(current){
  if(ts.isImportDeclaration(current)&&ts.isStringLiteral(current.moduleSpecifier)){
@@ -197,5 +208,5 @@ await test('A real saved-result error remains visible even when the dispatch rec
  const {tree,calls}=renderRecovery({...session('ready','unconfirmed','inputDispatchedUnconfirmed'),error:message});
  assert(tree);assert.equal(nodes(tree,node=>node.type==='p'&&node.props.children===message).length,1);assert.deepEqual(calls,[]);
 });
-const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Presentation logic and actual recorder/main-window recovery render and handlers with synthetic hooks and command spies. No DOM, native acceptance, automatic paste, microphone, provider, or user data.',sourceSha256:createHash('sha256').update(source).digest('hex'),recorderSourceSha256:createHash('sha256').update(recorderSource).digest('hex'),sessionRecoverySourceSha256:createHash('sha256').update(recoverySource).digest('hex'),tests};
+const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Presentation logic and actual recorder/main-window recovery render and handlers with synthetic hooks and command spies. No DOM, native acceptance, automatic paste, microphone, provider, or user data.',sourceSha256:createHash('sha256').update(source).digest('hex'),recorderSourceSha256:createHash('sha256').update(recorderSource).digest('hex'),modesSourceSha256:createHash('sha256').update(modesSource).digest('hex'),sessionRecoverySourceSha256:createHash('sha256').update(recoverySource).digest('hex'),tests};
 await writeFile(out+'/helper-receipt.json',JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt,null,2));process.exitCode=receipt.status==='PASS'?0:1;

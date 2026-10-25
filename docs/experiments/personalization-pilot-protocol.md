@@ -1,6 +1,6 @@
 # 个性化真实任务试用协议
 
-状态：待真实试用者执行，尚无用户结果。对应个性化 PRD 的试点验收，不替代独立文本评估。
+状态：用户已有“都还可以”的初步定性反馈，并报告多个应用自动输入失败而手动 Ctrl+V 可用；尚无逐任务原文、成稿、人工目标稿及采用记录。不得将这些反馈填成六项任务均已完成或质量合格。对应个性化 PRD 的试点验收，不替代独立文本评估。
 
 ## 参与及设置
 
@@ -48,3 +48,26 @@ participant_id,task_id,scene,profile_version,provider,model,recording_outcome,st
 分母分别列出招募者、实际参与者、尝试任务、有效成对对照、回退/失败/取消和明确投票。职业增量使用额外固定文本消融，不能将全部画像与基础稿的差异都归给职业。
 
 先检查新增事实错误及跨场合误用，再看直接采用和修改负担。若短句更直接、段落更规整但本人不喜欢，记录为偏好不合适，不强行给高分。若两个稿相同，记录无差异。小样本只支持下一步迭代，不制作“个性化提升百分比”图。
+
+## v2 本地计算入口（2026-10-25）
+
+`scripts/personalization-pilot-report.py` 读取明确给定的 CSV 和正文文件，计算 Unicode 字符最小编辑距离、偏好执行分子／分母及盲选票数；不读应用数据库、不联网、不调用模型，报告不包含正文。原文回退也使用用户实际拿到的文本计算修改量，不排除输入失败。界面显示“按键已派发”时，目标接收仍是 UNKNOWN，不能填 `host_received=yes`。
+
+沿用上述 CSV 的参与者／任务、场合、配置、录音结果、交付和评判字段，并使用脚本 `FIELDS` 中的完整列名。新增或明确以下字段：
+
+| 字段 | 填写规则 |
+| --- | --- |
+| `recording_outcome`、`base_outcome`、`personal_outcome` | `passed` / `sourceFallback` / `failed` / `cancelled` / `UNKNOWN` / `NOT_RUN` |
+| `host_received` | 使用者实际确认后的 `yes` / `no`；仅派发回执为 `UNKNOWN` |
+| `base_text_path`、`personal_text_path` | 用户实际拿到的两份文本；回退时填回退原文文件 |
+| `base_final_path`、`personal_final_path` | 本人分别修改并确认愿意使用的正文；未编辑或未确认时填 UNKNOWN，不把空字符串当零修改 |
+| `personal_added_serious_errors`、`personal_scope_violations` | 逐项核验后的非负数量；不清楚填 UNKNOWN |
+| `preference_vote`、`blind_order_recorded` | `base` / `tie` / `personal`，及是否确实记录匿名展示顺序；无顺序证据的偏好保留但不计盲选 |
+
+路径可相对 CSV 所在目录，或明确指定绝对路径。输入正文和 CSV 保存在仓库外的试点目录。脚本拒绝重复参与者／任务、负数、执行条目多于适用条目，以及覆盖已有报告。未执行不进入尝试数，缺少人工目标稿不计零修改，零基线修改量不计算提升百分比。部分已知严重错误会标记 FAIL，即使其他判断仍缺失；所有质量和发布门槛始终分别列出。
+
+```text
+python scripts/personalization-pilot-report.py --csv ABSOLUTE_PILOT_CSV --out ABSOLUTE_FRESH_REPORT_JSON
+```
+
+该报告仅核算真人试点记录，不能单独接受完整 PRD。四组冻结模型质量、职业增量、可靠性及在线延迟仍需各自证据。
