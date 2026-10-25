@@ -75,7 +75,7 @@ def summarize(rows, base):
     seen = set()
     states = {arm: Counter() for arm in ['base', 'personal']}
     recording, hosts, votes = Counter(), Counter(), Counter()
-    participants, attempts = set(), 0
+    participants, attempts, completed_by_participant = set(), 0, Counter()
     edit_pairs, base_edits, personal_edits, missing_targets = 0, 0, 0, 0
     applicable, executed, preference_rows, missing_preferences = 0, 0, 0, 0
     severe, scope, fact_rows, severe_rows, scope_rows = 0, 0, 0, 0, 0
@@ -92,6 +92,8 @@ def summarize(rows, base):
         if outcome not in UNKNOWN:
             attempts += 1
             participants.add(identity[0])
+        if outcome in DELIVERED:
+            completed_by_participant[identity[0]] += 1
         host = row['host_received']
         if host not in {'yes', 'no', 'UNKNOWN', 'NOT_RUN', ''}:
             raise ValueError('Host receipt must be yes/no/UNKNOWN/NOT_RUN')
@@ -153,13 +155,15 @@ def summarize(rows, base):
         'preference_execution_90pct': gate(full_preferences, preference_rate is not None and preference_rate >= .9),
         'edit_burden_reduction_15pct': gate(full_edits and base_edits > 0, reduction is not None and reduction >= .15),
         'blind_preference_wins': gate(bool(total) and sum(votes.values()) == total, votes['personal'] > votes['base']),
-        'five_people_thirty_recordings': gate(len(participants) >= 5 and attempts >= 30, True),
+        'five_people_thirty_recordings': gate(sum(n >= 6 for n in completed_by_participant.values()) >= 5, True),
         # These need frozen four-arm model data or paired end-to-end evidence.
         'reliability_no_regression': 'UNKNOWN', 'occupation_increment': 'UNKNOWN', 'online_latency': 'UNKNOWN',
     }
     return {
         'schema': 'personalization-pilot-report-v1', 'scope': 'human_reported_pilot_only',
         'planned_tasks': total, 'attempted_recordings': attempts, 'participants_with_attempts': len(participants),
+        'participants_with_six_completed_recordings': sum(n >= 6 for n in completed_by_participant.values()),
+        'completed_recordings': sum(completed_by_participant.values()),
         'recording_outcomes': dict(recording), 'host_received': dict(hosts),
         'arm_outcomes': {arm: dict(value) for arm, value in states.items()},
         'edit_distance': {'complete_pairs': edit_pairs, 'missing_manual_targets': missing_targets,

@@ -14,7 +14,7 @@
 
 - 最终 Rust library：**1061 passed、0 failed、4 ignored**，43.00 秒；包含同一生产操作计数代码的悬停／松开／点击／滚动／键入／代际与失效用例，以及值控件运行时身份、取消、重复尝试及复制期间变更。证据 `output/automatic-input-tests-20261025-final.log`。
 - 缓存 11.903 GiB，未提升 12 GiB 门槛，构建预算无违规。没有清理此前被审批拦截的缓存文件。
-- 试点核算 Python：8 项合成边界测试通过；记录 `output/personalization-pilot-tests-20261025.log`。工程测试不能代替用户偏好、模型质量或真实录音。
+- 试点核算 Python：11 项合成边界测试通过；最终记录 `output/personalization-pilot-tests-20261025-final.log`。包含每人六项的分母约束，取消次数和不均衡的三十项不冒充完成试点。工程测试不能代替用户偏好、模型质量或真实录音。
 - 输入反馈与真实恢复组件合成检查 21/21、个性化辅助检查 11/11、TypeScript 检查通过。旧输入反馈脚本缺少当前 recorder 的 Fragment／场合目录／尺寸 hook 接口，最初未运行或报错；本轮更新测试接口并加载实际场合目录，最终日志为 `output/delivery-feedback-helper-20261025-r4.log`，旧失败日志保留，没有改写产品行为来让检查通过。
 
 尝试从根包对非 workspace 的 handy-keys 依赖执行单元测试被 Cargo 拒绝，未运行；保留 `automatic-input-hook-tests-20261025.log`。随后在根 library 的测试配置直接包含同一生产计数源码执行其两个测试，纳入上述 1061 项，不把未执行的依赖测试说成通过。

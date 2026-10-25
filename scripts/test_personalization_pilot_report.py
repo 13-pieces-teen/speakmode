@@ -99,6 +99,42 @@ class PilotReportTests(unittest.TestCase):
             self.assertIsNone(result['edit_distance']['observed_reduction_fraction'])
             self.assertEqual(result['gates']['edit_burden_reduction_15pct'], 'UNKNOWN')
 
+    def test_thirty_imbalanced_tasks_are_not_five_people_with_six_tasks(self):
+        rows=[]
+        for participant, tasks in enumerate([26, 1, 1, 1, 1], 1):
+            for task in range(tasks):
+                row=planned(f'T{task}')
+                row.update(participant_id=f'P{participant}', recording_outcome='passed')
+                rows.append(row)
+        result=report.summarize(rows, Path('.'))
+        self.assertEqual(result['attempted_recordings'], 30)
+        self.assertEqual(result['participants_with_six_completed_recordings'], 1)
+        self.assertEqual(result['gates']['five_people_thirty_recordings'], 'UNKNOWN')
+
+    def test_cancelled_attempts_remain_visible_without_becoming_completed_recordings(self):
+        rows=[]
+        for participant in range(5):
+            for task in range(6):
+                row=planned(f'T{task}')
+                row.update(participant_id=f'P{participant}', recording_outcome='cancelled')
+                rows.append(row)
+        result=report.summarize(rows, Path('.'))
+        self.assertEqual(result['attempted_recordings'], 30)
+        self.assertEqual(result['completed_recordings'], 0)
+        self.assertEqual(result['gates']['five_people_thirty_recordings'], 'UNKNOWN')
+
+    def test_five_complete_people_do_not_by_themselves_accept_quality_or_release(self):
+        rows=[]
+        for participant in range(5):
+            for task in range(6):
+                row=planned(f'T{task}')
+                row.update(participant_id=f'P{participant}', recording_outcome='passed')
+                rows.append(row)
+        result=report.summarize(rows, Path('.'))
+        self.assertEqual(result['gates']['five_people_thirty_recordings'], 'PASS')
+        self.assertEqual(result['gates']['edit_burden_reduction_15pct'], 'UNKNOWN')
+        self.assertFalse(result['release_accepted'])
+
 
 if __name__ == '__main__':
     unittest.main()
