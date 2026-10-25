@@ -33,7 +33,8 @@ fn reference(context:&ConfirmedContext, source:&SourceRevision)->Result<SourceRe
     Ok(reference)
 }
 
-fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool, mode:&ModeSnapshot,source:&SourceRevision)->Result<(),CloudError> {
+fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool, mode:&ModeSnapshot,source:&SourceRevision,
+    frozen_writing:Option<&crate::core::writing_context::WritingContext>)->Result<(),CloudError> {
     if context.language==DraftLanguage::English {
         body["messages"][0]["content"]=json!(format!("Protocol: {VERSION}\n{}",if review{language::REVIEW}else{language::GENERATION}));
     }
@@ -45,8 +46,8 @@ fn add_context(body:&mut Value, context:&ConfirmedContext, review:bool, mode:&Mo
     // Explicit English needs the same source-only scene and retention contract
     // in Auto and personal modes as in a built-in scene. Historical AsSpoken
     // modes keep their existing contract; this does not infer a language choice.
-    let writing=writing_context::for_mode(mode).or_else(||(context.language==DraftLanguage::English).then(||crate::core::writing_context::WritingContext {
-        scene:crate::core::AppWritingScene::General,language:context.language,input:None,
+    let writing=frozen_writing.cloned().or_else(||writing_context::for_mode(mode)).or_else(||(context.language==DraftLanguage::English).then(||crate::core::writing_context::WritingContext {
+        scene:crate::core::AppWritingScene::General,language:context.language,input:None,personalization:None,
     }));
     if let Some(mut writing)=writing {
         writing.language=context.language;
@@ -79,6 +80,22 @@ pub async fn generate(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,sour
     run(shared_client()?,config,secret,mode,source,dictionary,context,cancel,&endpoint,Duration::from_secs(20)).await.result
 }
 
+pub(crate) async fn generate_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,
+    writing:Option<&crate::core::writing_context::WritingContext>)->Result<ManualCandidate,CloudError> {
+    generate_with_writing_context_execution(config,secret,mode,source,dictionary,context,cancel,writing,
+        RewriteExecution::for_duration(Duration::from_secs(20))).await
+}
+
+pub(crate) async fn generate_with_writing_context_execution(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,
+    writing:Option<&crate::core::writing_context::WritingContext>,execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
+    execution.checkpoint(&cancel)?;
+    let endpoint=rewrite_endpoint(config)?;
+    run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,context,cancel,&endpoint,
+        execution,writing).await.result
+}
+
 /// Explicit text experiment, sharing the exact history-candidate path.
 pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,context:&ConfirmedContext)->Result<Outcome,CloudError> {
     let endpoint=rewrite_endpoint(config)?;
@@ -87,15 +104,30 @@ pub async fn experiment(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,so
 
 pub(super) async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,endpoint:&str,wait:Duration)->Outcome {
-    let started=Instant::now();let deadline=started+wait;let mut trace=Trace::default();
+    run_with_writing_context(client,config,secret,mode,source,dictionary,context,cancel,endpoint,wait,None).await
+}
+
+pub(super) async fn run_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,endpoint:&str,wait:Duration,
+    writing:Option<&crate::core::writing_context::WritingContext>)->Outcome {
+    run_until_with_writing_context(client,config,secret,mode,source,dictionary,context,cancel,endpoint,
+        RewriteExecution::for_duration(wait),writing).await
+}
+
+pub(super) async fn run_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,
+    writing:Option<&crate::core::writing_context::WritingContext>)->Outcome {
+    let started=Instant::now();let deadline=execution.deadline;let mut trace=Trace::default();
     let cancelled=||CloudError::new("cancelled","rewrite","候选已取消");
     let timeout=||CloudError::new("rewrite_timeout","rewrite","候选整理超时，请保留当前文本后重试");
     let job=async {
         let reference=reference(context,source)?;
         let mut request=minimum::prepare_with_writing_context(config,mode,&reference,dictionary,false,None)?;
-        add_context(&mut request.body,context,false,mode,&reference)?;
+        add_context(&mut request.body,context,false,mode,&reference,writing)?;
+        request.bind_personalization(writing);
         trace.calls+=1;
-        let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
+        let content=fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
+        request.validate_personalization(writing)?;
         let mut draft=minimum::parse(&content,mode,&reference,&request)?;
         normalize_draft_dictionary(&reference,dictionary,&mut draft);
         format_draft_spoken(&mut draft,context.language==DraftLanguage::English||spoken_english(&reference,None));
@@ -105,16 +137,18 @@ pub(super) async fn run(client:&reqwest::Client,config:&ProviderConfig,secret:&s
         let mut candidate=ManualCandidate{draft,review_issues:Vec::new()};
         trace.draft=Some(candidate.draft.clone());
         if !confirmations_present(context,&candidate.draft.blocks[0].text) {candidate.review_issues.push(ManualReviewIssue::ConfirmedTextChanged);}
-        if let Err(error)=review_admission(&reference,&candidate.draft) {
+        if let Err(error)=review_admission_with_writing_context(mode,&reference,&candidate.draft,writing) {
             candidate.review_issues.push(if literals::validate(&reference.text(),&candidate.draft.blocks[0].text).is_err(){ManualReviewIssue::LiteralsChanged}
                 else if error.message.contains("数值"){ManualReviewIssue::ValuesChanged}else{ManualReviewIssue::MeaningChanged});
             trace.review_error=Some(error);
         } else if candidate.review_issues.is_empty() {
             let mut request=semantic_review::prepare_minimum_with_writing_context(config,mode,&reference,&candidate.draft,None)?;
-            add_context(&mut request.body,context,true,mode,&reference)?;
+            add_context(&mut request.body,context,true,mode,&reference,writing)?;
+            request.bind_personalization(writing);
             trace.calls+=1;
             let reviewed=async {
-                let content=fluent_pipeline::request_content(client,config,secret,endpoint,&request.body,&cancel,deadline).await?;
+                let content=fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
+                request.validate_personalization(writing)?;
                 semantic_review::parse_minimum(&content,&request,mode,&reference,&candidate.draft)
             }.await;
             match reviewed {

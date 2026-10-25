@@ -8,6 +8,8 @@ pub mod onboarding;
 pub use onboarding::{OnboardingProgress, OnboardingStep, OnboardingLesson};
 pub mod types;
 pub mod app_writing;
+pub mod personalization;
+pub use personalization::*;
 pub mod confirmed_context;
 pub mod writing_context;
 pub use confirmed_context::{ConfirmedContext, DraftLanguage, SourceCorrection};

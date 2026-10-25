@@ -4,7 +4,9 @@ import {desktopAvailable,desktopCommand,errorMessage,subscribeDesktop} from './b
 import {initialPreferences,initialProvider,type AppEvent,type AudioDevice,type DailyUsage,type DesktopError,type RecorderModeRequest,type HistoryDetail,type HistoryPage,type LiveSession,type ModeRecord,type NativePreferences,type NativeSnapshot,type ProviderStatus,type DictionarySnapshot,type RetainedRecovery} from './contracts';
 import {fromDetail,fromSummary,type Dictation} from '../model';
 import {mergeLiveLevel,receiveLevel} from './liveLevel';
-export interface DesktopState {onboarding:OnboardingState|null;available:boolean;status:'browser'|'loading'|'ready'|'error';error:string;errors:DesktopError[];recorderModeRequest:RecorderModeRequest|null;preferences:NativePreferences;modes:ModeRecord[];dictionary:DictionarySnapshot|null;usage:DailyUsage;provider:ProviderStatus;devices:AudioDevice[];devicesStatus:'idle'|'loading'|'ready'|'error';session:LiveSession|null;recovery:RetainedRecovery|null;temporaryResult:HistoryDetail|null;capabilities:Record<string,boolean>}
+import {isPersonalizationConfig} from './personalization';
+import {advancePersonalizationReferencePolicy,clearDeletedPersonalizationReferences,emptyPersonalizationReferencePolicy,type PersonalizationReferencePolicy} from './personalizationReferences';
+export interface DesktopState {onboarding:OnboardingState|null;available:boolean;status:'browser'|'loading'|'ready'|'error';error:string;errors:DesktopError[];recorderModeRequest:RecorderModeRequest|null;preferences:NativePreferences;modes:ModeRecord[];dictionary:DictionarySnapshot|null;usage:DailyUsage;provider:ProviderStatus;devices:AudioDevice[];devicesStatus:'idle'|'loading'|'ready'|'error';session:LiveSession|null;recovery:RetainedRecovery|null;temporaryResult:HistoryDetail|null;capabilities:Record<string,boolean>;personalizationReferences:PersonalizationReferencePolicy}
 interface DesktopContextValue extends DesktopState {
  records:Dictation[];historyTotal:number;nextCursor:number|null;historyLoading:boolean;query:string;
  command:<T>(name:string,payload?:Record<string,unknown>)=>Promise<T>;refresh:()=>Promise<void>;
@@ -40,10 +42,11 @@ function eventIssue(event:AppEvent,current:LiveSession|null):DesktopError|null {
 export function DesktopProvider({children}:{children:ReactNode}) {
  const available=desktopAvailable();
  const recorderSurface=new URLSearchParams(location.search).get('window')==='recorder';
- const [state,setState]=useState<DesktopState>({onboarding:null,available,status:available?'loading':'browser',error:'',errors:[],recorderModeRequest:null,preferences:{...initialPreferences},modes:[],dictionary:null,usage:emptyUsage,provider:initialProvider,devices:[],devicesStatus:'idle',session:null,recovery:null,temporaryResult:null,capabilities:{}});
+ const [state,setState]=useState<DesktopState>({onboarding:null,available,status:available?'loading':'browser',error:'',errors:[],recorderModeRequest:null,preferences:{...initialPreferences},modes:[],dictionary:null,usage:emptyUsage,provider:initialProvider,devices:[],devicesStatus:'idle',session:null,recovery:null,temporaryResult:null,capabilities:{},personalizationReferences:emptyPersonalizationReferencePolicy});
  const [records,setRecords]=useState<Dictation[]>([]),[historyTotal,setHistoryTotal]=useState(0),[nextCursor,setNextCursor]=useState<number|null>(null),[historyLoading,setHistoryLoading]=useState(false),[query,setQuery]=useState('');
  const queryRef=useRef(''),listRun=useRef(0),deviceReadRun=useRef(0),sequence=useRef(-1),alive=useRef(true),refreshTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
  const details=useRef(new Map<string,Dictation>());
+ const personalizationPolicy=useRef(emptyPersonalizationReferencePolicy);
  const sessionHead=useRef<{id:string;generation:number}|null>(null),retiredSessions=useRef(new Map<string,number>());
  // Only an authoritative snapshot can reactivate an older session identity,
  // and its generation must advance. Delayed worker events cannot resurrect it.
@@ -58,16 +61,31 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   }else if(head){retiredSessions.current.set(head.id,head.generation);sessionHead.current=null;}
   return true;
  },[]);
- const command=useCallback(<T,>(name:string,payload:Record<string,unknown>={})=>desktopCommand<T>(name,payload),[]);
+ const command=useCallback(async<T,>(name:string,payload:Record<string,unknown>={}):Promise<T>=>{
+  const value=await desktopCommand<T>(name,payload);
+  if((name==='personalization.get'||name==='personalization.save')&&isPersonalizationConfig(value)){
+   if(value.version<personalizationPolicy.current.version)throw {code:'revisionConflict',message:'画像已更新，请重新读取最新设置；当前草稿仍保留。'};
+   const next=advancePersonalizationReferencePolicy(personalizationPolicy.current,value);
+   if(next!==personalizationPolicy.current){
+    personalizationPolicy.current=next;
+    for(const [id,record] of details.current)details.current.set(id,clearDeletedPersonalizationReferences(record,next));
+    // Use the current policy inside queued state updates; a newer native reply
+    // may arrive before React applies them. Failed saves never reach this path.
+    setRecords(previous=>clearDeletedPersonalizationReferences(previous,personalizationPolicy.current));
+    setState(previous=>({...clearDeletedPersonalizationReferences(previous,personalizationPolicy.current),personalizationReferences:personalizationPolicy.current}));
+   }
+  }
+  return clearDeletedPersonalizationReferences(value,personalizationPolicy.current);
+ },[]);
  const acceptDictionary=useCallback((dictionary:DictionarySnapshot)=>{setState(prev=>prev.dictionary&&prev.dictionary.version>dictionary.version?prev:{...prev,dictionary});},[]);
  const acceptPreferences=useCallback((preferences:NativePreferences)=>{if(alive.current)setState(prev=>preferences.version<prev.preferences.version?prev:{...prev,preferences});},[]);
- const acceptDetail=useCallback((detail:HistoryDetail)=>{const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');if(!record.temporary)details.current.set(record.id,record);setRecords(prev=>prev.map(r=>r.id===record.id?record:r));setState(prev=>prev.temporaryResult?.session.id===record.id?{...prev,temporaryResult:detail}:prev);},[]);
- const loadRecord=useCallback(async(id:string)=>{const detail=await command<HistoryDetail>('history.get',{sessionId:id});const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');acceptDetail(detail);return record;},[command,acceptDetail]);
+ const acceptDetail=useCallback((received:HistoryDetail)=>{const detail=clearDeletedPersonalizationReferences(received,personalizationPolicy.current),record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');if(!record.temporary)details.current.set(record.id,record);setRecords(prev=>prev.map(r=>r.id===record.id?clearDeletedPersonalizationReferences(record,personalizationPolicy.current):r));setState(prev=>prev.temporaryResult?.session.id===record.id?{...prev,temporaryResult:clearDeletedPersonalizationReferences(detail,personalizationPolicy.current)}:prev);},[]);
+ const loadRecord=useCallback(async(id:string)=>{const detail=clearDeletedPersonalizationReferences(await command<HistoryDetail>('history.get',{sessionId:id}),personalizationPolicy.current);const record=fromDetail(detail,detail.session.storagePolicy==='memoryOnly');acceptDetail(detail);return record;},[command,acceptDetail]);
  const fetchHistory=useCallback(async(search:string,cursor:number|null=null)=>{
   if(!available)return;const run=++listRun.current;setHistoryLoading(true);
   try {const page=await command<HistoryPage>('history.list',{query:search,cursor,limit:20});if(!alive.current||run!==listRun.current)return;
    const mapped=page.items.map(item=>{const cached=details.current.get(item.sessionId);return cached??fromSummary(item);});
-   setRecords(prev=>cursor===null?mapped:[...prev,...mapped.filter(r=>!prev.some(p=>p.id===r.id))]);setHistoryTotal(page.total);setNextCursor(page.nextCursor??null);
+   setRecords(prev=>clearDeletedPersonalizationReferences(cursor===null?mapped:[...prev,...mapped.filter(r=>!prev.some(p=>p.id===r.id))],personalizationPolicy.current));setHistoryTotal(page.total);setNextCursor(page.nextCursor??null);
    const needsDetail=page.items.filter((item,index)=>(cursor===null&&!search&&index<3)||(details.current.has(item.sessionId)&&(details.current.get(item.sessionId)?.revision!==(item.currentRevisionId??'')||details.current.get(item.sessionId)?.sourceRevisionId!==item.sourceRevisionId)));await Promise.allSettled(needsDetail.map(item=>loadRecord(item.sessionId)));
    if(cursor===null&&!search){const present=new Set(page.items.map(i=>i.sessionId));for(const [id] of details.current){if(!present.has(id))details.current.delete(id);}}
   } finally {if(alive.current&&run===listRun.current)setHistoryLoading(false);}
@@ -76,7 +94,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   if(!snap||typeof snap!=='object')return;if(typeof snap.sequence==='number'&&snap.sequence<sequence.current)return;
   sequence.current=Math.max(sequence.current,snap.sequence??0);
   const updateSession='session'in snap&&acceptSession(snap.session??null,true);
-  setState(prev=>{const next={...prev,...(snap.onboarding?{onboarding:snap.onboarding}:{}),...(snap.preferences&&snap.preferences.version>=prev.preferences.version?{preferences:snap.preferences}:{}),...(snap.modes?{modes:snap.modes}:{}),...(snap.dictionary&&(!prev.dictionary||snap.dictionary.version>=prev.dictionary.version)?{dictionary:snap.dictionary}:{}),...(snap.usage?{usage:snap.usage}:{}),...(snap.provider?{provider:snap.provider}:{}),...(snap.devices?{devices:snap.devices}:{}),...('recovery'in snap?{recovery:snap.recovery??null}:{}),...('temporaryResult'in snap?{temporaryResult:snap.temporaryResult??null}:{}),...(snap.capabilities?{capabilities:snap.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,snap.session??null):next;});
+  setState(prev=>{const current=clearDeletedPersonalizationReferences(snap,personalizationPolicy.current),next={...prev,...(current.onboarding?{onboarding:current.onboarding}:{}),...(current.preferences&&current.preferences.version>=prev.preferences.version?{preferences:current.preferences}:{}),...(current.modes?{modes:current.modes}:{}),...(current.dictionary&&(!prev.dictionary||current.dictionary.version>=prev.dictionary.version)?{dictionary:current.dictionary}:{}),...(current.usage?{usage:current.usage}:{}),...(current.provider?{provider:current.provider}:{}),...(current.devices?{devices:current.devices}:{}),...('recovery'in current?{recovery:current.recovery??null}:{}),...('temporaryResult'in current?{temporaryResult:current.temporaryResult??null}:{}),...(current.capabilities?{capabilities:current.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,current.session??null):next;});
  },[acceptSession]);
  const readFailed=useCallback((operation:string,error:unknown)=>{if(alive.current)setState(prev=>putError(prev,{scope:'transport',operation,message:errorMessage(error)}));},[]);
  const refresh=useCallback(async()=>{
@@ -84,7 +102,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   if(recorderSurface){try{applySnapshot(await command<NativeSnapshot>('state.snapshot'));if(alive.current)setState(prev=>clearReadError(prev,'snapshot'));}catch(e){readFailed('snapshot',e);}return;}
   const deviceRun=++deviceReadRun.current;
   setState(prev=>({...prev,devicesStatus:'loading'}));
-  const results=await Promise.allSettled([command<NativeSnapshot>('state.snapshot'),command<AudioDevice[]>('audio.listDevices'),fetchHistory(queryRef.current)]);
+  const results=await Promise.allSettled([command<NativeSnapshot>('state.snapshot'),command<AudioDevice[]>('audio.listDevices'),fetchHistory(queryRef.current),command('personalization.get')]);
   if(!alive.current)return;
   if(results[0].status==='fulfilled')applySnapshot(results[0].value);
   setState(prev=>{let next:DesktopState={...prev,status:results[0].status==='fulfilled'?'ready':'error'};
@@ -93,7 +111,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
    if(deviceRun===deviceReadRun.current){const result=results[1];next=result.status==='fulfilled'
     ?clearReadError({...next,devices:result.value,devicesStatus:'ready'},'devices')
     :putError({...next,devicesStatus:'error'},{scope:'transport',operation:'devices',message:errorMessage(result.reason)});}
-   for(const [index,operation] of [[0,'snapshot'],[2,'history']] as const){const result=results[index];next=result.status==='fulfilled'?clearReadError(next,operation):putError(next,{scope:'transport',operation,message:errorMessage(result.reason)});}return next;});
+   for(const [index,operation] of [[0,'snapshot'],[2,'history'],[3,'personalization']] as const){const result=results[index];next=result.status==='fulfilled'?clearReadError(next,operation):putError(next,{scope:'transport',operation,message:errorMessage(result.reason)});}return next;});
  },[available,recorderSurface,command,fetchHistory,applySnapshot,readFailed]);
  useEffect(()=>{
   alive.current=true;if(!available)return;
@@ -115,7 +133,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
    if(sequence.current>=0&&event.sequence>sequence.current+1){queued.push(event);resync();return;}
    if(event.kind==='snapshot'){applySnapshot({...event.payload as NativeSnapshot,sequence:event.sequence});return;}
    sequence.current=event.sequence;
-   if(event.kind==='session'){const next=event.payload as LiveSession|null;if((next===null||typeof next==='object')&&acceptSession(next))setState(prev=>withSession(prev,next));return;}
+   if(event.kind==='session'){const next=event.payload as LiveSession|null;if((next===null||typeof next==='object')&&acceptSession(next))setState(prev=>withSession(prev,clearDeletedPersonalizationReferences(next,personalizationPolicy.current)));return;}
    if(event.kind==='error'||event.kind==='recorder.openMode'){applyIntent(event);return;}
    clearTimeout(refreshTimer.current);refreshTimer.current=setTimeout(()=>{if(recorderSurface)resync();else void refresh();},80);
   };

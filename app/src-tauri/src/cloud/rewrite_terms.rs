@@ -21,6 +21,7 @@ pub(super) fn matching_terms(source: &SourceRevision, dictionary: &DictionarySna
     }
     let available = plain_mask(&text);
     let tokens = plain_tokens(&text, &available);
+    let preservation = super::spoken_format::LetterPreservation::new(&text);
     let mut selected = Vec::new();
     let mut seen = HashSet::new();
     let mut total = 0;
@@ -30,7 +31,7 @@ pub(super) fn matching_terms(source: &SourceRevision, dictionary: &DictionarySna
         if !eligible_term(term) || total + term.len() > MAX_TOTAL_CHARS {
             continue;
         }
-        if matches_for_entry(&text, &tokens, term).is_empty() {
+        if matches_for_entry(&text, &tokens, term, &preservation).is_empty() {
             continue;
         }
         if !seen.insert(term.to_ascii_lowercase()) {
@@ -64,7 +65,8 @@ fn safe_case(word: &str) -> bool {
 }
 
 /// Only identical Latin letters, ignoring ordinary spaces and case. No phonetic or fuzzy match.
-fn matches_for_entry(text: &str, tokens: &[Token<'_>], term: &str) -> Vec<(usize, usize, u8)> {
+fn matches_for_entry(text: &str, tokens: &[Token<'_>], term: &str,
+    preservation:&super::spoken_format::LetterPreservation<'_>) -> Vec<(usize, usize, u8)> {
     let words: Vec<_> = term.split(' ').collect(); let compact = words.concat();
     let mut matches = Vec::new();
     for start in 0..tokens.len() {
@@ -80,7 +82,7 @@ fn matches_for_entry(text: &str, tokens: &[Token<'_>], term: &str) -> Vec<(usize
                 let window = &tokens[start..=last];
                 let exact = window.len() == words.len() && phrase_matches(text, window, &words);
                 let deliberate_letters = window.len()>1 && window.iter().all(|token|token.text.len()==1)
-                    && super::spoken_format::preserve_letters(text,tokens[start].start,tokens[last].end);
+                    && preservation.preserves(tokens[start].start,tokens[last].end);
                 if !deliberate_letters && (exact || window.iter().all(|token| safe_case(token.text))) {
                     matches.push((tokens[start].start, tokens[last].end, u8::from(!exact)));
                 }
@@ -95,10 +97,11 @@ fn matches_for_entry(text: &str, tokens: &[Token<'_>], term: &str) -> Vec<(usize
 pub(super) fn canonicalize(text: &str, dictionary: &DictionarySnapshot) -> String {
     if literal_context(text) { return text.to_owned(); }
     let tokens = plain_tokens(text, &plain_mask(text));
+    let preservation = super::spoken_format::LetterPreservation::new(text);
     let mut proposals = std::collections::BTreeMap::<usize, (usize, String, u8, bool)>::new();
     for entry in &dictionary.entries {
         if !eligible_term(&entry.term) { continue; }
-        for (start, end, score) in matches_for_entry(text, &tokens, &entry.term) {
+        for (start, end, score) in matches_for_entry(text, &tokens, &entry.term, &preservation) {
             let next = (end, entry.term.clone(), score, false);
             match proposals.get_mut(&start) {
                 None => { proposals.insert(start, next); },
@@ -368,5 +371,18 @@ mod tests {
         let words = dictionary(&["Visual Studio", "VisualStudio"]);
         assert_eq!(canonicalize("V i s u a l S t u d i o", &words), "V i s u a l S t u d i o");
         assert_eq!(canonicalize("visual studio", &words), "Visual Studio");
+    }
+    #[test]
+    fn dense_repeated_candidates_share_source_preservation_without_changing_lists() {
+        // Both public dictionary paths construct one LetterPreservation before
+        // the entry/candidate loops. Candidate queries use only its sorted ranges
+        // and bounded context; no timing threshold or cross-test counter needed.
+        let fragment="接口资料使用 A P I。表头列出 A P I、D。组件资料使用 S D K。另表列出 S、D、K。";
+        let expected="接口资料使用 API。表头列出 A P I、D。组件资料使用 SDK。另表列出 S、D、K。";
+        let input=source(&fragment.repeat(256));let before=input.clone();
+        let words=dictionary(&["API","SDK"]);let before_words=words.clone();
+        assert_eq!(matching_terms(&input,&words),["API","SDK"]);
+        assert_eq!(canonicalize(&input.text(),&words),expected.repeat(256));
+        assert_eq!(input,before);assert_eq!(words,before_words);
     }
 }

@@ -22,6 +22,7 @@ interface HomePageProps {
   onHistory: () => void;
   onSettings: () => void;
   onManageModes: () => void;
+  onPersonalization: () => void;
 }
 
 function HomeShortcut({ shortcut, onSettings }: { shortcut: string; onSettings: () => void }) {
@@ -47,7 +48,7 @@ function RecentDictations({ records, onOpen, onHistory }: Pick<HomePageProps, 'r
   </HomeSectionCard>;
 }
 
-export function HomePage({ preferences, records, defaultMode, onDefaultModeChange, onOpen, onHistory, onSettings, onManageModes }: HomePageProps) {
+export function HomePage({ preferences, records, defaultMode, onDefaultModeChange, onOpen, onHistory, onSettings, onManageModes, onPersonalization }: HomePageProps) {
   const latest = records[0];
   const desktop = useDesktop();
   return <div className="home-page">
@@ -57,7 +58,7 @@ export function HomePage({ preferences, records, defaultMode, onDefaultModeChang
     </header>
     <UsageOverview />
     <section className="home-preferences" aria-label="口述偏好">
-      <HomeModePicker value={defaultMode} onChange={onDefaultModeChange} onManage={onManageModes} />
+      <HomeModePicker value={defaultMode} onChange={onDefaultModeChange} onManage={onManageModes} onPersonalization={onPersonalization} />
       <InputPreferences preferences={preferences} onSettings={onSettings} />
     </section>
     <HomeSectionCard className="latest-card" titleId="latest-title" title="最近一次口述"

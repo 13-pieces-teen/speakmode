@@ -63,8 +63,54 @@ fn grouped_suffix(text: &str) -> bool {
     digits == 3 && text[digits..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric())
 }
 
+// A small explicit label makes an otherwise unitless number an asserted amount.
+// This does not infer a currency, scan a profession, or promote arbitrary counts.
+// English labels require whole-word boundaries; identifiers such as budget3000
+// are already excluded by the numeric scanner's adjacent-letter rule.
+fn explicit_amount_label(text: &str, start: usize, end: usize) -> bool {
+    if text[end..].chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') { return false; }
+    // Inspect a fixed local suffix before trimming/case folding. A numeric-dense
+    // long dictation must not copy its entire growing prefix for each scalar.
+    const WINDOW_CHARS: usize = 48;
+    let window_start = text[..start].char_indices().rev().nth(WINDOW_CHARS)
+        .map_or(0, |(index, c)| index + c.len_utf8());
+    let before = text[window_start..start].trim_end();
+    let before = before.strip_suffix('负').or_else(|| before.strip_suffix('-')).unwrap_or(before).trim_end();
+    let before = before.strip_suffix('：').or_else(|| before.strip_suffix(':')).unwrap_or(before).trim_end();
+    let chinese = ["是", "为", "先"].iter().find_map(|word| before.strip_suffix(word)).unwrap_or(before).trim_end();
+    if ["预算", "金额", "费用", "价格"].iter().any(|label| chinese.ends_with(label)) { return true; }
+    let lower = before.to_ascii_lowercase();
+    let english = lower.strip_suffix(" is").unwrap_or(&lower).trim_end();
+    ["budget", "amount", "price", "cost"].iter().any(|label| english.strip_suffix(label)
+        .is_some_and(|prefix| prefix.chars().next_back()
+            .or_else(|| text[..window_start].chars().next_back())
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_')))
+}
+
+// Bare 度 can also mean an occurrence (一度认为 / 二度创作) or electricity.
+// Only an adjacent finite measurement cue promotes it to an unspecified degree;
+// even a temperature cue does not supply an absent Celsius/Fahrenheit scale.
+fn unspecified_degree_context(text: &str, start: usize, end: usize) -> bool {
+    let after = text[end..].trim_start();
+    if ["电", "认为", "以为", "提出", "创作", "获得", "获奖"].iter().any(|word| after.starts_with(word)) { return false; }
+    const WINDOW_CHARS: usize = 48;
+    let window_start = text[..start].char_indices().rev().nth(WINDOW_CHARS)
+        .map_or(0, |(index, c)| index + c.len_utf8());
+    let before = text[window_start..start].trim_end();
+    let before = before.strip_suffix('负').or_else(|| before.strip_suffix('-')).unwrap_or(before).trim_end();
+    if ["最高", "最低", "转到", "转至", "转过", "停在", "倾斜", "旋转", "升到", "升至", "降到", "降至"]
+        .iter().any(|cue| before.ends_with(cue)) { return true; }
+    let before = ["保持在", "约为", "达到", "显示", "为", "是", "约"].iter()
+        .filter_map(|link| before.strip_suffix(link).map(|prefix| (link.len(), prefix.trim_end())))
+        .max_by_key(|(length, _)| *length).map_or(before, |(_, prefix)| prefix);
+    ["温度", "角度", "读数", "示数", "度数", "夹角", "倾角", "转角", "仰角", "俯角"]
+        .iter().any(|label| before.ends_with(label))
+}
+
 // Unit conversions here are deliberately small and exact. Percentage points
 // and percentages differ; versions preserve component spelling, including zeros.
+// A bare degree never selects a temperature scale. Explicit temperature scales
+// stay separate even when their values could be physically converted.
 const UNITS: &[(&str, &str, u128)] = &[
     ("个百分点", "percentage-point", 1), ("％", "percent", 1), ("%", "percent", 1),
     ("人民币", "cny", 1), ("块钱", "cny", 1), ("元", "cny", 1), ("块", "cny", 1), ("cny", "cny", 1), ("rmb", "cny", 1),
@@ -77,7 +123,11 @@ const UNITS: &[(&str, &str, u128)] = &[
     ("months", "month", 1), ("month", "month", 1), ("years", "year", 1), ("year", "year", 1), ("年", "year", 1), ("日", "date-day", 1),
     ("gib", "gib", 1), ("mib", "mib", 1), ("kib", "kib", 1), ("gb", "gb", 1), ("mb", "mb", 1), ("kb", "kb", 1),
     ("公斤", "kilogram", 1), ("千克", "kilogram", 1), ("kg", "kilogram", 1), ("米", "metre", 1),
-    ("人", "person", 1), ("次", "times", 1), ("条", "item", 1), ("项", "item", 1), ("个", "count", 1), ("倍", "multiple", 1),
+    ("摄氏度", "temperature-c", 1), ("℃", "temperature-c", 1), ("°C", "temperature-c", 1),
+    ("华氏度", "temperature-f", 1), ("℉", "temperature-f", 1), ("°F", "temperature-f", 1),
+    ("开尔文", "temperature-k", 1), ("kelvin", "temperature-k", 1),
+    ("°", "degree", 1),
+    ("个人", "person", 1), ("人", "person", 1), ("次", "times", 1), ("条", "item", 1), ("项", "item", 1), ("个", "count", 1), ("倍", "multiple", 1),
 ];
 
 // These exact constructions use 一个 as an indefinite article, not an asserted
@@ -103,8 +153,18 @@ fn indefinite_article(before: &str, raw: &str, unit: &str, after: &str) -> bool 
 }
 
 fn begins(text: &str, phrase: &str) -> bool {
-    text.get(..phrase.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(phrase))
-        && (!phrase.is_ascii() || text[phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphabetic()))
+    let Some(prefix) = text.get(..phrase.len()) else { return false; };
+    // New symbol aliases must not match a prefix of an ASCII identifier. Keep
+    // the existing boundary rules for the other established unit spellings.
+    if !prefix.eq_ignore_ascii_case(phrase) { return false; }
+    if matches!(phrase, "°" | "°C" | "°F" | "℃" | "℉" | "kelvin") {
+        return text[phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+    }
+    // These explicit noun continuations are 个 + a compound beginning with 人,
+    // not the person classifier. This is finite protection, not Chinese parsing.
+    if phrase == "个人" && ["人工", "人机", "人脸", "人声", "人口", "人群", "人行"]
+        .iter().any(|noun| text['个'.len_utf8()..].starts_with(noun)) { return false; }
+    !phrase.is_ascii() || text[phrase.len()..].chars().next().is_none_or(|c| !c.is_ascii_alphabetic())
 }
 
 fn decimal(raw: &str, multiplier: u128) -> Option<String> {
@@ -187,8 +247,12 @@ fn clock_fact(text: &str, start: usize) -> Option<Fact> {
 
 pub(super) fn extract(text: &str) -> Vec<Fact> {
     let mut result = Vec::new(); let mut offset = 0;
+    // Literal contents keep their existing exact-match protection. A label in
+    // code/quoted examples must not create a new prose-amount dimension.
+    let mut literals=super::super::literals::spans(text).into_iter().peekable();
     let mut date_components=super::super::dates::mentions(text).iter().flat_map(|d|super::super::dates::components(text,d)).collect::<Vec<_>>().into_iter().peekable();
     while offset < text.len() {
+        while literals.peek().is_some_and(|literal|literal.end<=offset){literals.next();}
         while date_components.peek().is_some_and(|(_,end,_)|*end<=offset){date_components.next();}
         if date_components.peek().is_some_and(|(start,_,_)|*start==offset) {
             let (start,end,key)=date_components.next().unwrap();result.push(Fact{key,start,end});offset=end;continue;
@@ -248,16 +312,21 @@ pub(super) fn extract(text: &str) -> Vec<Fact> {
         }
         let suffix = text[end..].trim_start();
         let mut unit = if percentage_start.is_some() { "percent" } else { "scalar" };
-        if let Some((word, label, multiplier)) = UNITS.iter().filter(|(word, _, _)| begins(suffix, word)).max_by_key(|(word, _, _)| word.len()) {
+        let explicit_unit = UNITS.iter().filter(|(word, _, _)| begins(suffix, word)).max_by_key(|(word, _, _)| word.len()).copied();
+        let measured_degree = suffix.starts_with('度') && unspecified_degree_context(text, start,
+            text.len() - suffix.len() + '度'.len_utf8());
+        if let Some((word, label, multiplier)) = explicit_unit.or_else(|| measured_degree.then_some(("度", "degree", 1))) {
             unit = label;
             // 个功能 and 项功能 denote the same count. Do not conflate other
             // classifier dimensions (e.g. 条/人/次) or drop the numeric value.
-            if *word == "项" && suffix[word.len()..].trim_start().starts_with("功能") { unit = "count"; }
-            let Some(multiplier) = scale.checked_mul(*multiplier) else { continue; };
+            if word == "项" && suffix[word.len()..].trim_start().starts_with("功能") { unit = "count"; }
+            let Some(multiplier) = scale.checked_mul(multiplier) else { continue; };
             scale = multiplier; end = text.len() - suffix.len() + word.len();
         } else if previous.is_some_and(|c| matches!(c, '¥' | '￥' | '$')) {
             unit = if previous == Some('$') { "usd" } else { "cny" };
         }
+        if unit == "scalar" && !literals.peek().is_some_and(|literal|literal.start<=numeric_start&&numeric_start<literal.end)
+            && explicit_amount_label(text,numeric_start,end) { unit = "amount"; }
         // A bare 一 in 一下/一般/唯一 is prose, not an asserted numeric fact.
         if !arabic && unit == "scalar" && !raw.chars().any(|c| matches!(c, '十' | '百' | '千' | '万' | '亿')) { continue; }
         if indefinite_article(before, raw, unit, &text[end..]) { offset = end; continue; }
@@ -302,4 +371,47 @@ pub(super) fn canonical_text(text: &str) -> String {
         result.push_str(&text[start..fact.start]); result.push(' '); result.push_str(&fact.key); result.push(' '); start = fact.end;
     }
     result.push_str(&text[start..]); result
+}
+
+#[cfg(test)]
+mod amount_tests {
+    use super::*;
+    fn amounts(text:&str)->Vec<String>{extract(text).into_iter().map(|fact|fact.key).filter(|key|key.starts_with("amount:")).collect()}
+    #[test]
+    fn explicit_unitless_amount_labels_keep_exact_values_and_original_ranges() {
+        for text in ["预算三千", "预算是3000", "预算为 3,000", "金额：3000", "价格三千", "费用先3000", "The budget is 3000", "Budget: 3000", "The amount is 3000", "price 3000", "cost is 3000"] {
+            let facts=extract(text);assert_eq!(amounts(text),["amount:3000"],"{text}");let fact=facts.iter().find(|fact|fact.key=="amount:3000").unwrap();
+            assert_eq!(decimal(text[fact.start..fact.end].trim(),1).as_deref(),Some("3000"),"{text}");
+        }
+        assert_eq!(amounts("金额三"),["amount:3"]);assert_eq!(amounts("预算负三千"),["amount:-3000"]);assert_eq!(amounts("budget -3000"),["amount:-3000"]);
+    }
+    #[test]
+    fn labels_do_not_promote_arbitrary_digits_lists_identifiers_or_literal_examples() {
+        for text in ["3000", "预计3000", "第1条", "1. 测试", "A、D、H、D", "rebudget 3000", "_amount 3000", "budget3000", "budget_3000", "预算_3000", "预算3000A", "预算版本3000", "`budget: 3000`", "`预算三千`", "代码 ```text\n预算3000\n```", "引用‘金额3000’", "const budget = 3000"] {
+            assert!(amounts(text).is_empty(),"{text}");
+        }
+        assert_eq!(amounts("第1条预算三千"),["amount:3000"]);
+    }
+    #[test]
+    fn explicit_units_keep_the_existing_currency_and_measurement_dimensions() {
+        for (text,key) in [("预算三千元","cny:3000"),("金额3000美元","usd:3000"),("The budget is 30 dollars","usd:30"),("费用3000元","cny:3000"),("预算3个月","month:3")] {
+            let facts=extract(text);assert!(facts.iter().any(|fact|fact.key==key),"{text}");assert!(amounts(text).is_empty(),"{text}");
+        }
+    }
+    #[test]
+    fn amount_label_window_is_local_utf8_safe_and_handles_dense_long_inputs() {
+        let text=format!("{}预算三千", "记录🙂1234，".repeat(12_000));
+        assert!(text.chars().count()>80_000);
+        for (start,_) in text.match_indices("1234") {assert!(!explicit_amount_label(&text,start,start+4));}
+        let start=text.find("三千").unwrap();assert!(explicit_amount_label(&text,start,text.len()));
+        // A distant label does not acquire a number across an unbounded gap.
+        let distant=format!("budget{}3000", " ".repeat(49));let start=distant.find("3000").unwrap();
+        assert!(!explicit_amount_label(&distant,start,distant.len()));
+        // Clipping the preceding identifier must not invent a word boundary.
+        for prefix in [format!("rebudget{}", " ".repeat(42)),format!("_amount{}", " ".repeat(42))] {
+            let text=format!("{prefix}3000");assert!(!explicit_amount_label(&text,prefix.len(),text.len()));
+        }
+        let text=format!("{} Budget is 3000", "中🙂".repeat(30));let start=text.find("3000").unwrap();
+        assert!(explicit_amount_label(&text,start,text.len()));
+    }
 }

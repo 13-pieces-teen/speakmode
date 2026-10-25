@@ -218,9 +218,12 @@ fn resolve_correction<'a>(spans: &mut [Span<'a>], replacement: &Span<'a>) -> boo
         // Omitted currency units in a local budget repair are the one bounded
         // exception. An unrelated person count must not replace an amount.
         let amount_label = super::without_anchors(&old[..old_fact.start]);
-        let implicit_cny = old_unit == "scalar" && new_unit == "cny"
+        let implicit_cny = matches!(old_unit, "scalar" | "amount") && new_unit == "cny"
             && ["预算", "预算先", "预算是", "金额", "金额是", "费用", "费用是", "价格", "价格是"].contains(&amount_label.trim());
-        if old_unit != new_unit && !implicit_cny { return true; }
+        // A bare value in an explicit adjacent correction inherits the already
+        // stated amount label; it does not assign a currency to the source.
+        let implicit_amount = old_unit == "amount" && new_unit == "scalar";
+        if old_unit != new_unit && !implicit_cny && !implicit_amount { return true; }
         spans[index].text.replace_range(old_fact.start..old_fact.end, &replacement.text[new_fact.start..new_fact.end]);
         extend_origins(&mut spans[index], &replacement.origins);
     } else {

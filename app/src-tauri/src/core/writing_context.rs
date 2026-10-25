@@ -35,9 +35,18 @@ pub struct WritingContext {
     pub scene: AppWritingScene,
     pub language: DraftLanguage,
     pub input: Option<InputContext>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub personalization: Option<super::personalization::EffectivePersonalization>,
 }
 impl WritingContext {
-    pub fn validate(&self) -> Result<(), &'static str> { self.input.as_ref().map_or(Ok(()),InputContext::validate) }
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.input.as_ref().map_or(Ok(()),InputContext::validate)?;
+        if let Some(profile)=&self.personalization {
+            profile.validate()?;
+            if profile.scene!=self.scene {return Err("画像与当前场合不一致");}
+        }
+        Ok(())
+    }
 }
 
 /// Content-free record of the frozen writing policy. No host text is persisted.
@@ -45,6 +54,8 @@ impl WritingContext {
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 pub struct WritingReceipt {
     pub scene: AppWritingScene, pub language: DraftLanguage, pub context_used: bool, pub contract_version: String,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub personalization: Option<super::personalization::EffectivePersonalization>,
 }
 
 pub fn selected_scene(mode: &ModeSnapshot) -> Option<AppWritingScene> {

@@ -13,7 +13,7 @@ pub(super) fn freeze(session: &ActiveSession) -> Option<WritingContext> {
     let explicit=selected_scene(&session.mode);
     let automatic=session.mode.mode_id=="auto" && session.mode.rules.is_empty();
     let language=session.prefs.app_writing.output_language;
-    if explicit.is_none() && !automatic && !session.prefs.app_writing.input_context_enabled && language==DraftLanguage::AsSpoken { return None; }
+    let legacy_none=explicit.is_none() && !automatic && !session.prefs.app_writing.input_context_enabled && language==DraftLanguage::AsSpoken;
     let target_ready=!session.target_capture_pending && !session.original_delivery_revoked && session.reason==CreationReason::NormalInitial;
     let application=session.target_application.as_deref().unwrap_or("");
     let input=if target_ready && session.prefs.app_writing.permits_input_context(application) {
@@ -28,5 +28,7 @@ pub(super) fn freeze(session: &ActiveSession) -> Option<WritingContext> {
         else if target_ready {session.prefs.app_writing.scene_for(application)}
         else {AppWritingScene::General}
     });
-    Some(WritingContext {scene,language,input})
+    let personalization=session.personalization.freeze(scene);
+    if legacy_none && personalization.is_none(){return None;}
+    Some(WritingContext {scene,language,input,personalization})
 }

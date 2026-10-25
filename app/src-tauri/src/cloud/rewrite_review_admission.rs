@@ -134,6 +134,11 @@ pub(super) fn required_evidence(source: &SourceRevision, blocks: &[OutputBlock])
 }
 
 pub(super) fn validate(source: &SourceRevision, blocks: &[OutputBlock]) -> Result<(), CloudError> {
+    validate_with_email_omission(source,blocks,None)
+}
+
+pub(super) fn validate_with_email_omission(source: &SourceRevision, blocks: &[OutputBlock],
+    omission: Option<&super::super::email_authoring::Omission<'_>>) -> Result<(), CloudError> {
     let spans = effective_spans(source);
     if spans.is_empty() || blocks.is_empty() || spans.iter().any(|span| span.unresolved_correction) {
         return Err(reject("语义复核的来源或改口含义尚不明确"));
@@ -142,7 +147,18 @@ pub(super) fn validate(source: &SourceRevision, blocks: &[OutputBlock]) -> Resul
     if source_numbers != output_numbers {
         return Err(reject("语义复核前发现明确数值、单位或版本变化"));
     }
-    let source_kinds = kinds(spans.iter().map(|span| span.text.as_str()));
+    // Only an anchor inside the exact original wrapper range may be omitted.
+    // Corrected/merged spans and every other customer question stay protected.
+    // Numeric/date checks above deliberately keep the complete effective source.
+    let source_kinds = spans.iter().flat_map(|span|anchors(&span.text).into_iter().filter(move |anchor| {
+        !omission.is_some_and(|allowed| {
+            if span.origins.len()!=1 {return false;}
+            let origin=&span.origins[0];
+            source.items.iter().find(|item|item.id==origin.source_id)
+                .is_some_and(|item|item.text.get(origin.start..origin.end)==Some(span.text.as_str()))
+                && allowed.contains(origin.source_id,origin.start+anchor.start,origin.start+anchor.end)
+        })
+    }).map(|anchor|anchor.kind)).collect::<HashSet<_>>();
     let output_kinds = kinds(blocks.iter().map(|block| block.text.as_str()));
     let times = |values: &HashSet<Kind>| values.iter().copied()
         .filter(|kind| matches!(kind, Kind::Time(_))).collect::<HashSet<_>>();

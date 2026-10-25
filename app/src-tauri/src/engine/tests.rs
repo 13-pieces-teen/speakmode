@@ -20,6 +20,8 @@ mod app_writing_tests;
 mod rewrite_deadline_tests;
 #[path="recorder_copy_tests.rs"]
 mod recorder_copy_tests;
+#[path="personalization_tests.rs"]
+mod personalization_tests;
 #[path="typeless_import_tests.rs"]
 mod typeless_import_tests;
 
@@ -68,11 +70,11 @@ pub(super) fn hub() -> Arc<AppHub> {
         inner: Mutex::new(Inner {
             onboarding:OnboardingRuntime::default(),
             guards: Default::default(), sequence: 0, active: None, recovery: None,
-            candidate: None, preview: None, preview_sources:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
+            candidate: None, preview: None, preview_sources:Default::default(),personalization_workers:Default::default(),personalization_revocations:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, asr_key_configured:false, rewrite_key_configured:false, requests: Default::default(),
             request_order: Default::default(),settings_pending:None,
         }),
-        db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
+        db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),personalization_statistics_incomplete:AtomicBool::new(false),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
         subscribers: Mutex::new(HashMap::new()), publication: Mutex::new(()),
         data_dir: test_data_directory(),
         hooks: Mutex::new(None), native_actions: Mutex::new(None), recorder_control: Mutex::new(None), stop_target_control: Mutex::new(None), native_io: Mutex::new(()),
@@ -87,6 +89,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
     let mode = hub.db.mode_snapshot("auto", None).unwrap();
     let mut i=hub.inner.lock().unwrap();i.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),7)));
     i.active = Some(ActiveSession {
+        personalization:hub.db.snapshot().personalization,personalization_commit:None,
         onboarding_lesson:None,
         diagnostic_trace:None,caption_render_token:None,
         id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
@@ -880,7 +883,7 @@ fn candidate(hub: &AppHub, id: &str, run: &str) -> CancellationToken {
     generated.kind = RevisionKind::Adopt; generated.creation_reason = CreationReason::History;
     generated.blocks[0].text = "候选：会议未确认前，不要订机票；先保留行程。".into();
     let token = CancellationToken::new();
-    hub.inner.lock().unwrap().candidate = Some(CandidateSlot { key: id.into(), run: run.into(), cancel: token.clone(),
+    hub.inner.lock().unwrap().candidate = Some(CandidateSlot { personalization:None,key: id.into(), run: run.into(), cancel: token.clone(),
         base: format!("output-{id}"), result: Some(HistoryCandidate{revision:generated,review_issues:vec![]}),adopting:None }); token
 }
 
@@ -1248,7 +1251,7 @@ fn source_only_candidate(h:&AppHub,id:&str,run:&str){
     let mut value=output(h,id);value.id=run.into();value.mode_snapshot=h.db.mode_snapshot("light",None).unwrap();
     value.resolved_mode=BaseMode::Light;value.kind=RevisionKind::Adopt;value.creation_reason=CreationReason::History;
     value.base_revision_id=None;value.parent_revision_id=None;
-    h.inner.lock().unwrap().candidate=Some(CandidateSlot{key:id.into(),run:run.into(),base:String::new(),cancel:CancellationToken::new(),result:Some(HistoryCandidate{revision:value,review_issues:vec![]}),adopting:None});
+    h.inner.lock().unwrap().candidate=Some(CandidateSlot{personalization:None,key:id.into(),run:run.into(),base:String::new(),cancel:CancellationToken::new(),result:Some(HistoryCandidate{revision:value,review_issues:vec![]}),adopting:None});
 }
 fn first_adopt_payload(id:&str,run:&str)->Value{json!({"sessionId":id,"expectedCurrentRevisionId":"","candidateId":run,"requestId":Uuid::new_v4().to_string()})}
 
@@ -1472,7 +1475,7 @@ async fn committed_first_adoption_receipt_after_delete_keeps_usage_without_reviv
 }
 
 fn delivery_target_fixture()->platform::delivery::TargetSnapshot {
-    platform::delivery::TargetSnapshot{hwnd:123,process_id:456,focused_hwnd:123,runtime_id:vec![1,2],selection:Some((0,0)),process_created_at:789}
+    platform::delivery::TargetSnapshot{hwnd:123,process_id:456,focused_hwnd:123,runtime_id:vec![1,2],selection:Some((0,0)),process_created_at:789,compatibility:None}
 }
 fn delivery_anchor_fixture()->platform::delivery::ForegroundAnchor {
     let target=delivery_target_fixture();platform::delivery::ForegroundAnchor{hwnd:target.hwnd,process_id:target.process_id,

@@ -6,6 +6,7 @@ import {HistoryPage} from './pages/HistoryPage';
 import {SettingsPage} from './pages/SettingsPage';
 import {ModesPage} from './pages/ModesPage';
 import {DictionaryPage} from './pages/DictionaryPage';
+import {PersonalizationPage} from './pages/PersonalizationPage';
 import {ModeProvider,useModes} from './hooks/useModes';
 import {useDictations} from './hooks/useDictations';
 import {DesktopProvider,useDesktop} from './services/DesktopProvider';
@@ -50,9 +51,10 @@ function AppContent(){
   {desktop.available&&<SessionRecovery onOpen={openRecord}/>} 
   {desktop.available&&<RetainedRecovery/>}
   {view==='home'&&desktop.onboarding&&!desktop.onboarding.progress.completedAt&&<div className="environment-banner"><div><strong>用两次口述，熟悉 SpeakMode</strong><p>设置服务、测试快捷键，在聊天与文档场景中练习。</p></div><Button variant="soft" onClick={openOnboarding}>{desktop.onboarding.progress.step==='welcome'?'开始使用引导':'继续使用引导'}</Button></div>}
-  {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onManageModes={()=>manageModes('home')}/>}
+  {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onPersonalization={()=>navigate('personalization')} onManageModes={()=>manageModes('home')}/>}
   {view==='history'&&<HistoryPage selectedId={selectedId} onSelect={setSelectedId}/>}
   {view==='dictionary'&&<DictionaryPage/>}
+  {view==='personalization'&&<PersonalizationPage onSkip={()=>navigate('home')} onDictionary={()=>navigate('dictionary')} onSettings={()=>navigate('settings')}/>}
   {view==='settings'&&<SettingsPage preferences={preferences} onPreferencesChange={updatePreferences} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onManageModes={()=>manageModes('settings')} onOnboarding={openOnboarding}/>}
   {view==='modes'&&<ModesPage records={dictations.records.filter(r=>r.detail)} origin={modeOrigin==='home'?'首页':'设置'} onBack={()=>navigate(modeOrigin)} onDirtyChange={setModeDirty} leaving={pendingView!==null} onKeepEditing={()=>setPendingView(null)} onDiscardAndLeave={()=>pendingView&&commitNavigation(pendingView)}/>}
  </AppShell>;

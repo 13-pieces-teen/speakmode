@@ -64,7 +64,7 @@ fn trim_noise(sentence: &str) -> &str {
     }
 }
 
-pub(super) fn anchors(source: &str) -> Result<Vec<Anchor>,CloudError> {
+fn sentence_ranges(source: &str) -> Vec<(usize,usize)> {
     let spans=super::literals::spans(source);let mut literal=0;let mut start=0;let mut ranges=Vec::new();
     for (at,c) in source.char_indices() {
         while literal<spans.len()&&at>=spans[literal].end {literal+=1;}
@@ -75,8 +75,11 @@ pub(super) fn anchors(source: &str) -> Result<Vec<Anchor>,CloudError> {
         if period||matches!(c,'。'|'!'|'！'|'?'|'？') {ranges.push((start,end));start=end;}
     }
     if start<source.len(){ranges.push((start,source.len()));}
+    ranges
+}
+pub(super) fn anchors(source: &str) -> Result<Vec<Anchor>,CloudError> {
     let mut result=Vec::new();let mut total=0;
-    for (start,end) in ranges {
+    for (start,end) in sentence_ranges(source) {
         let quote=trim_noise(&source[start..end]);
         if !is_request(quote){continue;}
         let count=quote.chars().count();total+=count;
@@ -84,6 +87,27 @@ pub(super) fn anchors(source: &str) -> Result<Vec<Anchor>,CloudError> {
         result.push(Anchor{quote:quote.to_owned()});
     }
     Ok(result)
+}
+
+fn anchors_with_email_omission(source: &str, omission: Option<&super::email_authoring::Omission<'_>>)
+    -> Result<Vec<Anchor>,CloudError> {
+    let Some(omission)=omission else{return anchors(source);};
+    let body=omission.body(source);
+    let mut required=anchors(body)?;
+    // Executing an authorized formatting wrapper must not erase the material,
+    // qualifiers or customer question from the rest of its first sentence.
+    // Keep an exact source substring; never anchor a synthetic source revision.
+    if omission.formatting {
+        if let Some((start,end))=sentence_ranges(body).first().copied() {
+            let quote=trim_noise(&body[start..end]);
+            if !quote.is_empty() && !required.iter().any(|anchor|anchor.quote==quote) {
+                required.insert(0,Anchor{quote:quote.to_owned()});
+            }
+        }
+    }
+    if required.len()>MAX_ANCHORS || required.iter().any(|anchor|anchor.quote.chars().count()>MAX_ANCHOR_CHARS)
+        || required.iter().map(|anchor|anchor.quote.chars().count()).sum::<usize>()>MAX_TOTAL_CHARS {return Err(rejected());}
+    Ok(required)
 }
 
 /// Tokens retain outer word boundaries (list != blacklist), letter/CJK order
@@ -103,7 +127,11 @@ fn tokens(text: &str) -> Vec<String> {
     result
 }
 pub(super) fn validate(source: &str, output: &str) -> Result<(),CloudError> {
-    let required=anchors(source)?;if required.is_empty(){return Ok(());}
+    validate_with_email_omission(source,output,None)
+}
+pub(super) fn validate_with_email_omission(source: &str, output: &str,
+    omission: Option<&super::email_authoring::Omission<'_>>) -> Result<(),CloudError> {
+    let required=anchors_with_email_omission(source,omission)?;if required.is_empty(){return Ok(());}
     let actual=tokens(output);let mut joined=String::new();let mut boundaries=std::collections::HashSet::new();
     boundaries.insert(0);
     for token in actual {joined.push_str(&token);boundaries.insert(joined.len());}
@@ -116,11 +144,15 @@ pub(super) fn validate(source: &str, output: &str) -> Result<(),CloudError> {
 }
 
 pub(super) fn require_verifiable_english(source: &str) -> Result<(),CloudError> {
+    require_verifiable_english_with_email_omission(source,None)
+}
+pub(super) fn require_verifiable_english_with_email_omission(source: &str,
+    omission: Option<&super::email_authoring::Omission<'_>>) -> Result<(),CloudError> {
     // Known Chinese request/qualifier forms need translation that this finite
     // retention check cannot validate. Accented/foreign proper names inside
     // an English request (Jose/Munchen with their accents) are not a reason to
     // reject it. This finite check is not a general language classifier.
-    let needs_translation=anchors(source)?.iter().any(|anchor|unquoted(&anchor.quote)
+    let needs_translation=anchors_with_email_omission(source,omission)?.iter().any(|anchor|unquoted(&anchor.quote)
         .split([',','，',';','；',':','：']).any(|clause| {
             let clause=clause.trim();chinese_request(clause)||
                 ["如果","假如","只要","除非","因为","由于","但是","不过","我们","我认为","我觉得","我想","目前","这次","此次","关于"]
@@ -129,11 +161,24 @@ pub(super) fn require_verifiable_english(source: &str) -> Result<(),CloudError> 
     if needs_translation {Err(rejected())}else{Ok(())}
 }
 pub(super) fn attach(body: &mut Value, source: &str) -> Result<(),CloudError> {
-    let anchors=anchors(source)?;if anchors.is_empty(){return Ok(());}
+    attach_with_email_omission(body,source,None)
+}
+pub(super) fn attach_with_email_omission(body: &mut Value, source: &str,
+    omission: Option<&super::email_authoring::Omission<'_>>) -> Result<(),CloudError> {
+    let anchors=anchors_with_email_omission(source,omission)?;
+    if anchors.is_empty() && omission.is_none(){return Ok(());}
     let mut data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().ok_or_else(rejected)?).map_err(|_|rejected())?;
-    data["sourceRetentionAnchors"]=json!(anchors.iter().map(|anchor|anchor.quote.as_str()).collect::<Vec<_>>());
-    let system=body["messages"][0]["content"].as_str().ok_or_else(rejected)?;
-    if !system.contains(CONTRACT){body["messages"][0]["content"]=json!(format!("{system}\n{CONTRACT}"));}
+    let system=body["messages"][0]["content"].as_str().ok_or_else(rejected)?.to_owned();
+    if anchors.is_empty() {
+        // A confirmed candidate first prepares generic anchors. A later frozen
+        // Email attachment must replace/remove those anchors, not leave stale
+        // wrapper retention behind. Repeated attachment is idempotent.
+        data.as_object_mut().ok_or_else(rejected)?.remove("sourceRetentionAnchors");
+        body["messages"][0]["content"]=json!(system.replace(&format!("\n{CONTRACT}"),""));
+    } else {
+        data["sourceRetentionAnchors"]=json!(anchors.iter().map(|anchor|anchor.quote.as_str()).collect::<Vec<_>>());
+        if !system.contains(CONTRACT){body["messages"][0]["content"]=json!(format!("{system}\n{CONTRACT}"));}
+    }
     body["messages"][1]["content"]=json!(data.to_string());Ok(())
 }
 

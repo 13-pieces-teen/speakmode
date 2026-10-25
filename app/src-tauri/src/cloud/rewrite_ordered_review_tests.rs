@@ -4,11 +4,13 @@ fn request(format:MinimumReviewFormat)->(ModeSnapshot,SourceRevision,RewriteResu
  let r=prepare_minimum_with_format(&ProviderConfig::default(),&mode,&source,&draft,format).unwrap();(mode,source,draft,r)
 }
 fn verdict()->Value{json!({"decision":"accept","checks":["pass","pass","pass","pass","pass"],"issues":[]})}
+fn named_verdict()->Value{json!({"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]})}
 #[test]
 fn ordered_review_keeps_five_independent_checks_and_original_bindings(){
  let (m,s,d,r)=request(MinimumReviewFormat::Ordered);
  let original=s.clone();let review=parse_minimum(&verdict().to_string(),&r,&m,&s,&d).unwrap();
- assert!(review.accepted());assert_eq!(review.protocol_version,ORDERED_REVIEW_VERSION);assert_eq!(s,original);
+ assert!(review.accepted());assert_eq!(review.protocol_version,ORDERED_REVIEW_VERSION);
+ assert_eq!(review.reviewer_wire_protocol_version,ORDERED_REVIEW_VERSION);assert_eq!(s,original);
  for i in 0..5 {for status in ["fail","uncertain"] {
   let mut v=verdict();v["decision"]=json!("reject");v["checks"][i]=json!(status);
   let review=parse_minimum(&v.to_string(),&r,&m,&s,&d).unwrap();assert!(!review.accepted());
@@ -51,6 +53,29 @@ fn explicit_english_context_retains_its_existing_review_schema(){
  context.language=crate::core::DraftLanguage::English;
  let r=prepare_minimum_with_writing_context_and_format(&ProviderConfig::default(),&m,&s,&d,Some(&context),MinimumReviewFormat::Ordered).unwrap();
  assert!(!r.ordered);assert!(parse_minimum(&verdict().to_string(),&r,&m,&s,&d).is_err());
+ let review=parse_minimum(&named_verdict().to_string(),&r,&m,&s,&d).unwrap();
+ assert!(review.accepted());assert_eq!(review.reviewer_wire_protocol_version,ENGLISH_MINIMUM_REVIEW_VERSION);
+ assert_eq!(ENGLISH_MINIMUM_REVIEW_VERSION,if cfg!(feature="experimental-english-dictation"){ "minimum-review-v4" }else{ "minimum-review-v3" });
+}
+#[test]
+fn review_wire_metadata_is_local_and_legacy_named_checks_remain_supported(){
+ for format in [MinimumReviewFormat::Named,MinimumReviewFormat::Ordered] {
+  let (m,s,d,r)=request(format);
+  let expected=if format==MinimumReviewFormat::Ordered {ORDERED_REVIEW_VERSION}else{MINIMUM_REVIEW_VERSION};
+  let original=r.body.clone();
+  // Ordered contracts already allow named legacy responses; metadata describes
+  // the prepared contract, not a model-supplied version or response container.
+  let value=named_verdict();
+  let review=parse_minimum(&value.to_string(),&r,&m,&s,&d).unwrap();
+  let serialized=serde_json::to_value(&review).unwrap();
+  assert!(review.accepted());assert_eq!(serialized["protocolVersion"],expected);
+  assert_eq!(serialized["reviewerWireProtocolVersion"],expected);assert_eq!(r.body,original);
+  assert!(!r.body.to_string().contains("reviewerWireProtocolVersion"));
+  for field in ["protocolVersion","reviewerWireProtocolVersion"] {
+   let mut invalid=value.clone();invalid[field]=json!(expected);
+   assert!(parse_minimum(&invalid.to_string(),&r,&m,&s,&d).is_err(),"versions must not enter the model response schema");
+  }
+ }
 }
 #[test]
 fn ordered_default_is_limited_to_the_evaluated_model_region_and_feature(){
@@ -58,4 +83,52 @@ fn ordered_default_is_limited_to_the_evaluated_model_region_and_feature(){
  assert!(matches!(minimum_format(&c,&s),MinimumReviewFormat::Ordered)==!cfg!(feature="experimental-english-dictation"));
  c.region=Some("singapore".into());assert!(matches!(minimum_format(&c,&s),MinimumReviewFormat::Named));
  c.region=Some("beijing".into());c.rewrite_model="qwen-plus".into();assert!(matches!(minimum_format(&c,&s),MinimumReviewFormat::Named));
+}
+#[test]
+fn chinese_minimum_contracts_declare_the_same_issue_bounds_the_parser_enforces(){
+ let bounds="sourceQuote 和 draftQuote 必须各为1–80个 Unicode 字符且非空白，分别逐字来自对应文本的连续片段；reason 必须为1–100个 Unicode 字符且非空白，只说明问题，不写替换稿。";
+ for format in [MinimumReviewFormat::Named,MinimumReviewFormat::Ordered] {
+  let (_,_,_,r)=request(format);let prompt=r.body["messages"][0]["content"].as_str().unwrap();
+  assert!(prompt.contains(bounds));assert!(prompt.contains("issues 给最多两处"));
+  assert!(prompt.contains("通过时 issues=[]"));assert!(prompt.contains("仅五项全 pass 才 accept"));
+  let expected=if format==MinimumReviewFormat::Named{"minimum-review-v5"}else{"minimum-review-ordered-v2"};
+  assert_eq!(r.protocol_version,expected);assert!(prompt.contains(&format!("协议版本：{expected}")));
+ }
+ assert_eq!(SEMANTIC_REVIEW_PROMPT_VERSION,"semantic-review-compact-v3");
+}
+#[test]
+fn minimum_issue_reason_and_quotes_use_unicode_character_bounds_without_weakening_rejection(){
+ let (mode,mut source,mut draft)=super::tests::fixture();
+ // Every tested quote, including whitespace, is present in BOTH texts. This
+ // isolates nonblank/length checks from the independent containment guard.
+ let text=format!("前{}\t\n 后","😀".repeat(81));
+ source.items[0].text=text.clone();draft.blocks[0].text=text;
+ for format in [MinimumReviewFormat::Named,MinimumReviewFormat::Ordered] {
+  let r=prepare_minimum_with_format(&ProviderConfig::default(),&mode,&source,&draft,format).unwrap();
+  let mut rejected=if format==MinimumReviewFormat::Named{named_verdict()}else{verdict()};
+  rejected["decision"]=json!("reject");
+  if format==MinimumReviewFormat::Named{rejected["checks"]["cleanup"]=json!("fail");}
+  else{rejected["checks"][4]=json!("fail");}
+  let issue=|reason:&str,quote:&str|json!({"dimension":"cleanup","sourceQuote":quote,"draftQuote":quote,"reason":reason});
+  // 100 emoji are 100 Unicode scalar values but 400 UTF-8 bytes; the upper
+  // bound must not accidentally become a byte-count limit.
+  for reason in ["问".to_owned(),"💬".repeat(100)] {
+   rejected["issues"]=json!([issue(&reason,&"😀".repeat(80))]);
+   let review=parse_minimum(&rejected.to_string(),&r,&mode,&source,&draft).unwrap();assert!(!review.accepted());
+  }
+  for reason in [String::new()," \t\n".into(),"💬".repeat(101)] {
+   rejected["issues"]=json!([issue(&reason,"😀")]);
+   assert!(parse_minimum(&rejected.to_string(),&r,&mode,&source,&draft).is_err());
+  }
+  for quote in ["😀".to_owned(),"😀".repeat(80)] {
+   rejected["issues"]=json!([issue("问",&quote)]);
+   assert!(!parse_minimum(&rejected.to_string(),&r,&mode,&source,&draft).unwrap().accepted());
+  }
+  for quote in [String::new(),"\t\n".into(),"😀".repeat(81),"不存在的摘录".into()] {
+   for field in ["sourceQuote","draftQuote"] {
+    rejected["issues"]=json!([issue("问","😀")]);rejected["issues"][0][field]=json!(quote);
+    assert!(parse_minimum(&rejected.to_string(),&r,&mode,&source,&draft).is_err());
+   }
+  }
+ }
 }

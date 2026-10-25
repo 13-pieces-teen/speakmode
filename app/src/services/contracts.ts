@@ -10,7 +10,7 @@ export interface SourceRevision { id:string; sessionId:string; asrAttemptId:stri
 export interface OutputBlock { id:string; text:string; sourceRefs:string[] }
 export interface SourceCorrection { start:number; end:number; expectedText:string; replacement:string }
 export interface ConfirmedContext { sourceRevisionId:string; language:'asSpoken'|'english'; corrections:SourceCorrection[] }
-export interface WritingReceipt { scene:AppWritingScene; language:'asSpoken'|'english'; contextUsed:boolean; contractVersion:string }
+export interface WritingReceipt { scene:AppWritingScene; language:'asSpoken'|'english'; contextUsed:boolean; contractVersion:string; personalization?:import('./personalization').PersonalizationReference|null; referenceCleared?:boolean }
 export interface OutputRevision { writingReceipt?:WritingReceipt; confirmedContext?:ConfirmedContext; rewriteFallback?:RewriteFallbackReason; id:string; sessionId:string; parentRevisionId:string|null; baseRevisionId:string|null; sourceRevisionId:string; modeSnapshot:ModeSnapshot; resolvedMode:BaseMode; blocks:OutputBlock[]; kind:'initial'|'useSource'|'adopt'|'edit'|'restore'|'undo'; creationReason:'normalInitial'|'retry'|'useSource'|'history'|'preview'; createdAt:string }
 export type CandidateReviewIssue='valuesChanged'|'meaningChanged'|'literalsChanged'|'tenseChanged'|'confirmedTextChanged'|'reviewRejected'|'reviewUnavailable';
 /** Ephemeral history draft, never an automatic delivery authorization. */

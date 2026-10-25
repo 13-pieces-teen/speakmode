@@ -43,7 +43,7 @@ async fn execute_until(client:&reqwest::Client,config:&ProviderConfig,secret:&st
     let context=super::writing_context::for_mode(mode);
     execute_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context.as_ref()).await
 }
-async fn execute_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+pub(super) async fn execute_until_with_writing_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
     context:Option<&crate::core::writing_context::WritingContext>)->Outcome {
     execute_until_with_review_format(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context,None).await
@@ -59,30 +59,36 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
             let request=minimum::prepare_with_writing_context(config,mode,source,dictionary,true,context)?;
             checkpoint(&cancel,deadline)?;trace.calls+=1;
             let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
+            request.validate_personalization(context)?;
             minimum::parse(&content,mode,source,&request)?
         };
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
         super::format_draft_spoken(&mut draft,super::spoken_english(source,context));
         trace.draft=Some(draft.clone());
-        super::review_admission(source,&draft).map_err(safe_error)?;
+        super::review_admission_with_writing_context(mode,source,&draft,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&draft)?;}
         checkpoint(&cancel,deadline)?;
         let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&draft,context,
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Review).await?;
+        request.validate_personalization(context)?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        // Keep the legacy writing-contract label while retaining the separately
+        // recorded reviewer wire contract from this exact prepared request.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if review.accepted() && local_repair::residue_hint(source,&draft).is_none(){return Ok(draft);}
         if deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejected());}
         let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{return Err(rejected());};
         if let Some(context)=context {super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Repair)?;}
+        request.bind_personalization(context);
         checkpoint(&cancel,deadline)?;trace.calls+=1;trace.repair_attempted=true;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Repair).await?;
-        let mut repaired=local_repair::apply(&content,&request,mode,source,&draft).map_err(safe_error)?;
+        request.validate_personalization(context)?;
+        let mut repaired=local_repair::apply_with_writing_context(&content,&request,mode,source,&draft,context).map_err(safe_error)?;
         super::format_draft_spoken(&mut repaired,super::spoken_english(source,context));
-        super::review_admission(source,&repaired).map_err(safe_error)?;
+        super::review_admission_with_writing_context(mode,source,&repaired,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&repaired)?;}
         trace.repaired_draft=Some(repaired.clone());checkpoint(&cancel,deadline)?;
         if repaired.blocks[0].text==draft.blocks[0].text{return Err(rejected());}
@@ -94,7 +100,9 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(&cancel,deadline)?;trace.calls+=1;
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::FinalReview).await?;
+        request.validate_personalization(context)?;
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&repaired).map_err(safe_error)?;
+        // Final review records its own request-derived wire contract as well.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if !review.accepted() || local_repair::residue_hint(source,&repaired).is_some(){return Err(rejected());}
@@ -121,6 +129,50 @@ pub async fn experiment_with_writing_context(config:&ProviderConfig,secret:&str,
     let endpoint=super::rewrite_endpoint(config)?;
     Ok(execute_until_with_writing_context(super::shared_client()?,config,secret,mode,source,&DictionarySnapshot::default(),
         CancellationToken::new(),&endpoint,RewriteExecution::for_duration(wait),None,Some(context)).await)
+}
+/// Content-free transport observation for the explicit personalization lab.
+/// A started event precedes provider conversion and dispatch; it is not a bill.
+#[derive(Debug,Clone,Serialize)]#[serde(rename_all="camelCase")]
+pub struct PersonalizationLabEvent {
+    pub stage:&'static str,pub event:&'static str,pub duration_ms:Option<f64>,
+    pub remaining_budget_ms:u64,pub outcome:Option<&'static str>,
+}
+/// Reuse the production semantic path with an explicit frozen dictionary and
+/// durable caller ledger. Returning false from the observer cancels dispatch.
+/// This lab client disables redirects and all automatic retries. No delivery,
+/// history access, credentials lookup, or application config mutation occurs.
+pub async fn experiment_personalization_observed(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:&crate::core::writing_context::WritingContext,wait:Duration,
+    observer:impl Fn(PersonalizationLabEvent)->bool+Send+Sync+'static)->Result<Outcome,CloudError>{
+    use std::sync::{Arc,Mutex,atomic::{AtomicBool,AtomicUsize,Ordering}};
+    context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?;
+    let endpoint=super::rewrite_endpoint(config)?;
+    let client=reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never()).build()
+        .map_err(|_|CloudError::new("lab_client_failed","rewrite","评估客户端创建失败"))?;
+    let cancel=CancellationToken::new();let observed_cancel=cancel.clone();
+    let failed=Arc::new(AtomicBool::new(false));let observed_failed=Arc::clone(&failed);
+    let starts=Arc::new(AtomicUsize::new(0));let observed_starts=Arc::clone(&starts);
+    let timings=Arc::new(Mutex::new(Vec::new()));let observed_timings=Arc::clone(&timings);
+    let execution=RewriteExecution::observed(Instant::now()+wait,move|event|{
+        let stage=match event.stage{RequestStage::Generation=>"generation",RequestStage::Review=>"review",RequestStage::Repair=>"repair",RequestStage::FinalReview=>"finalReview"};
+        let outcome=event.outcome.map(|value|match value{RequestOutcome::ResponseReceived=>"responseReceived",RequestOutcome::Failed=>"failed",RequestOutcome::Cancelled=>"cancelled",RequestOutcome::TimedOut=>"timedOut",RequestOutcome::Interrupted=>"interrupted"});
+        let duration_ms=event.finished_at.map(|end|end.duration_since(event.started_at).as_secs_f64()*1000.);
+        if event.finished_at.is_none() && observed_starts.fetch_add(1,Ordering::SeqCst)>=4 {
+            observed_failed.store(true,Ordering::SeqCst);observed_cancel.cancel();return;
+        }
+        if let (Some(duration_ms),Some(outcome))=(duration_ms,outcome){
+            let mut timings=observed_timings.lock().unwrap();
+            if timings.len()<4 {timings.push(RequestTiming{stage,duration_ms,remaining_budget_ms:event.remaining_budget_ms,outcome});}
+        }
+        if !observer(PersonalizationLabEvent{stage,event:if event.finished_at.is_some(){"finished"}else{"started"},duration_ms,remaining_budget_ms:event.remaining_budget_ms,outcome}) {
+            observed_failed.store(true,Ordering::SeqCst);observed_cancel.cancel();
+        }
+    });
+    let mut outcome=execute_until_with_writing_context(&client,config,secret,mode,source,dictionary,cancel,&endpoint,execution,None,Some(context)).await;
+    outcome.trace.requests=std::mem::take(&mut *timings.lock().unwrap());
+    if failed.load(Ordering::SeqCst){outcome.result=Err(CloudError::new("lab_ledger_failed","rewrite","评估账本写入失败，后续请求已停止"));}
+    Ok(outcome)
 }
 /// Same generated draft, review, repair and absolute deadline as production.
 /// Only this explicit lab entry records per-request timings and overrides the

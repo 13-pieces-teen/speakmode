@@ -58,6 +58,8 @@ mod protected_terms;
 mod literals;
 #[path="rewrite_format_requests.rs"]
 mod format_requests;
+#[path="rewrite_email_authoring.rs"]
+mod email_authoring;
 #[path="rewrite_fluent_pipeline.rs"]
 mod fluent_pipeline;
 #[path="rewrite_manual_candidate.rs"]
@@ -87,6 +89,8 @@ pub mod scene_layout;
 #[path="rewrite_writing_context.rs"]
 pub mod writing_context;
 pub use manual_candidate::{ManualCandidate, ManualReviewIssue, rewrite_manual_candidate};
+pub(crate) use manual_candidate::rewrite_manual_candidate_with_writing_context;
+pub(crate) use manual_candidate::rewrite_manual_candidate_with_writing_context_execution;
 
 // Identifies the task contract independently of the selected provider/model.
 // Keep it in experiment receipts so prompt changes are not confused with a
@@ -170,9 +174,11 @@ pub const FLUENT_PIPELINE_VERSION: &str = "fluent-dictation-v2+protected-long-v3
 // See the report: acceptance is not fidelity proof; repair remains guarded and
 // no general speed/Typeless parity or real-voice claim follows from this gate.
 pub const MINIMUM_PROTOCOL_PROMOTED: bool = true;
+// Includes reachable Chinese named/ordered and English named contracts. The
+// per-request reviewer_wire_protocol_version identifies which one was sent.
 pub const MINIMUM_PIPELINE_VERSION: &str = if cfg!(feature="experimental-english-dictation") {
-    "minimum-edit-v4+minimum-review-v4+residue-hint-v2+local-repair-v2"
-} else { "minimum-edit-v3+minimum-review-ordered-v1+residue-hint-v2+local-repair-v2" };
+    "minimum-edit-v4+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v4+residue-hint-v2+local-repair-v2"
+} else { "minimum-edit-v3+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v3+residue-hint-v2+local-repair-v2" };
 fn uses_minimum_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
     writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_provider=="aliyun" && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
 }
@@ -290,6 +296,19 @@ pub fn review_admission(source:&SourceRevision,draft:&RewriteResult)->Result<(),
     format_requests::validate(&source.text(), &text)?;
     spoken_format::validate(source,&draft.blocks)?;
     integrity::review_admission(source,&draft.blocks)
+}
+
+/// Same full-source admission with only a finite, source-bound Email wrapper
+/// exception. Full independent review is still mandatory after this precheck.
+pub(super) fn review_admission_with_writing_context(mode:&ModeSnapshot,source:&SourceRevision,draft:&RewriteResult,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<(),CloudError> {
+    let omission=email_authoring::omission(mode,source,context);
+    if omission.is_none(){return review_admission(source,draft);}
+    let text=draft.blocks.iter().map(|block|block.text.as_str()).collect::<Vec<_>>().join("\n");
+    literals::validate(&source.text(),&text)?;
+    format_requests::validate_with_email_omission(&source.text(),&text,omission.as_ref())?;
+    spoken_format::validate(source,&draft.blocks)?;
+    integrity::review_admission_with_email_omission(source,&draft.blocks,omission.as_ref())
 }
 
 // The language preference controls date presentation, independently of the
@@ -534,7 +553,18 @@ pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode
 
 pub(crate) async fn rewrite_with_execution(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken, execution: RewriteExecution) -> Result<RewriteResult, CloudError> {
     let endpoint = rewrite_endpoint(config)?;
-    rewrite_with_client_execution(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution).await
+    rewrite_with_client_optional_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,None).await
+}
+
+/// Normal dictation and its profile-off comparison share this route selection.
+/// None preserves the existing provider/mode contract, not an empty context.
+pub(crate) async fn rewrite_with_optional_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,execution:RewriteExecution,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<RewriteResult,CloudError> {
+    match context {
+        Some(context)=>rewrite_with_writing_context(config,secret,mode,source,dictionary,cancel,execution,context).await,
+        None=>rewrite_with_execution(config,secret,mode,source,dictionary,cancel,execution).await,
+    }
 }
 
 /// Caller freezes context with the stop-time target. No capture, persistence or
@@ -544,7 +574,18 @@ pub(crate) async fn rewrite_with_writing_context(config:&ProviderConfig,secret:&
     context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError> {
     execution.checkpoint(&cancel)?;
     let endpoint=rewrite_endpoint(config)?;
-    minimum_pipeline::run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,context).await
+    rewrite_with_client_optional_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,Some(context)).await
+}
+
+// Endpoint/client substitution is for local transport regressions. Both public
+// context choices delegate here without changing deadlines or source identity.
+pub(crate) async fn rewrite_with_client_optional_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,
+    context:Option<&crate::core::writing_context::WritingContext>)->Result<RewriteResult,CloudError> {
+    match context {
+        Some(context)=>minimum_pipeline::run_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,context).await,
+        None=>rewrite_with_client_execution(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await,
+    }
 }
 
 pub(crate) fn validate_source(source:&SourceRevision)->Result<(),CloudError> {

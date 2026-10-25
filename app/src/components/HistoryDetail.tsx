@@ -14,6 +14,7 @@ import {useNavigationGuard} from './NavigationGuard';
 import {buildRestorePreview,captureRestoreSelection,type RestoreSelection} from './restoreSelection';
 import {TermCorrectionPanel} from './TermCorrectionPanel';
 import {CandidateComparison} from './CandidateComparison';
+import {PersonalizationReference} from './PersonalizationReference';
 import {ConfirmedContextEditor,ConfirmationSummary} from './ConfirmedContextEditor';
 import type {ConfirmedContext,WritingReceipt} from '../services/contracts';
 import './HistoryDetail.css';
@@ -85,6 +86,7 @@ export function HistoryDetail({record,onBack}:Props) {
    </div><div className="history-tool-group history-version-tools"><h3 className="history-tool-label">本地版本</h3><span className="history-version-summary">{record.change||'初始版本'}</span><Button size="2" variant="soft" color="gray" disabled={Boolean(busy)||Boolean(candidate)||editing||correcting||!output} onClick={()=>{editBaseline.current=record;setEditText(record.current.join('\n\n'));setEditing(true);requestAnimationFrame(()=>focusInView(editor.current));}}><Pencil2Icon/>手动修改</Button><Button ref={correctionTrigger} size="2" variant="soft" color="gray" disabled={Boolean(busy)||Boolean(candidate)||editing||correcting||!output} aria-expanded={correcting} aria-controls={correctionId} onClick={()=>{setCorrecting(true);setModeOpen(false);setDeleteOpen(false);setNotice('');setError('');}}>纠正词条</Button><Button size="2" variant="ghost" disabled={!record.undoAvailable||Boolean(busy)||Boolean(candidate)||editing||correcting} onClick={()=>void perform('undo',()=>actions.undo(record),'已撤销上次本地修改。').catch(()=>{})}><ResetIcon/>撤销上次修改</Button>
     {!record.temporary&&<Button ref={deleteTrigger} size="2" variant="ghost" color="gray" disabled={Boolean(busy)||Boolean(candidate)||editing||correcting} aria-expanded={deleteOpen} aria-controls={deleteId} onClick={()=>{setModeOpen(false);setDeleteOpen(!deleteOpen);}}><TrashIcon/>删除记录</Button>}
    </div></aside></div>
+  {output?.writingReceipt&&(output.writingReceipt.personalization||output.writingReceipt.referenceCleared)&&<PersonalizationReference reference={output.writingReceipt.personalization} cleared={output.writingReceipt.referenceCleared}/>}
   {output?.confirmedContext&&<ConfirmationSummary context={output.confirmedContext}/>}
   {correcting&&<div id={correctionId}><TermCorrectionPanel record={record} onClose={closeCorrection} onSaved={message=>{closeCorrection();setNotice(message);}}/></div>}
   <p className="history-local-status" role="status" aria-live="polite">{busy==='candidate'?'正在生成候选…':busy?'正在保存…':notice}</p>{error&&<p className="inline-error" role="alert">{error}</p>}
