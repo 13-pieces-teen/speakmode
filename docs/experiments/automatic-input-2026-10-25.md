@@ -36,3 +36,14 @@
 ## 个性化评估
 
 见 [PRD 验收报告](personalization-acceptance-2026-10-25.md)。当前反馈为定性信息，六任务模板保持 NOT_RUN，所有未测门槛保持 UNKNOWN；本次实际插入测试不计入真人质量任务或模型提升。8 万字符组件耗时的两组失败继续保留，不重新抽样以取得通过。本轮没有追加收费模型请求。
+
+## 候选安装包
+
+2026-10-25 的 `0.2.32-personalization-2026-10-25-r1` 已完成 TypeScript／Vite、MSVC release 和 NSIS，退出 0；缓存 11.903 GiB、预算无违规。复制后的两份制品均逐一与构建输出核对 SHA256。源码提交 `4ff81f60d6dd4f4ed2ce604b5cb945bb3a0debd3`，app tree 为 `bb24f1be638905779dc89ff2ba106766253fc5c8`；后续试点核算及文档提交未修改 app tree。
+
+| 文件 | 字节 | SHA256 |
+| --- | --- | --- |
+| SpeakMode.exe | 28,959,744 | `4BA2376C0135EAF863C5CB6AE8F83F8E497703B95D8356BBF21147F189F04848` |
+| SpeakMode_0.2.32_x64-setup.exe | 15,162,573 | `30C5AB3F64C5F8FC18E3A68EE4CC50AFEE5595007CE4B25F7C92FB83DE3E82D7` |
+
+制品在仓库外 `output/releases/0.2.32-personalization-2026-10-25-r1/`，完整绑定见其 `artifacts.json`。桌面版本 0.2.32、前端 0.4.29、数据库 schema 5；未安装或启动用户的 SpeakMode，实际应用及真实语音未验收。试用材料已指向该新包，保持日常直接输入设置，优先补测原先失败的输入框；不要求重录已完成的质量样件。
