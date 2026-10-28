@@ -11,7 +11,8 @@ fn main()->anyhow::Result<()> {
     ensure!(args.len()==5,"expected owned root HWND, field HWND, PID, case, fresh absolute output");
     let root=args[0].parse::<usize>()?;let field=args[1].parse::<usize>()?;let pid=args[2].parse::<u32>()?;
     ensure!(root!=0&&field!=0&&pid!=0&&pid!=std::process::id(),"external owned fixture required");
-    ensure!(["writable","readonly","password"].contains(&args[3].as_str()),"invalid fixture case");
+    ensure!(["writable","custom","scan-code","readonly","password","button"].contains(&args[3].as_str()),"invalid fixture case");
+    let writable=["writable","custom","scan-code"].contains(&args[3].as_str());
     let out=Path::new(&args[4]);ensure!(out.is_absolute()&&!out.exists(),"fresh absolute output required");
     let file=OpenOptions::new().write(true).create_new(true).open(out)?;
     let _listener=handy_keys::KeyboardListener::new()?;
@@ -35,7 +36,7 @@ fn main()->anyhow::Result<()> {
         "inputEvents":0,"clipboardChanged":false,"actualInsertion":"UNCONFIRMED"});
     match target {
         Ok(target)=>{
-            ensure!(args[3]=="writable","readonly/password target was admitted");
+            ensure!(writable,"readonly/password/button target was admitted");
             ensure!(target.compatibility.is_some()&&!target.runtime_id.is_empty()&&target.selection.is_none(),"must exercise the ValuePattern-only route");
             let permit=delivery::DeliveryPermit::from_committed_attempt("owned-synthetic-fixture".into(),1);
             let result=delivery::dispatch_once(&permit,&target,"SpeakMode 中文 English ADHD，2026年10月25日。",||true);
@@ -47,7 +48,7 @@ fn main()->anyhow::Result<()> {
         Err(error)=>{
             let code=match error {PlatformError::TargetCapture(reason)=>reason.delivery_reason(),_=>"other"};
             report["captureError"]=json!(code);
-            report["nativeDispatchPassed"]=json!(args[3]!="writable" && code=="targetNotEditable");
+            report["nativeDispatchPassed"]=json!(!writable && code=="targetNotEditable");
             report["actualInsertion"]=json!("NOT_RUN");
         }
     }

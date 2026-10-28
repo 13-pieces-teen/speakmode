@@ -5,6 +5,8 @@ use crate::core::writing_context::WritingContext;
 use serde_json::{json, Value};
 
 pub const VERSION: &str = "situational-dictation-v4";
+// Context instructions are unchanged; automatic repair policy is versioned separately.
+pub const PIPELINE_VERSION: &str = "situational-dictation-v4+minimum-correction-v1";
 
 /// Historical modes retain their recorded contract. New scene modes also work
 /// in explicit previews/history, where no current host text is collected.

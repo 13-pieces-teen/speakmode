@@ -770,7 +770,7 @@ impl AppHub {
             s.input_context=None;s.input_context_frozen=true;
             (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen)};
         self.publish_session();
-        self.diagnostics.rewrite_started(trace.as_ref(),if writing_context.is_some(){rewrite::writing_context::VERSION}else{rewrite::production_protocol_version(&config,&mode)},policy.deadline.as_millis().min(u64::MAX as u128) as u64);
+        self.diagnostics.rewrite_started(trace.as_ref(),if writing_context.is_some(){rewrite::writing_context::PIPELINE_VERSION}else{rewrite::production_protocol_version(&config,&mode)},policy.deadline.as_millis().min(u64::MAX as u128) as u64);
         let profile_event_id=if reason==CreationReason::Retry{format!("{}:retry:{}",id,Uuid::new_v4())}else{id.clone()};
         let event_kind=if reason!=CreationReason::NormalInitial||self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some()){personalization::PersonalizationEventKind::Preview}else{personalization::PersonalizationEventKind::Normal};
         let profile_started=Instant::now();
@@ -858,11 +858,17 @@ impl AppHub {
         tokio::spawn(async move{let _lease=CommandLease(Arc::clone(&hub));let result=hub.db_write(DbCommand::Ready{output:output.clone()},Arc::clone(&guard),DbPriority::Critical).await;hub.output_receipt(&id,generation,pending,output,guard,result)}).await.map_err(|_|ApiError::new("save_interrupted","storage","结果保存未确认，请核对本机记录"))?
     }
     fn initial_delivery(&self,id:&str,generation:u64) {
-        self.initial_delivery_with(id,generation,|target|platform::delivery::validate_target(target).is_ok(),
+        self.initial_delivery_with_validation(id,generation,platform::delivery::validate_target,
             |permit,target,text,gate|platform::delivery::dispatch_once(permit,target,text,gate));
     }
+    #[cfg(test)]
     fn initial_delivery_with(&self,id:&str,generation:u64,
         validate:impl Fn(&platform::delivery::TargetSnapshot)->bool,
+        dispatch:impl Fn(&platform::delivery::DeliveryPermit,&platform::delivery::TargetSnapshot,&str,&dyn Fn()->bool)->platform::delivery::DispatchReceipt) {
+        self.initial_delivery_with_validation(id,generation,|target|if validate(target){Ok(())}else{Err(platform::PlatformError::Unavailable("fixture target changed".into()))},dispatch);
+    }
+    fn initial_delivery_with_validation(&self,id:&str,generation:u64,
+        validate:impl Fn(&platform::delivery::TargetSnapshot)->platform::Result<()>,
         dispatch:impl Fn(&platform::delivery::DeliveryPermit,&platform::delivery::TargetSnapshot,&str,&dyn Fn()->bool)->platform::delivery::DispatchReceipt) {
         let trace=self.trace(id,generation);
         struct Finished<'a>{hub:&'a AppHub,id:&'a str,generation:u64}
@@ -882,7 +888,8 @@ impl AppHub {
         };
         let eligible={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!self.quitting.load(Ordering::SeqCst)&&!s.original_delivery_revoked&&s.phase==SessionPhase::Ready&&s.prefs.delivery_mode==DeliveryMode::Direct&&s.reason==CreationReason::NormalInitial).and_then(|s|s.output.clone().map(|output|(if target_timed_out{None}else{s.target.clone()},output,s.target_capture_failure_reason.clone())))};
         let Some((target,output,capture_failure))=eligible else{let _=self.native_action("recording",false);if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.phase==SessionPhase::Ready&&!s.cancel.is_cancelled()&&s.prefs.delivery_mode==DeliveryMode::Preview){let _=self.native_action("showMain",true);}return;};
-        let rejection=match &target{None=>Some(if target_timed_out{"targetInspectionTimeout"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some(if target.compatibility.is_some(){"compatibilityTargetChanged"}else{"targetChangedBeforeDelivery"}),_=>None};
+        let rejection=match &target{None=>Some(if target_timed_out{"targetInspectionTimeout"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),
+            Some(target)=>validate(target).err().map(|error|platform::delivery::validation_failure_reason(target,&error))};
         // A skipped automatic delivery is still a once-only decision. Preserve
         // an opaque ledger receipt even when no input target could be captured.
         let fingerprint=target.as_ref().map(|target|format!("{}:{}:{}",target.hwnd,target.process_id,target.process_created_at)).unwrap_or_else(||"unavailableAtStop".into());
@@ -915,7 +922,9 @@ impl AppHub {
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){if let Some(d)=s.delivery.as_mut(){d.state=state;d.reason=Some(reason);}if persisted.is_err(){s.error=Some(ApiError::new("delivery_receipt_save_failed","storage","本机输入回执未保存；不会再次自动输入，请核对目标后手动复制").for_session(id,generation));}}}
         self.publish_session();self.changed();
         let current=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked);
-        if current{let _=self.native_action("recording",matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
+        // A saved/raw fallback is not a polished result. Keep its recovery
+        // notice visible even when the one allowed paste was dispatched.
+        if current{let _=self.native_action("recording",output.rewrite_fallback.is_some()||matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
     }
 
     pub fn copy_recoverable(&self,p:&Value)->Result<Value> {

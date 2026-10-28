@@ -110,7 +110,9 @@ async fn merging_separate_letters_or_changing_recorded_date_cannot_reach_all_pas
         let(config,mode,source)=fixture(input);let before=source.clone();
         let server=Server::new(vec![draft(output),Reply::Fixed(ACCEPT.into())]).await;
         assert!(run(&server,&config,&mode,&source).await.is_err());
-        assert_eq!(server.count(),1,"native admission must reject before a reviewer can waive the change");assert_eq!(source,before);
+        assert_eq!(server.count(),2);assert_eq!(source,before);
+        let requests=server.requests.lock().unwrap();let correction=data(&requests[1]);
+        assert!(correction.get("rejectedDraft").is_some());assert!(correction.get("draftText").is_none(),"native rejection can only lead to correction, not semantic acceptance");
     }
 }
 

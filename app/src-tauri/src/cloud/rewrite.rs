@@ -177,8 +177,8 @@ pub const MINIMUM_PROTOCOL_PROMOTED: bool = true;
 // Includes reachable Chinese named/ordered and English named contracts. The
 // per-request reviewer_wire_protocol_version identifies which one was sent.
 pub const MINIMUM_PIPELINE_VERSION: &str = if cfg!(feature="experimental-english-dictation") {
-    "minimum-edit-v4+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v4+residue-hint-v2+local-repair-v2"
-} else { "minimum-edit-v3+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v3+residue-hint-v2+local-repair-v2" };
+    "minimum-edit-v4+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v4+residue-hint-v2+local-repair-v2+minimum-correction-v1"
+} else { "minimum-edit-v3+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v3+residue-hint-v2+local-repair-v2+minimum-correction-v1" };
 fn uses_minimum_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
     writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_provider=="aliyun" && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
 }
@@ -194,7 +194,7 @@ fn uses_automatic_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool
 /// Report the actual selected production protocol, independently of provider
 /// model naming. Diagnostics must not infer protocol from a model preference.
 pub fn production_protocol_version(config: &ProviderConfig, mode: &ModeSnapshot) -> &'static str {
-    if writing_context::for_mode(mode).is_some() { writing_context::VERSION }
+    if writing_context::for_mode(mode).is_some() { writing_context::PIPELINE_VERSION }
     else if uses_minimum_contract(config,mode) { MINIMUM_PIPELINE_VERSION }
     else if uses_fluent_contract(config, mode) { FLUENT_PIPELINE_VERSION }
     else if uses_automatic_contract(config, mode) { AUTOMATIC_REWRITE_PROMPT_VERSION } else { REWRITE_PROMPT_VERSION }

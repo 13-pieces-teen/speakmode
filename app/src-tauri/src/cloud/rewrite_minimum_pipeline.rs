@@ -12,6 +12,7 @@ const REPAIR_RESERVE_MS:u64=1400;
 pub struct Trace {
     pub calls:usize,pub elapsed_ms:u64,pub draft:Option<RewriteResult>,
     pub review:Option<semantic_review::SemanticReview>,pub repair_attempted:bool,
+    pub correction_attempted:bool,
     pub repaired_draft:Option<RewriteResult>,pub final_review:Option<semantic_review::SemanticReview>,
     pub native_deletion_verified:bool,
     pub requests:Vec<RequestTiming>,
@@ -55,18 +56,36 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
     let job=async {
         checkpoint(&cancel,deadline)?;
         if let Some(context)=context {context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?;}
+        let mut generation_request=None;
         let mut draft=if let Some(draft)=fixed {draft}else{
             let request=minimum::prepare_with_writing_context(config,mode,source,dictionary,true,context)?;
             checkpoint(&cancel,deadline)?;trace.calls+=1;
             let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
             request.validate_personalization(context)?;
-            minimum::parse(&content,mode,source,&request)?
+            let draft=match minimum::parse(&content,mode,source,&request) {
+                Ok(draft)=>draft,
+                Err(error) if matches!(error.code.as_str(),"protected_terms_missing"|"protected_terms_new_latin"|"protected_terms_marker_unknown"|"protected_terms_marker_invalid")=>{
+                    let feedback=serde_json::json!({"stage":"literalProtection","problem":"preserveAllOriginalMarkersWithoutNewLatinText"});
+                    return correct_and_review(client,config,secret,mode,source,dictionary,&cancel,endpoint,&execution,context,review_format,
+                        Some((request,content)),None,feedback,error,&mut trace).await;
+                },
+                Err(error)=>return Err(error),
+            };
+            generation_request=Some((request,content));
+            draft
         };
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
         super::format_draft_spoken(&mut draft,super::spoken_english(source,context));
         trace.draft=Some(draft.clone());
-        super::review_admission_with_writing_context(mode,source,&draft,context).map_err(safe_error)?;
-        if context.is_some(){super::writing_context::validate_tense(source,&draft)?;}
+        let admission=super::review_admission_with_writing_context(mode,source,&draft,context)
+            .and_then(|_|if context.is_some(){super::writing_context::validate_tense(source,&draft)}else{Ok(())});
+        if let Err(error)=admission {
+            // A rejected draft is never deliverable. Give generation one chance
+            // to correct it, then run the SAME guards and a new full review.
+            let feedback=serde_json::json!({"stage":"admission","problem":"preserveSourceFactsConditionsLiteralsAndFormat"});
+            return correct_and_review(client,config,secret,mode,source,dictionary,&cancel,endpoint,&execution,context,review_format,
+                generation_request,Some(&draft),feedback,safe_error(error),&mut trace).await;
+        }
         checkpoint(&cancel,deadline)?;
         let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&draft,context,
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
@@ -80,7 +99,16 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if review.accepted() && local_repair::residue_hint(source,&draft).is_none(){return Ok(draft);}
         if deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejected());}
-        let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{return Err(rejected());};
+        let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{
+            // Uncertain judgments remain fallback. A definite rejection can
+            // correct missing content/conditions as well as cleanup, even when
+            // a sentence-local replacement cannot represent the required edit.
+            let checks=[review.checks.coverage,review.checks.facts,review.checks.scope,review.checks.intent,review.checks.cleanup];
+            if checks.contains(&semantic_review::Status::Uncertain) || !checks.contains(&semantic_review::Status::Fail){return Err(rejected());}
+            let feedback=serde_json::json!({"stage":"review","checks":review.checks});
+            return correct_and_review(client,config,secret,mode,source,dictionary,&cancel,endpoint,&execution,context,review_format,
+                generation_request,Some(&draft),feedback,rejected(),&mut trace).await;
+        };
         if let Some(context)=context {super::writing_context::attach(&mut request.body,mode,source,context,super::writing_context::Stage::Repair)?;}
         request.bind_personalization(context);
         checkpoint(&cancel,deadline)?;trace.calls+=1;trace.repair_attempted=true;
@@ -112,6 +140,46 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
     let result=checkpoint(&cancel,deadline).and(result);
     trace.elapsed_ms=started.elapsed().as_millis() as u64;
     Outcome{result,trace}
+}
+/// This is the single repair opportunity, not a retry loop. Admission failure
+/// uses at most three requests; reviewer rejection uses at most four. Context,
+/// masks, source identities and the original absolute deadline remain frozen.
+async fn correct_and_review(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:&CancellationToken,endpoint:&str,execution:&RewriteExecution,
+    context:Option<&crate::core::writing_context::WritingContext>,review_format:Option<semantic_review::MinimumReviewFormat>,
+    generation:Option<(minimum::MinimumRequest,String)>,draft:Option<&RewriteResult>,feedback:serde_json::Value,
+    rejection:CloudError,trace:&mut Trace)->Result<RewriteResult,CloudError> {
+    checkpoint(cancel,execution.deadline)?;
+    if execution.deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejection);}
+    let Some((mut request,content))=generation else{return Err(rejection);};
+    let result=async {
+        request.prepare_correction(&content,feedback,context)?;
+        checkpoint(cancel,execution.deadline)?;
+        trace.repair_attempted=true;trace.correction_attempted=true;trace.calls+=1;
+        let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,cancel,execution,RequestStage::Repair).await?;
+        request.validate_personalization(context)?;
+        let mut corrected=minimum::parse(&content,mode,source,&request)?;
+        super::normalize_draft_dictionary(source,dictionary,&mut corrected);
+        super::format_draft_spoken(&mut corrected,super::spoken_english(source,context));
+        super::review_admission_with_writing_context(mode,source,&corrected,context).map_err(safe_error)?;
+        if context.is_some(){super::writing_context::validate_tense(source,&corrected)?;}
+        trace.repaired_draft=Some(corrected.clone());
+        if draft.is_some_and(|draft|corrected.blocks[0].text==draft.blocks[0].text) {return Err(rejected());}
+        checkpoint(cancel,execution.deadline)?;
+        let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&corrected,context,
+            review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
+        checkpoint(cancel,execution.deadline)?;trace.calls+=1;
+        let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,cancel,execution,RequestStage::FinalReview).await?;
+        request.validate_personalization(context)?;
+        let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&corrected).map_err(safe_error)?;
+        if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
+        trace.final_review=Some(review.clone());checkpoint(cancel,execution.deadline)?;
+        if !review.accepted() || local_repair::residue_hint(source,&corrected).is_some(){return Err(rejected());}
+        Ok(corrected)
+    }.await;
+    // A failed repair cannot replace the original semantic reason with a
+    // misleading success; cancellation/deadline always retain precedence.
+    result.map_err(|error|if matches!(error.code.as_str(),"cancelled"|"rewrite_timeout"){error}else{rejection})
 }
 pub(super) async fn run_until(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError>{

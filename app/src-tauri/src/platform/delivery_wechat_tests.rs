@@ -91,7 +91,7 @@ fn activity_before_or_during_copy_never_injects_into_the_opaque_window() {
         let receipt=dispatch_with(&ops,&permit,&target,"synthetic message",||true);
         assert!(matches!(receipt.outcome,DispatchOutcome::Skipped));assert_eq!(receipt.input_events,0);
         assert_eq!(receipt.clipboard_changed,during_copy);assert_eq!(ops.chords.get(),0);
-        assert_eq!(receipt.reason_code.as_deref(),Some("compatibilityTargetChanged"));
+        assert_eq!(receipt.reason_code.as_deref(),Some("inputActivityChanged"));
         let _=dispatch_with(&ops,&permit,&target,"synthetic message",||true);assert_eq!(ops.chords.get(),0);
     }
 }

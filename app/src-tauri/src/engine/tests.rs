@@ -1495,6 +1495,27 @@ fn delivery_native_calls(h:&AppHub)->Arc<Mutex<Vec<(String,bool)>>> {
     h.set_native_actions(Arc::new(move|name,value|{sink.lock().unwrap().push((name.into(),value));Ok(())}));calls
 }
 
+#[tokio::test]
+async fn source_fallback_keeps_notice_visible_after_one_paste_without_retrying() {
+    for fallback in [None,Some(RewriteFallbackReason::MeaningRisk),Some(RewriteFallbackReason::Timeout)] {
+        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
+        let mut revision=output(&h,"s");revision.rewrite_fallback=fallback;
+        if fallback.is_some(){let raw=rewrite_fallback::source_fallback(&source("s"));revision.blocks=raw.blocks;revision.resolved_mode=raw.resolved_mode;}
+        h.commit_output("s",7,revision).unwrap();enable_fixture_delivery(&h);
+        let calls=delivery_native_calls(&h);
+        let copies=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let chords=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        fake_delivery(h.clone(),copies.clone(),chords.clone()).await.unwrap();
+        assert_eq!(current_delivery(&h).state,DeliveryState::Unconfirmed);
+        assert_eq!(view(&h).rewrite_fallback,fallback);
+        assert_eq!(calls.lock().unwrap().last(),Some(&("recording".into(),fallback.is_some())));
+        h.initial_delivery_with("s",7,|_|panic!("notice cannot authorize recapture"),|_,_,_,_|panic!("notice cannot authorize another paste"));
+        assert_eq!(copies.load(Ordering::SeqCst),1);assert_eq!(chords.load(Ordering::SeqCst),1);
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+        assert!(view(&h).worker_released);
+    }
+}
+
 #[test]
 fn delivery_stop_freezes_latest_caret_once_and_cuts_audio_before_inspection(){
     let h=hub();install(&h,"s",SessionPhase::Recording,true);enable_fixture_delivery(&h);
@@ -1569,6 +1590,28 @@ async fn delivery_stop_permission_failure_preserves_reason_and_once_only_skip(){
         assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some("targetHigherIntegrity"));
         assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);assert!(view(&h).can_copy_recovery);
         h.initial_delivery_with("s",7,|_|panic!("terminal skip must not inspect again"),|_,_,_,_|panic!("terminal skip must not dispatch again"));
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+    }
+}
+
+#[test]
+fn delivery_validation_keeps_the_actual_failure_in_the_durable_receipt() {
+    use platform::{PlatformError,TargetCaptureFailure};
+    for (failure,expected) in [
+        (TargetCaptureFailure::InputActivityChanged,"inputActivityChanged"),
+        (TargetCaptureFailure::InputActivityUnavailable,"inputActivityUnavailable"),
+        (TargetCaptureFailure::TargetCapabilityUnsupported,"targetCapabilityUnsupported"),
+        (TargetCaptureFailure::TargetNotEditable,"targetNotEditable"),
+        (TargetCaptureFailure::TargetInspectionTimeout,"targetInspectionTimeout"),
+    ] {
+        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.prefs.delivery_mode=DeliveryMode::Direct;
+            s.delivery_worker_released=false;s.target=Some(delivery_target_fixture());}
+        h.initial_delivery_with_validation("s",7,|_|Err(PlatformError::TargetCapture(failure)),|_,_,_,_|panic!("rejected target cannot dispatch"));
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some(expected));
+        assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some(expected));
+        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);assert!(view(&h).can_copy_recovery);
+        h.initial_delivery_with_validation("s",7,|_|panic!("terminal receipt cannot recapture"),|_,_,_,_|panic!("terminal receipt cannot retry"));
         assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
     }
 }

@@ -42,7 +42,8 @@ async fn english_guidance_does_not_waive_numbers_negation_quotes_or_code_checks(
         input.replace("um, well","well"), input.replace("UserID","userID")] {
         let server=Server::new(vec![Reply::draft(&changed),Reply::new(ACCEPT)]).await;
         let out=test_run(&server,input,Duration::from_secs(4)).await;
-        assert!(out.result.is_err(),"unexpected acceptance: {changed}");assert_eq!(server.count(),1,"must fail before model review");
+        assert!(out.result.is_err(),"unexpected acceptance: {changed}");assert_correction_not_review(&server);
+        assert!(out.trace.review.is_none());assert!(out.trace.final_review.is_none());
     }
 }
 
@@ -53,7 +54,7 @@ async fn fact_rejection_is_not_overridden_by_a_fluent_english_draft() {
     let server=Server::new(vec![Reply::draft(&changed),Reply::new(rejection("Kelm","Kelvin","facts"))]).await;
     let out=test_run(&server,input,Duration::from_secs(4)).await;
     assert_eq!(out.result.unwrap_err().code,"rewrite_semantic_rejected");assert_eq!(server.count(),2);
-    assert!(!out.trace.repair_attempted);
+    assert!(out.trace.correction_attempted);assert!(out.trace.final_review.is_none());
 }
 
 #[tokio::test]
@@ -70,6 +71,6 @@ async fn recorded_english_year_error_is_blocked_before_an_accepting_model_review
     let before=source.clone();
     let server=Server::new(vec![Reply::draft(receipt["draftText"].as_str().unwrap()),Reply::new(ACCEPT)]).await;
     let outcome=execute(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,Duration::from_secs(4)).await;
-    assert_eq!(outcome.result.unwrap_err().code,"rewrite_admission_rejected");assert_eq!(server.count(),1);
+    assert_eq!(outcome.result.unwrap_err().code,"rewrite_admission_rejected");assert_correction_not_review(&server);
     assert_eq!(source,before);assert!(outcome.trace.review.is_none());
 }

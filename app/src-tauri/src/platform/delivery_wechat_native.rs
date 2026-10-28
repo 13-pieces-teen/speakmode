@@ -46,7 +46,7 @@ fn capture_keyboard_target(anchor:ForegroundAnchor,activity:InputActivity,opaque
             return Err(target_failure(TargetCaptureFailure::TargetNotEditable));
         }
         let control=focused.CurrentControlType().map_err(fail)?;
-        if !opaque_only && [UIA_EditControlTypeId,UIA_DocumentControlTypeId,UIA_GroupControlTypeId].contains(&control) {
+        if !opaque_only && [UIA_EditControlTypeId,UIA_DocumentControlTypeId,UIA_GroupControlTypeId,UIA_CustomControlTypeId].contains(&control) {
             if let Ok(value)=focused.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) {
                 if value.CurrentIsReadOnly().map_err(fail)?.as_bool() {return Err(target_failure(TargetCaptureFailure::TargetNotEditable));}
             }else {

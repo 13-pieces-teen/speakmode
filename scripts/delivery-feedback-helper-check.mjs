@@ -15,6 +15,14 @@ await test('Ready without receipt is not reported as pasted or failed',()=>{
  assert.equal(deliveryFeedback(null),null);
  assert.equal(deliveryFeedback(session('ready')),null);
 });
+await test('Raw fallback remains visible as unfinished cleanup even after input dispatch',()=>{
+ for(const rewriteFallback of ['timeout','serviceUnavailable','invalidOutput','meaningRisk']){
+  const feedback=deliveryFeedback({...session('ready','unconfirmed','inputDispatchedUnconfirmed'),rewriteFallback});
+  assert.equal(feedback.title,'整理未完成');assert.equal(feedback.warning,true);
+  assert.equal(feedback.canCopyOutput,true);assert.equal(feedback.canViewOutput,true);
+  assert.match(feedback.message,/尝试输入识别原文/);assert.doesNotMatch(feedback.message,/已成功/);
+ }
+});
 await test('Historical receipt fields do not create current delivery feedback during recording or failed ASR',()=>{
  for(const phase of ['starting','recording','finalizingAsr','rewriting','failed','incomplete','cancelled'])assert.equal(deliveryFeedback(session(phase,'skipped','targetUnavailableAtStop')),null);
 });
@@ -154,7 +162,7 @@ await test('Fallback is disclosed independently of actual native delivery outcom
  for(const reason of ['timeout','serviceUnavailable','invalidOutput','meaningRisk']){
   for(const state of ['prepared','unconfirmed','skipped']){
    const feedback=deliveryFeedback({...session('ready',state),rewriteFallback:reason});
-   assert(feedback.message.startsWith('已使用识别稿。'));assert(!/已成功输入|已粘贴/.test(feedback.message));
+   assert(/已使用识别稿|已尝试输入识别原文/.test(feedback.message));assert(!/已成功输入|已粘贴/.test(feedback.message));
   }
  }
 });
@@ -179,7 +187,10 @@ await test('Main window stays quiet after normal delivery without clearing resul
  for(const state of [undefined,'prepared','dispatched','unconfirmed','confirmed']){
   for(const extra of [{},{rewriteFallback:'timeout'}]){
    const {tree,calls,opened}=renderRecovery({...session('ready',state,state==='unconfirmed'?'inputDispatchedUnconfirmed':undefined),...extra});
-   assert.equal(tree,null);assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);
+   if(state==='unconfirmed'&&extra.rewriteFallback){
+    assert(tree);assert.equal(nodes(tree,node=>node.type==='h2'&&node.props.children==='整理未完成').length,1);
+   }else assert.equal(tree,null);
+   assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);
   }
  }
 });

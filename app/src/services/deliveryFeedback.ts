@@ -35,6 +35,7 @@ export function deliveryFeedback(session:LiveSession|null):DeliveryFeedback|null
    return {title:'正在发送成稿',message:fallback+'正在发送到输入位置…',warning:false,canCopyOutput:false,canViewOutput:false};
   case 'unconfirmed':
    if(session.deliveryFailureReason==='partialInputUnconfirmed')return {title:'自动输入未完整',message:fallback+'请先核对输入框中的内容，需要时可复制成稿。',warning:true,canCopyOutput:true,canViewOutput:true};
+   if(session.rewriteFallback)return {title:'整理未完成',message:'本次未完成整理，已尝试输入识别原文。请核对输入框中的内容，可查看记录后重新整理。',warning:true,canCopyOutput:true,canViewOutput:true};
    return {title:'输入已派发',message:fallback+'请核对目标中的文本，应用不会自动重复输入。',warning:false,canCopyOutput:false,canViewOutput:true};
   case 'confirmed':return null;
   case 'skipped':case 'failed':
