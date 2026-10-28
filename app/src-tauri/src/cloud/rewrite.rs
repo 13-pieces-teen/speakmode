@@ -82,6 +82,8 @@ mod english_years;
 pub mod local_repair;
 #[path="rewrite_minimum_pipeline.rs"]
 pub mod minimum_pipeline;
+#[path="rewrite_review_routing.rs"]
+pub mod review_routing;
 #[path="rewrite_scene.rs"]
 pub mod scene;
 #[path="rewrite_scene_layout.rs"]
@@ -191,28 +193,47 @@ fn uses_automatic_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool
         && config.region.as_deref() == Some("beijing")
         && mode.base_mode == BaseMode::Auto && mode.rules.trim().is_empty()
 }
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+enum ProductionContract { Situational, Minimum, Fluent, Automatic, Baseline }
+/// One selector for execution, request preparation and diagnostic labels.
+/// Historical protocols remain available for replay; provider coverage is not
+/// silently broadened by an orchestration refactor.
+fn production_contract(config:&ProviderConfig,mode:&ModeSnapshot,has_context:bool)->ProductionContract {
+    if has_context||writing_context::for_mode(mode).is_some(){ProductionContract::Situational}
+    else if uses_minimum_contract(config,mode){ProductionContract::Minimum}
+    else if uses_fluent_contract(config,mode){ProductionContract::Fluent}
+    else if uses_automatic_contract(config,mode){ProductionContract::Automatic}
+    else{ProductionContract::Baseline}
+}
 /// Report the actual selected production protocol, independently of provider
 /// model naming. Diagnostics must not infer protocol from a model preference.
 pub fn production_protocol_version(config: &ProviderConfig, mode: &ModeSnapshot) -> &'static str {
-    if writing_context::for_mode(mode).is_some() { writing_context::PIPELINE_VERSION }
-    else if uses_minimum_contract(config,mode) { MINIMUM_PIPELINE_VERSION }
-    else if uses_fluent_contract(config, mode) { FLUENT_PIPELINE_VERSION }
-    else if uses_automatic_contract(config, mode) { AUTOMATIC_REWRITE_PROMPT_VERSION } else { REWRITE_PROMPT_VERSION }
+    production_protocol_version_with_context(config,mode,None)
+}
+pub fn production_protocol_version_with_context(config:&ProviderConfig,mode:&ModeSnapshot,context:Option<&crate::core::writing_context::WritingContext>)->&'static str {
+    match production_contract(config,mode,context.is_some()) {
+        ProductionContract::Situational=>writing_context::PIPELINE_VERSION,
+        ProductionContract::Minimum=>MINIMUM_PIPELINE_VERSION,
+        ProductionContract::Fluent=>FLUENT_PIPELINE_VERSION,
+        ProductionContract::Automatic=>AUTOMATIC_REWRITE_PROMPT_VERSION,
+        ProductionContract::Baseline=>REWRITE_PROMPT_VERSION,
+    }
 }
 pub fn manual_protocol_version(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision)->&'static str {
-    if writing_context::for_mode(mode).is_some(){writing_context::VERSION}
-    else if uses_minimum_contract(config,mode){minimum::VERSION}
-    else if uses_fluent_contract(config,mode){if uses_guarded_long(source){LONG_REWRITE_PROMPT_VERSION}else{FLUENT_REWRITE_PROMPT_VERSION}}
-    else{REWRITE_PROMPT_VERSION}
+    match production_contract(config,mode,false) {
+        ProductionContract::Situational=>writing_context::VERSION,
+        ProductionContract::Minimum=>minimum::VERSION,
+        ProductionContract::Fluent=>if uses_guarded_long(source){LONG_REWRITE_PROMPT_VERSION}else{FLUENT_REWRITE_PROMPT_VERSION},
+        _=>REWRITE_PROMPT_VERSION,
+    }
 }
 fn production_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot) -> Result<Value, CloudError> {
-    if uses_minimum_contract(config,mode) { minimum::prepare(config,mode,source,dictionary,true).map(|r|r.body) }
-    else if uses_fluent_contract(config,mode) {
-        if uses_guarded_long(source) { prepare_guarded_long(config,mode,source,dictionary).map(|r| r.body) }
-        else { fluent_request_body(config,mode,source,dictionary) }
+    match production_contract(config,mode,false) {
+        ProductionContract::Situational|ProductionContract::Minimum=>minimum::prepare(config,mode,source,dictionary,true).map(|r|r.body),
+        ProductionContract::Fluent=>if uses_guarded_long(source) {prepare_guarded_long(config,mode,source,dictionary).map(|r|r.body)}else{fluent_request_body(config,mode,source,dictionary)},
+        ProductionContract::Automatic=>automatic_request_body(config,mode,source,dictionary),
+        ProductionContract::Baseline=>baseline_request_body(config,mode,source),
     }
-    else if uses_automatic_contract(config,mode) { automatic_request_body(config,mode,source,dictionary) }
-    else { baseline_request_body(config,mode,source) }
 }
 
 /// Frozen production baseline remains callable after future, evidence-backed
@@ -582,10 +603,17 @@ pub(crate) async fn rewrite_with_writing_context(config:&ProviderConfig,secret:&
 pub(crate) async fn rewrite_with_client_optional_context(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,
     context:Option<&crate::core::writing_context::WritingContext>)->Result<RewriteResult,CloudError> {
-    match context {
-        Some(context)=>minimum_pipeline::run_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,context).await,
-        None=>rewrite_with_client_execution(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await,
+    execution.checkpoint(&cancel)?;
+    let contract=production_contract(config,mode,context.is_some());
+    match contract {
+        ProductionContract::Situational|ProductionContract::Minimum=>return match context {
+            Some(context)=>minimum_pipeline::run_until_with_writing_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,context).await,
+            None=>minimum_pipeline::run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await,
+        },
+        ProductionContract::Fluent=>return fluent_pipeline::run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await,
+        _=>{},
     }
+    execute_single_request(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,contract).await
 }
 
 pub(crate) fn validate_source(source:&SourceRevision)->Result<(),CloudError> {
@@ -635,17 +663,13 @@ async fn rewrite_with_client_dictionary(client:&reqwest::Client,config:&Provider
 // The engine regression substitutes only the transport endpoint, keeping the
 // production dispatcher, coordinator, storage and deadline unchanged.
 pub(crate) async fn rewrite_with_client_execution(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError> {
-    execution.checkpoint(&cancel)?;
-    if uses_minimum_contract(config,mode) {
-        return minimum_pipeline::run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await;
-    }
-    if uses_fluent_contract(config,mode) {
-        return fluent_pipeline::run_until(client,config,secret,mode,source,dictionary,cancel,endpoint,execution).await;
-    }
+    rewrite_with_client_optional_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,None).await
+}
+async fn execute_single_request(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,contract:ProductionContract)->Result<RewriteResult,CloudError> {
     let body = production_request_body(config, mode, source, dictionary)?;
     let job = async {
         let content = fluent_pipeline::request_observed(client,config,secret,endpoint,&body,&cancel,&execution,RequestStage::Generation).await?;
-        let result = if uses_automatic_contract(config,mode) { parse_automatic_output(&content,mode,source) }
+        let result = if contract==ProductionContract::Automatic { parse_automatic_output(&content,mode,source) }
             else { parse_model_output(&content, mode, source) };
         execution.checkpoint(&cancel)?;
         result

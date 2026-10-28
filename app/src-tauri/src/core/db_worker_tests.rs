@@ -12,6 +12,48 @@ const DATE: &str = "2026-10-04";
 const WAIT: Duration = Duration::from_secs(6);
 
 #[tokio::test]
+async fn background_statistics_failure_is_visible_without_waiting_on_its_ticket_and_survives_restart(){
+    let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();
+    invoke(&db,DbCommand::TestExecuteBatch{sql:"CREATE TRIGGER reject_stats BEFORE INSERT ON personalization_events BEGIN SELECT RAISE(ABORT,'fixture'); END;".into()},None).await.unwrap();
+    let event=PersonalizationEvent{task_id:"lost-background-event".into(),kind:PersonalizationEventKind::Normal,status:PersonalizationEventStatus::Started,
+        scene:AppWritingScene::General,profile_id:None,profile_version:0,personalized:false,created_at:"2026-10-28T00:00:00Z".into(),duration_ms:0,reference_dispatch:Some(ReferenceDispatch::NotStarted),feedback:None};
+    drop(db.submit(DbCommand::RecordPersonalizationEvent{event},None,DbPriority::Normal).unwrap());
+    timeout(WAIT,async{while db.outstanding()!=0{sleep(Duration::from_millis(1)).await;}}).await.unwrap();
+    assert!(db.statistics_incomplete());
+    stop(&db).await;
+    let reopened=DbClient::open_with_options(&file.0,options()).unwrap();assert!(reopened.statistics_incomplete());stop(&reopened).await;
+}
+
+#[tokio::test]
+async fn rejected_background_event_is_counted_as_unknown_without_consuming_the_critical_lane(){
+    let h=Harness::new(options());let gate=guard("statistics-pressure");
+    checkpoint(&h.db,"statistics-pressure",StoragePolicy::History,&gate).await;
+    let lock=write_lock(&h.file);
+    let pending=h.db.submit(DbCommand::Ready{output:output("statistics-pressure")},Some(gate),DbPriority::Normal).unwrap();
+    let normal=queue_behind_active(&h.db).await;
+    let before=h.db.outstanding();
+    let event=PersonalizationEvent{task_id:"queue-rejected-statistic".into(),kind:PersonalizationEventKind::Normal,status:PersonalizationEventStatus::Started,
+        scene:AppWritingScene::General,profile_id:None,profile_version:0,personalized:false,created_at:"2026-10-28T00:00:00Z".into(),duration_ms:0,reference_dispatch:Some(ReferenceDispatch::NotStarted),feedback:None};
+    assert!(matches!(h.db.submit(DbCommand::RecordPersonalizationEvent{event},None,DbPriority::Normal),Err(StoreError::Busy)));
+    assert_eq!(h.db.outstanding(),before);assert!(h.db.statistics_incomplete());
+    let critical=h.db.submit(DbCommand::Preferences,None,DbPriority::Critical).unwrap();
+    lock.execute_batch("ROLLBACK;").unwrap();
+    wait(&pending).await.unwrap();wait(&critical).await.unwrap();wait(&normal).await.unwrap();
+    assert!(as_detail(invoke(&h.db,DbCommand::GetResult{session_id:"statistics-pressure".into()},None).await.unwrap()).output.is_some());
+    drop(lock);stop(&h.db).await;
+    let reopened=DbClient::open_with_options(&h.file.0,options()).unwrap();assert!(reopened.statistics_incomplete());stop(&reopened).await;
+}
+
+#[tokio::test]
+async fn interrupted_statistics_run_is_unknown_but_clean_shutdown_preserves_complete_counts(){
+    for interrupted in [false,true] {
+        let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();assert!(!db.statistics_incomplete());stop(&db).await;
+        if interrupted {file.connect().execute("UPDATE personalization_statistics_health SET running=1",[]).unwrap();}
+        let reopened=DbClient::open_with_options(&file.0,options()).unwrap();assert_eq!(reopened.statistics_incomplete(),interrupted);stop(&reopened).await;
+    }
+}
+
+#[tokio::test]
 async fn personalization_actor_publishes_cas_config_and_separates_usage_metadata() {
     let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();assert!(!db.snapshot().personalization.enabled);
     let mut config=db.snapshot().personalization;config.enabled=true;config.preferences.sentence_style=SentenceStyle::Concise;
@@ -818,7 +860,7 @@ async fn model_upgrade_bootstrap_snapshot_persists_and_preserves_manual_revert_o
     assert_eq!(version, reverted.version);
     assert_eq!(serde_json::from_str::<ProviderConfig>(&data).unwrap(), reverted);
     assert_eq!(count(&connection, "app_upgrades"), 1);
-    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 5);
+    assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).unwrap(), 6);
 }
 
 #[tokio::test]

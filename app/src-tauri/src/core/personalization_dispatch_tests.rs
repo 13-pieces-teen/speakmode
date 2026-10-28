@@ -90,7 +90,7 @@ fn personalization_v5_migration_keeps_v4_event_bytes_feedback_and_history_withou
     }
     {
         let mut store=Store::open(&file).unwrap();
-        assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),5);
+        assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),6);
         assert_eq!(store.test_connection().query_row("SELECT data FROM personalization_events",[],|row|row.get::<_,String>(0)).unwrap(),legacy_data);
         assert_eq!(store.test_connection().query_row("SELECT data FROM personalization_references",[],|row|row.get::<_,String>(0)).unwrap(),references);
         assert_eq!(store.personalization().unwrap(),config);assert_eq!(store.get_result("v4-dispatch-migration").unwrap(),historical);
@@ -108,10 +108,10 @@ fn personalization_v5_migration_keeps_v4_event_bytes_feedback_and_history_withou
 #[test]
 fn personalization_v5_rejects_future_schema_without_rewriting_it() {
     let file=path();
-    {let mut store=Store::open(&file).unwrap();store.record_personalization_event(personalization_event("future-schema")).unwrap();store.test_connection().execute_batch("PRAGMA user_version=6;").unwrap();}
+    {let mut store=Store::open(&file).unwrap();store.record_personalization_event(personalization_event("future-schema")).unwrap();store.test_connection().execute_batch("PRAGMA user_version=7;").unwrap();}
     assert!(matches!(Store::open(&file),Err(StoreError::Invalid(message)) if message=="database schema is newer than this application"));
     let connection=rusqlite::Connection::open(&file).unwrap();
-    assert_eq!(connection.pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),6);
+    assert_eq!(connection.pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),7);
     assert_eq!(connection.query_row("SELECT COUNT(*) FROM personalization_events",[],|row|row.get::<_,u64>(0)).unwrap(),1);
     drop(connection);fs::remove_file(file).unwrap();
 }

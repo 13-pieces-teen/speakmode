@@ -39,8 +39,8 @@ impl DbTicket {
  pub fn wait_blocking(&self)->StoreResult<DbValue> {let mut result=self.outcome.result.lock().unwrap_or_else(|p|p.into_inner());while result.is_none(){result=self.outcome.cv.wait(result).unwrap_or_else(|p|p.into_inner());}result.as_ref().unwrap().clone()}
  pub fn is_complete(&self)->bool {self.outcome.result.lock().unwrap_or_else(|p|p.into_inner()).is_some()}
 }
-struct Job {command:DbCommand,guard:Option<Arc<CommitGuard>>,outcome:Arc<Outcome>,bytes:usize,cleanup_key:Option<String>}
-struct Shared {snapshot:Mutex<Option<DbSnapshot>>,cache_error:Mutex<Option<StoreError>>,admission:Mutex<bool>,outstanding:AtomicUsize,bytes:AtomicUsize,owner_released:AtomicBool,stopping:AtomicBool,shutdown:Arc<Outcome>,cleanup:Mutex<Option<(String,Arc<Outcome>)>>}
+struct Job {command:DbCommand,guard:Option<Arc<CommitGuard>>,outcome:Arc<Outcome>,bytes:usize,cleanup_key:Option<String>,statistics_event:bool}
+struct Shared {snapshot:Mutex<Option<DbSnapshot>>,cache_error:Mutex<Option<StoreError>>,admission:Mutex<bool>,outstanding:AtomicUsize,bytes:AtomicUsize,owner_released:AtomicBool,stopping:AtomicBool,shutdown:Arc<Outcome>,cleanup:Mutex<Option<(String,Arc<Outcome>)>>,statistics_incomplete:AtomicBool}
 pub struct DbClient {wake:Sender<()>,normal:Sender<Job>,critical:Sender<Job>,cleanup:Sender<Job>,shared:Arc<Shared>,options:DbOptions}
 impl Clone for DbClient {fn clone(&self)->Self {Self{wake:self.wake.clone(),normal:self.normal.clone(),critical:self.critical.clone(),cleanup:self.cleanup.clone(),shared:self.shared.clone(),options:self.options.clone()}}}
 impl DbClient {
@@ -51,7 +51,7 @@ impl DbClient {
  fn start(path:Option<PathBuf>,options:DbOptions)->StoreResult<Self> {
   if options.normal_capacity==0||options.critical_capacity==0||options.byte_budget==0||options.idle_refresh.is_zero(){return Err(StoreError::Invalid("DB worker bounds must be positive".into()));}
   let (wake,wrx)=bounded(1);let (normal,nrx)=bounded(options.normal_capacity);let (critical,crx)=bounded(options.critical_capacity);let (cleanup,rrx)=bounded(1);let (boot,brecv)=bounded(1);
-  let shared=Arc::new(Shared{snapshot:Mutex::new(None),cache_error:Mutex::new(None),admission:Mutex::new(true),outstanding:AtomicUsize::new(0),bytes:AtomicUsize::new(0),owner_released:AtomicBool::new(false),stopping:AtomicBool::new(false),shutdown:Arc::new(Outcome::default()),cleanup:Mutex::new(None)});
+  let shared=Arc::new(Shared{snapshot:Mutex::new(None),cache_error:Mutex::new(None),admission:Mutex::new(true),outstanding:AtomicUsize::new(0),bytes:AtomicUsize::new(0),owner_released:AtomicBool::new(false),stopping:AtomicBool::new(false),shutdown:Arc::new(Outcome::default()),cleanup:Mutex::new(None),statistics_incomplete:AtomicBool::new(false)});
   let state=shared.clone();let opts=options.clone();
   std::thread::Builder::new().name("speakmode-db".into()).spawn(move||worker(path,opts,state,nrx,crx,rrx,wrx,boot)).map_err(|e|StoreError::Database(format!("cannot start DB owner: {e}")))?;
   brecv.recv().map_err(|_|StoreError::WorkerStopped)??;
@@ -62,9 +62,16 @@ impl DbClient {
  pub fn outstanding(&self)->usize {self.shared.outstanding.load(Ordering::SeqCst)}
  pub fn queued_bytes(&self)->usize {self.shared.bytes.load(Ordering::SeqCst)}
  pub fn owner_released(&self)->bool {self.shared.owner_released.load(Ordering::SeqCst)}
+ pub fn statistics_incomplete(&self)->bool {self.shared.statistics_incomplete.load(Ordering::SeqCst)}
  pub fn request_shutdown(&self) {*self.shared.admission.lock().unwrap_or_else(|p|p.into_inner())=false;self.shared.stopping.store(true,Ordering::SeqCst);let _=self.wake.try_send(());}
  pub async fn shutdown(&self)->StoreResult<()> {self.request_shutdown();DbTicket{outcome:self.shared.shutdown.clone()}.wait().await.map(|_|())}
  pub fn submit(&self,command:DbCommand,guard:Option<Arc<CommitGuard>>,priority:DbPriority)->StoreResult<DbTicket> {
+  let statistics_event=matches!(command,DbCommand::RecordPersonalizationEvent{..});
+  let result=self.enqueue(command,guard,priority,statistics_event);
+  if statistics_event&&result.is_err(){self.shared.statistics_incomplete.store(true,Ordering::SeqCst);}
+  result
+ }
+ fn enqueue(&self,command:DbCommand,guard:Option<Arc<CommitGuard>>,priority:DbPriority,statistics_event:bool)->StoreResult<DbTicket> {
   if matches!(command,DbCommand::Shutdown){self.request_shutdown();return Ok(DbTicket{outcome:self.shared.shutdown.clone()});}
   let bytes=command.payload_bytes()?;
   let admission=self.shared.admission.lock().map_err(|_|StoreError::WorkerStopped)?;
@@ -81,7 +88,7 @@ impl DbClient {
   let reserved_bytes=if cleanup_key.is_some(){0}else{bytes};let outcome=Arc::new(Outcome::default());let ticket=DbTicket{outcome:outcome.clone()};
   self.shared.bytes.fetch_add(reserved_bytes,Ordering::SeqCst);self.shared.outstanding.fetch_add(1,Ordering::SeqCst);
   if let Some(key)=&cleanup_key {*cleanup_state=Some((key.clone(),outcome.clone()));}
-  let job=Job{command,guard,outcome,bytes:reserved_bytes,cleanup_key:cleanup_key.clone()};
+  let job=Job{command,guard,outcome,bytes:reserved_bytes,cleanup_key:cleanup_key.clone(),statistics_event};
   let sender=if cleanup_key.is_some(){&self.cleanup}else if priority==DbPriority::Critical{&self.critical}else{&self.normal};
   match sender.try_send(job) {Ok(())=>Ok(ticket),Err(error)=>{self.shared.bytes.fetch_sub(reserved_bytes,Ordering::SeqCst);self.shared.outstanding.fetch_sub(1,Ordering::SeqCst);if cleanup_key.is_some(){*cleanup_state=None;}Err(match error{TrySendError::Full(_)=>StoreError::Busy,TrySendError::Disconnected(_)=>StoreError::WorkerStopped})}}
  }
@@ -142,12 +149,14 @@ fn execute_read(store:&Store,command:DbCommand)->StoreResult<DbValue>{store.read
  #[cfg(test)] C::TestQueryCount{sql}=>Ok(V::Count(s.test_connection().query_row(&sql,[],|r|r.get(0))?)),_=>Err(StoreError::Invalid("write reached read dispatcher".into()))}
 })}
 fn finish_job(shared:&Shared,job:Job,result:StoreResult<DbValue>){
+ if job.statistics_event&&result.is_err(){shared.statistics_incomplete.store(true,Ordering::SeqCst);}
  shared.bytes.fetch_sub(job.bytes,Ordering::SeqCst);shared.outstanding.fetch_sub(1,Ordering::SeqCst);
  if job.cleanup_key.is_some(){*shared.cleanup.lock().unwrap_or_else(|p|p.into_inner())=None;}
  job.outcome.complete(result);
 }
 fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Receiver<Job>,critical:Receiver<Job>,cleanup:Receiver<Job>,wake:Receiver<()>,boot:Sender<StoreResult<()>>){
- let opened=(||{let mut store=if let Some(path)=path{Store::open(path)?}else{Store::in_memory()?};store.apply_app_upgrades()?;store.recover_after_restart()?;refresh(&store,&shared,&today())?;Ok::<_,StoreError>(store)})();
+ let opened=(||{let mut store=if let Some(path)=path{Store::open(path)?}else{Store::in_memory()?};store.apply_app_upgrades()?;store.recover_after_restart()?;refresh(&store,&shared,&today())?;
+  shared.statistics_incomplete.store(store.begin_statistics_run()?,Ordering::SeqCst);Ok::<_,StoreError>(store)})();
  let mut store=match opened{Ok(store)=>{let _=boot.send(Ok(()));store},Err(error)=>{let _=boot.send(Err(error.clone()));shared.owner_released.store(true,Ordering::SeqCst);shared.shutdown.complete(Err(error));return;}};
  let mut critical_streak=0;let mut fatal=None;
  loop{
@@ -173,6 +182,9 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
   };
   if let Some(error)=fatal.clone(){finish_job(&shared,job,Err(error));continue;}
   let writes=job.command.writes();
+  // Event rows do not change the configuration/result snapshot. Avoid a full
+  // preferences/history/usage read after every optional telemetry write.
+  let refresh_snapshot=writes&&!matches!(job.command,DbCommand::RecordPersonalizationEvent{..}|DbCommand::SetPersonalizationFeedback{..});
   let command=std::mem::replace(&mut job.command,DbCommand::Preferences);
   let clears_temporary=matches!(command,DbCommand::ClearTemporary);
   // The actor owns the accepted command until its actual completion; receiver drop
@@ -196,7 +208,7 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
     // explicitly stale under cache_error; they are never replaced by invented zeroes.
     let replaces_temporary=matches!(&result,Ok(DbValue::Detail(detail)) if detail.session.seed.storage_policy==StoragePolicy::MemoryOnly&&detail.output.is_some());
     if clears_temporary||replaces_temporary{if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){if snapshot.temporary_result.take().is_some(){snapshot.revision=snapshot.revision.saturating_add(1);}}}
-    let _=refresh(&store,&shared,&today());
+    if refresh_snapshot {let _=refresh(&store,&shared,&today());}
    }result
   }));
   let result=match result{Ok(result)=>result,Err(_)=>Err(StoreError::Unhealthy("DB owner panicked while executing accepted request".into()))};
@@ -205,7 +217,8 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
  }
  store.clear_temporary_results();
  if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){snapshot.temporary_result=None;}
- let health=fatal.or_else(||store.health_error());
+ let mut health=fatal.or_else(||store.health_error());
+ if health.is_none(){if let Err(error)=store.finish_statistics_run(shared.statistics_incomplete.load(Ordering::SeqCst)){health=Some(error);}}
  drop(store); // The connection and all MemoryOnly bodies are gone BEFORE the owner ACK.
  shared.owner_released.store(true,Ordering::SeqCst);
  shared.shutdown.complete(health.map_or(Ok(DbValue::Unit),Err));

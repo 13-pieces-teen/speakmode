@@ -23,6 +23,21 @@ pub(super) struct ProtectedTerms {
     masked_source: String,
     prefix: String,
     terms: Vec<Term>,
+    protect_all_latin: bool,
+}
+
+/// Lexically explicit addresses/identifiers, never ordinary prose or a guessed
+/// named entity. This candidate still needs the ordinary semantic review.
+fn identifier_end(text:&str,start:usize)->Option<usize> {
+    let previous=text[..start].chars().next_back();
+    if previous.is_some_and(|c|c.is_ascii_alphanumeric()||c=='_'){return None;}
+    let token=text[start..].split(|c:char|!c.is_ascii()||c.is_whitespace()||matches!(c,'"'|'\''|'`'|'('|')'|'['|']'|'{'|'}'|'<'|'>')).next()?;
+    let token=token.trim_end_matches(['.',',',';',':','!','?']);
+    let explicit=token.starts_with("https://")||token.starts_with("http://")||token.contains('@')||token.contains('_')
+        || token.contains('/')||token.contains('\\')
+        || (token.contains('.')&&token.bytes().any(|c|c.is_ascii_alphabetic()))
+        || (token.bytes().any(|c|c.is_ascii_alphabetic())&&token.bytes().any(|c|c.is_ascii_digit()));
+    (explicit&&!token.is_empty()).then_some(start+token.len())
 }
 
 fn failure(code: &'static str, message: &'static str) -> CloudError {
@@ -92,12 +107,19 @@ impl ProtectedTerms {
     pub(super) fn new_guarded(source_text: &str) -> Result<Self, CloudError> {
         Self::with_options(source_text, || Uuid::new_v4().simple().to_string()[..4].to_owned(), true)
     }
+    pub(super) fn new_precise(source_text:&str,terms:&[String])->Result<Self,CloudError> {
+        Self::with_scope(source_text,||Uuid::new_v4().simple().to_string()[..4].to_owned(),true,false,terms)
+    }
+    pub(super) fn protects_all_latin(&self)->bool {self.protect_all_latin}
 
     fn with_nonce(source_text: &str, mut nonce: impl FnMut() -> String) -> Result<Self, CloudError> {
         Self::with_options(source_text, &mut nonce, false)
     }
 
     fn with_options(source_text: &str, mut nonce: impl FnMut() -> String, protect_literals: bool) -> Result<Self, CloudError> {
+        Self::with_scope(source_text,&mut nonce,protect_literals,true,&[])
+    }
+    fn with_scope(source_text:&str,mut nonce:impl FnMut()->String,protect_literals:bool,protect_all_latin:bool,exact_terms:&[String])->Result<Self,CloudError> {
         check_text(source_text)?;
         let mut prefix = None;
         // Collision retries are bounded, and the exact chosen prefix is absent
@@ -121,8 +143,15 @@ impl ProtectedTerms {
         while offset < source_text.len() {
             let c = source_text[offset..].chars().next().unwrap();
             let literal_end = literals.peek().filter(|span| span.start == offset).map(|span| span.end);
-            if c.is_ascii_alphabetic() || literal_end.is_some() {
-                let end = literal_end.unwrap_or_else(|| term_end(source_text, offset));
+            let exact_end=if !protect_all_latin&&c.is_ascii_alphanumeric() {
+                let dictionary_end=exact_terms.iter().filter(|term|source_text[offset..].starts_with(term.as_str()))
+                    .filter(|term|source_text[..offset].chars().next_back().is_none_or(|c|!c.is_ascii_alphanumeric())
+                        &&source_text[offset+term.len()..].chars().next().is_none_or(|c|!c.is_ascii_alphanumeric()))
+                    .map(|term|offset+term.len()).max();
+                dictionary_end.into_iter().chain(identifier_end(source_text,offset)).max()
+            }else{None};
+            if (protect_all_latin&&c.is_ascii_alphabetic()) || literal_end.is_some() || exact_end.is_some() {
+                let end = literal_end.or(exact_end).unwrap_or_else(|| term_end(source_text, offset));
                 if literal_end.is_some() { literals.next(); }
                 let original = &source_text[offset..end];
                 let index = *indices.entry(original.to_owned()).or_insert_with(|| {
@@ -139,7 +168,7 @@ impl ProtectedTerms {
                 offset = end;
             }
         }
-        Ok(Self { masked_source, prefix, terms })
+        Ok(Self { masked_source, prefix, terms, protect_all_latin })
     }
 
     pub(super) fn masked_source(&self) -> &str { &self.masked_source }
@@ -182,8 +211,11 @@ impl ProtectedTerms {
                 let c = rest.chars().next().unwrap();
                 // Model-written Latin names are not allowed to bypass the
                 // mapping by spelling out a guessed replacement or acronym.
-                if c.is_ascii_alphabetic() {
+                if self.protect_all_latin && c.is_ascii_alphabetic() {
                     return Err(failure("protected_terms_new_latin", "整理结果新增或改写了未受保护的英文内容"));
+                }
+                if !self.protect_all_latin&&rest.starts_with("⟪SM") {
+                    return Err(failure("protected_terms_marker_unknown","整理结果包含未知的专名保护标记"));
                 }
                 let end = offset + c.len_utf8();
                 Self::append(&mut result, &mut chars, &output[offset..end], 1)?;
@@ -201,6 +233,26 @@ impl ProtectedTerms {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn precise_candidate_allows_ordinary_english_cleanup_but_keeps_exact_literals(){
+        let source="我的介绍里 I I mainly use Python，同时保留 `user_id`，网址 https://example.com/a?q=1，名称 GraphRAG，原话‘嗯，先别改’。";
+        let protected=ProtectedTerms::new_precise(source,&["GraphRAG".into()]).unwrap();
+        assert!(protected.masked_source().contains("I I mainly use Python"));
+        for term in ["user_id","https://example.com/a?q=1","GraphRAG","嗯，先别改"]{assert!(!protected.masked_source().contains(term));}
+        let edited=protected.masked_source().replace("I I mainly use Python","I mainly use Python");
+        assert_eq!(protected.restore_checked(&edited).unwrap(),source.replace("I I mainly","I mainly"));
+        assert!(protected.restore_checked(&edited.replace(&format!("{}0⟫",protected.prefix),"other")).is_err());
+        assert!(protected.restore_checked(&format!("{edited} ⟪SMffff_999⟫")).is_err());
+    }
+    #[test]
+    fn precise_dictionary_matches_whole_tokens_and_original_protocol_still_protects_all_latin(){
+        let precise=ProtectedTerms::new_precise("GraphRAG GraphRAGged userID v2.1 self-motivated I I",&["GraphRAG".into()]).unwrap();
+        assert!(precise.masked_source().contains("GraphRAGged"));
+        assert!(precise.masked_source().contains("self-motivated I I"));
+        let original=ProtectedTerms::new_guarded("I I mainly use Python").unwrap();
+        assert!(!original.masked_source().contains("I I"));
+        assert!(original.restore_checked(&format!("{} new",original.masked_source())).is_err());
+    }
     const NONCE: &str = "0123456789abcdef0123456789abcdef";
     fn protect(text: &str) -> ProtectedTerms {
         ProtectedTerms::with_nonce(text, || NONCE.into()).unwrap()

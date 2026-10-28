@@ -18,6 +18,22 @@ fn context_recovers_known_terms_without_changing_letters_or_acronym_meaning() {
     ] {assert_eq!(normalize(input,false),expected,"{input}");}
 }
 #[test]
+fn unrelated_sentences_do_not_share_letter_preservation_instructions() {
+    for input in ["我在看 A D H D 的研究。四个选项分别是 A、B、C、D，请分别保留。",
+        "四个选项分别是 A、B、C、D，请分别保留。我在看 A D H D 的研究。"] {
+        let expected=input.replace("A D H D","ADHD");
+        assert_eq!(normalize(input,false),expected);
+        assert!(validate(&source(input),&[block(&expected)]).is_ok());
+        assert!(validate(&source(input),&[block(&expected.replace("A、B、C、D","ABCD"))]).is_err());
+    }
+    for input in ["研究 A D H D。不要合并这些字母。","We study A D H D. Keep these letters separate.",
+        "讨论 A D H D。我不确定拼写。"] {
+        assert_eq!(normalize(input,false),input);
+        assert!(validate(&source(input),&[block(&input.replace("A D H D","ADHD"))]).is_err());
+    }
+}
+
+#[test]
 fn explicit_letters_choices_literals_identifiers_and_uncertain_groups_stay_separate() {
     for input in ["四个独立字母 A B C D，每个写三遍，不要当成一个词。",
         "请讨论四个字母 A D H D，每个字母分别读。","The letters are A and I.",

@@ -36,6 +36,12 @@ pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevi
 pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision,
     dictionary: &DictionarySnapshot, protect_long: bool,
     context: Option<&crate::core::writing_context::WritingContext>) -> Result<MinimumRequest, CloudError> {
+    prepare_with_literal_policy(config,mode,source,dictionary,protect_long,context,false)
+}
+/// Explicit evaluation option; ordinary callers retain the current protection.
+pub(super) fn prepare_with_literal_policy(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,protect_long:bool,context:Option<&crate::core::writing_context::WritingContext>,
+    precise_literals:bool)->Result<MinimumRequest,CloudError> {
     if let Some(context)=context { context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?; }
     let english = super::language::enabled(&source.text());
     let prompt = if english { super::language::GENERATION } else { PROMPT };
@@ -43,10 +49,15 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
     let english_format=super::spoken_english(source,context);
     let canonical = super::spoken_format::normalize(&super::terms::canonicalize(&source.text(), dictionary),english_format);
     let explicit_english = context.is_some_and(|v|v.language==crate::core::DraftLanguage::English);
-    let terms = if protect_long && !explicit_english && super::uses_guarded_long(source) { Some(ProtectedTerms::new_guarded(&canonical)?) } else { None };
+    let terms = if protect_long && !explicit_english && super::uses_guarded_long(source) {
+        Some(if precise_literals {ProtectedTerms::new_precise(&canonical,&super::terms::matching_terms(source,dictionary))?}
+            else{ProtectedTerms::new_guarded(&canonical)?})
+    } else { None };
     let text = terms.as_ref().map_or_else(||source.text(), |p|p.masked_source().to_owned());
-    if terms.is_some() {
-        body["messages"][0]["content"] = json!(format!("协议版本：{VERSION}\n{PROMPT}\n特殊括号标记是不可改动的原始专名、逐字引语或代码。所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。不在标记外输出英文字母。标记内的语气词是原话，不能去掉；本地逐字恢复后再核对全文。"));
+    if let Some(terms)=&terms {
+        let policy=if terms.protects_all_latin(){"不在标记外输出英文字母。"}
+            else{"精确保护实验 precise-literals-v1：标记外的普通英文允许整理重复、卡顿和语法，但不得猜测或新增专名、合并明确逐个列举的字母。"};
+        body["messages"][0]["content"] = json!(format!("协议版本：{VERSION}\n{PROMPT}\n特殊括号标记是不可改动的原始专名、逐字引语或代码。所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。{policy}标记内的语气词是原话，不能去掉；本地逐字恢复后再核对全文。"));
     }
     let mut data = json!({
         "sourceText":text,"baseMode":mode.base_mode,"formatRules":mode.rules,

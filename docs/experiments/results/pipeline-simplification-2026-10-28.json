@@ -1,0 +1,1056 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-28",
+  "scope": "SYNTHETIC_FIXED_TEXT_PAIRED_EVALUATION",
+  "sameFixture": true,
+  "sourceFixture": "../fixtures/pipeline-simplification-v1.json",
+  "arms": {
+    "precise": "Experimental literals, dictionary terms and explicit identifiers only",
+    "baseline": "Existing full Latin protection"
+  },
+  "fullSemanticReviewInBothArms": true,
+  "riskSkippingEnabled": false,
+  "realRecording": "NOT_RUN",
+  "realWeChat": "NOT_RUN",
+  "realBrowser": "NOT_RUN",
+  "userAcceptance": "NOT_RUN",
+  "privateHistoryRead": false,
+  "configReadOnly": true,
+  "productionPromotion": {
+    "preciseProtection": false,
+    "localGuardCorrections": true,
+    "chainSeparation": true,
+    "riskSkipping": false
+  },
+  "runs": [
+    {
+      "run": "r1",
+      "phase": "before-local-guard-fixes",
+      "fixtureSha256": "5e45aa0c5b68feb8b40cbb35fa0e76cb98c63756d2371fc1468996d82836f8c0",
+      "executableSha256": "6951ec4f46290c2b6630c2e634fbd7a2589984eb78f92a5f1d2825a8fc3347c6",
+      "evidenceSha256": "b0879110cc2dfe80294099117a15948ede173e1a1f43d3367e260dae0ef9a871",
+      "provider": "aliyun",
+      "model": "qwen3.8-flash",
+      "requests": 32,
+      "maximumRequests": 64,
+      "results": [
+        {
+          "caseId": "clean-chat",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "早上好，今天见。",
+          "elapsedMs": 3089,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": true
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1099.9249,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1988.0056000000002,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3898,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "clean-chat",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "早上好，今天见。",
+          "elapsedMs": 1756,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": true
+          },
+          "requestTimings": [
+            {
+              "durationMs": 828.306,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 927.0374999999999,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4170,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "short-negation",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "明天不要付款，除非对方先确认收款账户。",
+          "elapsedMs": 3653,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 694.0016,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 2958.4171,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4304,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "short-negation",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "明天不要付款，除非对方先确认收款账户。",
+          "elapsedMs": 2020,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1181.9404,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 837.3038,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3816,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "date-and-correction",
+          "arm": "baseline",
+          "status": "failed",
+          "errorCode": "rewrite_admission_rejected",
+          "text": null,
+          "elapsedMs": 3116,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1115.5769,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1998.2378,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3882,
+              "stage": "repair"
+            }
+          ]
+        },
+        {
+          "caseId": "date-and-correction",
+          "arm": "precise",
+          "status": "failed",
+          "errorCode": "rewrite_admission_rejected",
+          "text": null,
+          "elapsedMs": 1837,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1057.9612,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 776.1766,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3939,
+              "stage": "repair"
+            }
+          ]
+        },
+        {
+          "caseId": "letters-and-code",
+          "arm": "precise",
+          "status": "failed",
+          "errorCode": "rewrite_literal_changed",
+          "text": null,
+          "elapsedMs": 3081,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1872.9517,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1205.7489,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3124,
+              "stage": "repair"
+            }
+          ]
+        },
+        {
+          "caseId": "letters-and-code",
+          "arm": "baseline",
+          "status": "failed",
+          "errorCode": "rewrite_literal_changed",
+          "text": null,
+          "elapsedMs": 2428,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1151.8793999999998,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1273.7923,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3846,
+              "stage": "repair"
+            }
+          ]
+        },
+        {
+          "caseId": "email-authoring",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "关于您询问补交地址证明后是否当天有结果，我们收到材料后会尽快核验，但不能保证当天有结果。如果需要补充其他材料，我们会再联系您。",
+          "elapsedMs": 2146,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1137.6087,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1005.6775,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3859,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "email-authoring",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "关于您询问补交地址证明后是否当天有结果，我们收到材料后会尽快核验，但不能保证当天有结果。如果需要补充其他材料，我们会再联系您。",
+          "elapsedMs": 2356,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1233.6461000000002,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1119.9187,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3763,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "mixed-long",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "我想把这次技术分享的准备过程记下来，先说明背景。我们小组正在做一个面向内部知识库的问答工具，目标是让同事能更快找到已经审核过的文档，现阶段还只是内部试用，不能说已经覆盖所有业务。\n\n我主要负责后端开发，介绍自己的时候会说 I mainly use Python, and I work on retrieval systems。检索这一块我们准备比较普通向量检索和 GraphRAG，不过现在只有离线实验，还没有线上效果，所以分享时要把这两件事分开。\n\n资料整理方面，我会先检查原文有没有过期，再记录每份材料的来源和更新时间。如果发现两个文档的结论不同，就把分歧保留下来，请负责业务的同事确认，不能直接选一个看起来更合理的答案。\n\n另一个重点是用户体验，同事希望系统能说明答案来自哪里，也希望在信息不足时直接告诉他还缺哪些材料。我觉得这个要求比较合理，但目前的界面还没有全部做完，所以展示时只演示已经可以操作的流程。\n\n最后我会留一点时间讨论后续计划，包括补充测试样本、检查检索结果、完善错误提示，以及收集内部试用的反馈。这里说的是计划，没有承诺具体上线日期，也没有说现在已经达到正式服务的稳定性。整篇记录尽量保持自然的中文表达，英文部分保留英文，只整理我刚才的重复和卡顿。",
+          "elapsedMs": 5237,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 4196.6359,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7992,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1020.0943,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3783,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "mixed-long",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "我想把这次技术分享的准备过程记下来，先说明背景。我们小组正在做一个面向内部知识库的问答工具，目标是让同事能更快找到已经审核过的文档，现阶段还只是内部试用，不能说已经覆盖所有业务。\n\n我主要负责后端开发，介绍自己的时候会说 I I mainly use Python、and and I work on retrieval systems。检索这一块我们准备比较普通向量检索和 GraphRAG，不过现在只有离线实验，还没有线上效果，所以分享时要把这两件事分开。\n\n资料整理方面，我会先检查原文有没有过期，再记录每份材料的来源和更新时间。如果发现两个文档的结论不同，就把分歧保留下来，请负责业务的同事确认，不能直接选一个看起来更合理的答案。\n\n另一个重点是用户体验，同事希望系统能说明答案来自哪里，也希望在信息不足时直接告诉他还缺哪些材料。我觉得这个要求比较合理，但目前的界面还没有全部做完，所以展示时只演示已经可以操作的流程。\n\n最后我会留一点时间讨论后续计划，包括补充测试样本、检查检索结果、完善错误提示，以及收集内部试用的反馈。这里说的是计划，没有承诺具体上线日期，也没有说现在已经达到正式服务的稳定性。整篇记录尽量保持自然的中文表达，英文部分保留英文，只整理我刚才的重复和卡顿。",
+          "elapsedMs": 5644,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 3870.1767999999997,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7993,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1755.2463999999998,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4111,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-literals",
+          "arm": "baseline",
+          "status": "failed",
+          "errorCode": "rewrite_timeout",
+          "text": null,
+          "elapsedMs": 8002,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 4099.5561,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7992,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 3894.8781,
+              "outcome": "timedOut",
+              "remainingBudgetMs": 3892,
+              "stage": "repair"
+            }
+          ]
+        },
+        {
+          "caseId": "long-literals",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "这次排查 SpeakMode 的输入问题，先把观察到的现象写清楚。\n\n1. 用户在输入框里已经可以手动粘贴，但自动输入偶尔没有发生。这只能说明剪贴板里的内容可用，还不能说明每一次失败都是同一个原因。\n2. 我们准备先检查停止录音时保存的目标，再看真正输入之前焦点有没有变化。\n3. 如果用户在等待期间主动点击了其他位置，就应停止这一次自动输入，已有的成稿继续保留，不能为了完成任务把文字送到新的窗口。\n4. 调试时使用的变量名是 `target_id`，另一个变量名是 `targetId`，它们是两个不同的名字，不能合并。\n5. 测试地址固定为 https://example.com/input?q=1，测试账户为 demo@example.com，这些只是合成数据，不是用户的真实账户。\n6. 我在说明英文操作步骤时说的是 I will check the input target, then inspect the clipboard。\n7. 还有一段原话必须保留，是‘嗯，这个，先不要提交’，这段引语里的语气词不能因为正文在整理就一起删掉。\n8. 验证时还需要区分发送过按键和文本真正出现在输入框里这两种证据，没有读回结果就保持未确认，也不能立即再次粘贴。\n9. 关于后续安排，我会先完成自建测试控件的检查，再到原先出现问题的应用里试用，只有后者通过之后才能说对应应用已经验证。\n10. 文档最后要写清楚这个边界，不要把实验控件的结果推广到所有软件。",
+          "elapsedMs": 5982,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 4633.3532000000005,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7992,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1327.0371,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3345,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-scope",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "我把组内讨论的结果重新说明一下。这次不是要立刻更换整个技术方案，而是先把问题拆开再做实验。\n\n1. 小陈负责检索模块，小李负责结果展示，不能把这两个人的工作写反。\n2. 检索实验里会包含 GraphRAG，但现在还没有证据说明它在我们的材料上一定比原来的方案好，所以介绍时只能说正在比较，不能写成已经证明更优。\n3. 关于论文资料，我们讨论了 CIKM 上的一篇研究，只是把它作为方法参考，并不是说我们的项目已经被这个会议录用了。\n4. 英文总结里我刚才说了 We are comparing two approaches, and we need more evidence，这两处是说话时的重复，可以自然接起来。\n5. 关于发布条件，只有回归测试全部通过，而且负责业务的同事确认文档来源之后，才能安排内部试用；只通过测试还不够。\n6. 关于反馈收集，小陈希望记录检索结果是否有帮助，小李希望记录界面是否容易理解，我觉得这两个问题都应该保留，不能只剩一个总分。\n7. 还有一个需要澄清的地方，我们先前想把全部材料放进去，后来改成先使用经过审核的那一部分，这里是在交代方案变化，之前的想法和现在的决定都要说明。\n8. 最后，下一次讨论准备检查样本覆盖、错误分类和反馈表格，还没有确定具体日期。",
+          "elapsedMs": 5411,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 3926.6844,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7992,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1463.0966999999998,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4052,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-scope",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "我把组内讨论的结果重新说明一下。这次不是要立刻更换整个技术方案，而是先把问题拆开再做实验。\n\n1. 小陈负责检索模块，小李负责结果展示，不能把这两个人的工作写反。\n2. 检索实验里会包含 GraphRAG，但现在还没有证据说明它在我们的材料上一定比原来的方案好，所以介绍时只能说正在比较，不能写成已经证明更优。\n3. 关于论文资料，我们讨论了 CIKM 上的一篇研究，只是把它作为方法参考，并不是说我们的项目已经被这个会议录用了。\n4. 英文总结里我刚才说了 We we are comparing two approaches and and we need more evidence，这两处是说话时的重复，可以自然接起来。\n5. 关于发布条件，只有回归测试全部通过，而且负责业务的同事确认文档来源之后，才能安排内部试用；只通过测试还不够。\n6. 关于反馈收集，小陈希望记录检索结果是否有帮助，小李希望记录界面是否容易理解，我觉得这两个问题都应该保留，不能只剩一个总分。\n7. 还有一个需要澄清的地方，我们先前想把全部材料放进去，后来改成先使用经过审核的那一部分，这里是在交代方案变化，之前的想法和现在的决定都要说明。\n8. 最后，下一次讨论准备检查样本覆盖、错误分类和反馈表格，还没有确定具体日期。",
+          "elapsedMs": 4988,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 3883.5898,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7993,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1083.8376999999998,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4096,
+              "stage": "review"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run": "r2",
+      "phase": "after-local-guard-fixes",
+      "fixtureSha256": "5e45aa0c5b68feb8b40cbb35fa0e76cb98c63756d2371fc1468996d82836f8c0",
+      "executableSha256": "00f689b5a08e3e3ea1c0b2d316b1f079801e436ce35d0a2d2f0abe5f3c921354",
+      "evidenceSha256": "a4043bccc3f06e7b24533e10a355e24e9f0db0d7af0c52ce7304fbae105e44ec",
+      "provider": "aliyun",
+      "model": "qwen3.8-flash",
+      "requests": 32,
+      "maximumRequests": 64,
+      "results": [
+        {
+          "caseId": "clean-chat",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "早上好，今天见。",
+          "elapsedMs": 2467,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": true
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1045.9664,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1419.4301999999998,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3952,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "clean-chat",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "早上好，今天见。",
+          "elapsedMs": 3452,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": true
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1212.3308,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 2239.2322999999997,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3786,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "short-negation",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "明天不要付款，除非对方先确认收款账户。",
+          "elapsedMs": 2736,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1250.7626,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1483.6509,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3747,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "short-negation",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "明天不要付款，除非对方先确认收款账户。",
+          "elapsedMs": 2399,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1027.1034000000002,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4999,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1370.1595,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3970,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "date-and-correction",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "我们约在2026年10月23日，预算三千五。场地费是两千，不是五千。",
+          "elapsedMs": 2592,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1622.0485,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 965.7531,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3373,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "date-and-correction",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "我们约在2026年10月23日，预算三千五。场地费是两千，不是五千。",
+          "elapsedMs": 3043,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1936.4158,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4997,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1101.7714999999998,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3058,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "letters-and-code",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "我在看 ADHD 的研究。表格的四个选项分别是 A、B、C、D，请分别保留。变量名是 `user_id`，不要改成 `userId`。",
+          "elapsedMs": 3031,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1305.2135,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4997,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1720.1411,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3689,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "letters-and-code",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "我在看 ADHD 的研究。表格的四个选项分别是 A、B、C、D，请分别保留。变量名是 `user_id`，不要改成 `userId`。",
+          "elapsedMs": 2649,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1760.7236,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 882.7246,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3234,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "email-authoring",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "关于您询问补交地址证明后是否当天有结果，我们收到材料后会尽快核验，但不能保证当天有结果。如果需要补充其他材料，我们会再联系您。",
+          "elapsedMs": 2704,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1713.0253,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4998,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 985.6659,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3281,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "email-authoring",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "关于您询问补交地址证明后是否当天有结果，我们收到材料后会尽快核验，但不能保证当天有结果。如果需要补充其他材料，我们会再联系您。",
+          "elapsedMs": 2927,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 1499.9342,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 4997,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1422.288,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3494,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "mixed-long",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "我想把这次技术分享的准备过程记下来，先说明背景。我们小组正在做一个面向内部知识库的问答工具，目标是让同事能更快找到已经审核过的文档，现阶段还只是内部试用，不能说已经覆盖所有业务。\n\n我主要负责后端开发，介绍自己的时候会说 I mainly use Python, and I work on retrieval systems. 检索这一块我们准备比较普通向量检索和 GraphRAG，不过现在只有离线实验，还没有线上效果，所以分享时要把这两件事分开。\n\n资料整理方面，我会先检查原文有没有过期，再记录每份材料的来源和更新时间。如果发现两个文档的结论不同，就把分歧保留下来，请负责业务的同事确认，不能直接选一个看起来更合理的答案。\n\n另一个重点是用户体验，同事希望系统能说明答案来自哪里，也希望在信息不足时直接告诉他还缺哪些材料。我觉得这个要求比较合理，但目前的界面还没有全部做完，所以展示时只演示已经可以操作的流程。\n\n最后我会留一点时间讨论后续计划，包括补充测试样本、检查检索结果、完善错误提示，以及收集内部试用的反馈。这里说的是计划，没有承诺具体上线日期，也没有说现在已经达到正式服务的稳定性。整篇记录尽量保持自然的中文表达，英文部分保留英文，只整理我刚才的重复和卡顿。",
+          "elapsedMs": 7036,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 5471.864799999999,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7988,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1532.9961,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 2497,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "mixed-long",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "我想把这次技术分享的准备过程记下来，先说明背景。我们小组正在做一个面向内部知识库的问答工具，目标是让同事能更快找到已经审核过的文档，现阶段还只是内部试用，不能说已经覆盖所有业务。\n\n我主要负责后端开发，介绍自己的时候会说 I I mainly use Python，and and I work on retrieval systems，这里的重复是我临时卡住了。检索这一块我们准备比较普通向量检索和 GraphRAG，不过现在只有离线实验，还没有线上效果，所以分享时要把这两件事分开。\n\n资料整理方面，我会先检查原文有没有过期，再记录每份材料的来源和更新时间，如果发现两个文档的结论不同，就把分歧保留下来，请负责业务的同事确认，不能直接选一个看起来更合理的答案。\n\n另一个重点是用户体验，同事希望系统能说明答案来自哪里，也希望在信息不足时直接告诉他还缺哪些材料。我觉得这个要求比较合理，但目前的界面还没有全部做完，所以展示时只演示已经可以操作的流程。\n\n最后我会留一点时间讨论后续计划，包括补充测试样本、检查检索结果、完善错误提示，以及收集内部试用的反馈。这里说的是计划，没有承诺具体上线日期，也没有说现在已经达到正式服务的稳定性。整篇记录尽量保持自然的中文表达，英文部分保留英文，只整理我刚才的重复和卡顿。",
+          "elapsedMs": 5088,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 4029.2402999999995,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7992,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1035.5542,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3948,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-literals",
+          "arm": "baseline",
+          "status": "failed",
+          "errorCode": "rewrite_timeout",
+          "text": null,
+          "elapsedMs": 8007,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 7369.4749,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7992,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 594.7042,
+              "outcome": "timedOut",
+              "remainingBudgetMs": 587,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-literals",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "这次排查 SpeakMode 的输入问题，先把观察到的现象写清楚。用户在输入框里已经可以手动粘贴，但自动输入偶尔没有发生，这只能说明剪贴板里的内容可用，还不能说明每一次失败都是同一个原因。\n\n我们准备先检查停止录音时保存的目标，再看真正输入之前焦点有没有变化。如果用户在等待期间主动点击了其他位置，就应停止这一次自动输入，已有的成稿继续保留，不能为了完成任务把文字送到新的窗口。\n\n调试时使用的变量名是 `target_id`，另一个变量名是 `targetId`，它们是两个不同的名字，不能合并。测试地址固定为 https://example.com/input?q=1，测试账户为 demo@example.com，这些只是合成数据，不是用户的真实账户。\n\n我在说明英文操作步骤时说的是 I will check the input target, then inspect the clipboard。还有一段原话必须保留，是‘嗯，这个，先不要提交’，这段引语里的语气词不能因为正文在整理就一起删掉。\n\n验证时还需要区分发送过按键和文本真正出现在输入框里这两种证据，没有读回结果就保持未确认，也不能立即再次粘贴。\n\n关于后续安排，我会先完成自建测试控件的检查，再到原先出现问题的应用里试用，只有后者通过之后才能说对应应用已经验证。文档最后要写清楚这个边界，不要把实验控件的结果推广到所有软件。",
+          "elapsedMs": 7269,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 5436.2616,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7988,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1799.2691,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 2531,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-scope",
+          "arm": "precise",
+          "status": "success",
+          "errorCode": null,
+          "text": "我把组内讨论的结果重新说明一下。这次不是要立刻更换整个技术方案，而是先把问题拆开再做实验。\n\n1. 小陈负责检索模块，小李负责结果展示，不能把这两个人的工作写反。\n2. 检索实验里会包含 GraphRAG，但现在还没有证据说明它在我们的材料上一定比原来的方案好，所以介绍时只能说正在比较，不能写成已经证明更优。\n3. 关于论文资料，我们讨论了 CIKM 上的一篇研究，只是把它作为方法参考，并不是说我们的项目已经被这个会议录用了。\n4. 英文总结中，“We are comparing two approaches, and we need more evidence”这两处是说话时的重复，可以自然接起来。\n5. 关于发布条件，只有回归测试全部通过，而且负责业务的同事确认文档来源之后，才能安排内部试用；只通过测试还不够。\n6. 关于反馈收集，小陈希望记录检索结果是否有帮助，小李希望记录界面是否容易理解，我觉得这两个问题都应该保留，不能只剩一个总分。\n7. 还有一个需要澄清的地方：我们先前想把全部材料放进去，后来改成先使用经过审核的那一部分，这里是在交代方案变化，之前的想法和现在的决定都要说明。\n8. 下一次讨论准备检查样本覆盖、错误分类和反馈表格，还没有确定具体日期。",
+          "elapsedMs": 6701,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 5435.3891,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7990,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 1241.3171,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 2541,
+              "stage": "review"
+            }
+          ]
+        },
+        {
+          "caseId": "long-scope",
+          "arm": "baseline",
+          "status": "success",
+          "errorCode": null,
+          "text": "我把组内讨论的结果重新说明一下。这次不是要立刻更换整个技术方案，而是先把问题拆开再做实验。\n\n1. 小陈负责检索模块，小李负责结果展示，不能把这两个人的工作写反。\n2. 检索实验里会包含 GraphRAG，但现在还没有证据说明它在我们的材料上一定比原来的方案好，所以介绍时只能说正在比较，不能写成已经证明更优。\n3. 关于论文资料，我们讨论了 CIKM 上的一篇研究，只是把它作为方法参考，并不是说我们的项目已经被这个会议录用了。\n4. 英文总结里我刚才说了 We we are comparing two approaches、and and we need more evidence，这两处是说话时的重复，可以自然接起来。\n5. 关于发布条件，只有回归测试全部通过，而且负责业务的同事确认文档来源之后，才能安排内部试用；只通过测试还不够。\n6. 关于反馈收集，小陈希望记录检索结果是否有帮助，小李希望记录界面是否容易理解，我觉得这两个问题都应该保留，不能只剩一个总分。\n7. 还有一个需要澄清的地方，我们先前想把全部材料放进去，后来改成先使用经过审核的那一部分，这里是在交代方案变化，之前的想法和现在的决定都要说明。\n8. 最后，下一次讨论准备检查样本覆盖、错误分类和反馈表格，还没有确定具体日期。",
+          "elapsedMs": 5235,
+          "requests": 2,
+          "reviewRoute": {
+            "reasons": [
+              "textChanged",
+              "structuredLayout",
+              "explicitWritingPolicy",
+              "factsConditionsOrCorrection"
+            ],
+            "version": "review-routing-shadow-v1",
+            "wouldSkipReview": false
+          },
+          "requestTimings": [
+            {
+              "durationMs": 4283.8982000000005,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 7987,
+              "stage": "generation"
+            },
+            {
+              "durationMs": 922.3874,
+              "outcome": "responseReceived",
+              "remainingBudgetMs": 3687,
+              "stage": "review"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

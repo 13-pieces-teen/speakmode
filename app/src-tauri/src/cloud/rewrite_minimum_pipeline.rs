@@ -16,6 +16,7 @@ pub struct Trace {
     pub repaired_draft:Option<RewriteResult>,pub final_review:Option<semantic_review::SemanticReview>,
     pub native_deletion_verified:bool,
     pub requests:Vec<RequestTiming>,
+    pub review_route:Option<super::review_routing::ReviewRoute>,
 }
 #[derive(Serialize)]#[serde(rename_all="camelCase")]
 pub struct RequestTiming {pub stage:&'static str,pub duration_ms:f64,pub remaining_budget_ms:u64,pub outcome:&'static str}
@@ -52,13 +53,18 @@ pub(super) async fn execute_until_with_writing_context(client:&reqwest::Client,c
 async fn execute_until_with_review_format(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
     context:Option<&crate::core::writing_context::WritingContext>,review_format:Option<semantic_review::MinimumReviewFormat>)->Outcome {
+    execute_with_policy(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,fixed,context,review_format,None).await
+}
+async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,fixed:Option<RewriteResult>,
+    context:Option<&crate::core::writing_context::WritingContext>,review_format:Option<semantic_review::MinimumReviewFormat>,experiment_precise_literals:Option<bool>)->Outcome {
     let started=Instant::now();let deadline=execution.deadline;let mut trace=Trace::default();
     let job=async {
         checkpoint(&cancel,deadline)?;
         if let Some(context)=context {context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?;}
         let mut generation_request=None;
         let mut draft=if let Some(draft)=fixed {draft}else{
-            let request=minimum::prepare_with_writing_context(config,mode,source,dictionary,true,context)?;
+            let request=minimum::prepare_with_literal_policy(config,mode,source,dictionary,true,context,experiment_precise_literals.unwrap_or(false))?;
             checkpoint(&cancel,deadline)?;trace.calls+=1;
             let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Generation).await?;
             request.validate_personalization(context)?;
@@ -77,6 +83,9 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
         super::format_draft_spoken(&mut draft,super::spoken_english(source,context));
         trace.draft=Some(draft.clone());
+        // Only the lab pays for shadow routing. It cannot bypass full review
+        // and ordinary dictation does not perform an unused extra analysis.
+        if experiment_precise_literals.is_some(){trace.review_route=Some(super::review_routing::assess(mode,source,&draft,context));}
         let admission=super::review_admission_with_writing_context(mode,source,&draft,context)
             .and_then(|_|if context.is_some(){super::writing_context::validate_tense(source,&draft)}else{Ok(())});
         if let Err(error)=admission {
@@ -140,6 +149,23 @@ async fn execute_until_with_review_format(client:&reqwest::Client,config:&Provid
     let result=checkpoint(&cancel,deadline).and(result);
     trace.elapsed_ms=started.elapsed().as_millis() as u64;
     Outcome{result,trace}
+}
+
+/// Fixed-text paired evaluation only. Keeps full review in both arms, records
+/// the proposed route and actual stage times, and never owns delivery/storage.
+pub async fn experiment_simplification(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,context:Option<&crate::core::writing_context::WritingContext>,precise_literals:bool,wait:Duration)->Result<Outcome,CloudError> {
+    let timings=std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));let observed=timings.clone();
+    let execution=RewriteExecution::observed(Instant::now()+wait,move|event|{
+        if let Some(end)=event.finished_at {observed.lock().unwrap().push(RequestTiming{
+            stage:match event.stage{RequestStage::Generation=>"generation",RequestStage::Review=>"review",RequestStage::Repair=>"repair",RequestStage::FinalReview=>"finalReview"},
+            duration_ms:end.duration_since(event.started_at).as_secs_f64()*1000.,remaining_budget_ms:event.remaining_budget_ms,
+            outcome:match event.outcome {Some(RequestOutcome::ResponseReceived)=>"responseReceived",Some(RequestOutcome::TimedOut)=>"timedOut",Some(RequestOutcome::Cancelled)=>"cancelled",_=>"failed"},
+        });}
+    });
+    let endpoint=super::rewrite_endpoint(config)?;
+    let mut outcome=execute_with_policy(super::shared_client()?,config,secret,mode,source,dictionary,CancellationToken::new(),&endpoint,execution,None,context,None,Some(precise_literals)).await;
+    outcome.trace.requests=std::mem::take(&mut *timings.lock().unwrap());Ok(outcome)
 }
 /// This is the single repair opportunity, not a retry loop. Admission failure
 /// uses at most three requests; reviewer rejection uses at most four. Context,

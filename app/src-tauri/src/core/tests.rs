@@ -267,7 +267,7 @@ fn dictionary_v2_migration_preserves_v1_preferences_modes_history_sources_and_us
     assert_eq!(store.get_result("v1-preserved").unwrap(),expected_detail);
     assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
     assert_eq!(store.dictionary().unwrap(),DictionarySnapshot::default());
-    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),5);
+    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),6);
     assert!(store.test_connection().execute("UPDATE sources SET data='changed'",[]).is_err());
     drop(store);fs::remove_file(file).unwrap();
 }
@@ -341,7 +341,7 @@ fn cancelled_dictionary_transaction_rolls_back_version_and_entire_batch() {
 fn migrations_and_preferences_survive_reopen_without_mode_or_key_fields() {
     let path=path();
     {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),7);}
-    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),5);
+    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),6);
     drop(store);fs::remove_file(path).unwrap();
 }
 #[test]

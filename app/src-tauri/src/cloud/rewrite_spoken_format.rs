@@ -41,8 +41,12 @@ fn gap(text:&str)->bool {
 }
 fn listed_gap(text:&str)->bool {matches!(text.trim().to_ascii_lowercase().as_str(),"and"|"or"|"和"|"与"|"以及")}
 fn context(text:&str,start:usize,end:usize)->(String,String) {
-    let before=text[..start].chars().rev().take(90).collect::<String>().chars().rev().collect::<String>().to_ascii_lowercase();
-    let after=text[end..].chars().take(90).collect::<String>().to_ascii_lowercase();(before,after)
+    // A list or spelling instruction in another sentence must not own this
+    // occurrence. Punctuation *inside* the letter run may still be ASR pauses.
+    let boundary=|c:char|matches!(c,'。'|'.'|'!'|'！'|'?'|'？'|';'|'；'|'\n');
+    let before=text[..start].chars().rev().take_while(|c|!boundary(*c)).take(90)
+        .collect::<String>().chars().rev().collect::<String>().to_ascii_lowercase();
+    let after=text[end..].chars().take_while(|c|!boundary(*c)).take(90).collect::<String>().to_ascii_lowercase();(before,after)
 }
 fn labelled_group(text:&str,start:usize)->bool {
     let window=text[..start].chars().rev().take(48).collect::<String>().chars().rev().collect::<String>().to_ascii_lowercase();
@@ -55,7 +59,15 @@ fn labelled_group(text:&str,start:usize)->bool {
 }
 fn separate(text:&str,start:usize,end:usize)->bool {
     let (before,after)=context(text,start,end);let local=format!("{before} {after}");
-    labelled_group(text,start)||["独立字母","单个字母","每个字母","四个字母","三个字母","两个字母","分别读","逐字","不要合并","别合并","四个选项","选项","separate letter","individual letter","each letter","letters are","letters were","spell it","spelling","options","case sensitive","case-sensitive"]
+    // A direct follow-up instruction can refer back across ASR punctuation;
+    // another sentence introducing its own list cannot.
+    let after_window=text[end..].chars().take(180).collect::<String>();
+    let next=after_window.split_once(['。','.','!','！','?','？',';','；','\n'])
+        .map(|(_,tail)|tail.trim_start().to_ascii_lowercase()).unwrap_or_default();
+    let followup=["不要合并","别合并","请逐字保留","请分别保留","这些字母","每个字母",
+        "我不确定拼写","不确定拼写","keep these letters separate","do not merge these letters","i do not know whether"]
+        .iter().any(|cue|next.starts_with(cue));
+    followup||labelled_group(text,start)||["独立字母","单个字母","每个字母","四个字母","三个字母","两个字母","分别读","逐字","不要合并","别合并","四个选项","选项","separate letter","individual letter","each letter","letters are","letters were","spell it","spelling","options","case sensitive","case-sensitive"]
         .iter().any(|cue|local.contains(cue))
         || ["字段","变量","标识符","文件名","原样","字面","variable","identifier","filename","verbatim"].iter()
             .any(|cue|before.trim_end_matches(|c:char|c.is_whitespace()||matches!(c,':'|'：'|'是')).ends_with(cue))

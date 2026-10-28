@@ -19,6 +19,26 @@ mod correction_tests;
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 
+#[test]
+fn simplification_regressions_scope_date_correction_and_letter_protection_locally(){
+    for (source_text,output) in [
+        ("我们约在二零二六年十月二十三日，预算三千，不对，预算三千五。场地费是两千，不是五千。","我们约在2026年10月23日，预算三千五。场地费是两千，不是五千。"),
+        ("我在看 A D H D 的研究。表格的四个选项分别是 A、B、C、D，请分别保留。变量名是 `user_id`，不要改成 `userId`。","我在看 ADHD 的研究。表格的四个选项分别是 A、B、C、D，请分别保留。变量名是 `user_id`，不要改成 `userId`。"),
+    ] {
+        let (_,mode,source)=fixture(source_text);
+        let draft=RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![crate::core::OutputBlock{id:"b".into(),text:output.into(),source_refs:vec!["item-0".into()]}]};
+        let admitted=super::super::review_admission_with_writing_context(&mode,&source,&draft,None);
+        assert!(admitted.is_ok(),"error={:?}; evidence={}",admitted.err(),super::super::integrity::admission_evidence(&source,&draft.blocks));
+        for bad in if source_text.contains("预算") {
+            vec![output.replace("2026年","2027年"),output.replace("预算三千五","预算六千"),
+                output.replace("，不是五千","")]
+        } else {vec![output.replace("A、B、C、D","ABCD"),output.replace("`user_id`","`userid`")]} {
+            let mut changed=draft.clone();changed.blocks[0].text=bad;
+            assert!(super::super::review_admission_with_writing_context(&mode,&source,&changed,None).is_err());
+        }
+    }
+}
+
 fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
     let mut config = ProviderConfig::default(); config.region = Some("beijing".into());
     (config, ModeSnapshot { mode_id: "auto".into(), name: "自动".into(), base_mode: BaseMode::Auto, rules: String::new(), revision: 1 },

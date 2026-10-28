@@ -120,16 +120,27 @@ fn numeric_repair(spans: &[Span<'_>], replacement: &Span<'_>) -> Option<NumericR
     let after = facts::extract(&replacement.text);
     if before.len() != 1 || after.len() != 1 || !anchors(&replacement.text).is_empty() { return None; }
     let first = &before[0]; let next = &after[0];
-    if !matches!(replacement.text[..next.start].trim(), "" | "是")
-        || !replacement.text[next.end..].trim().is_empty() || first.key == next.key { return None; }
+    let named = same_numeric_owner(old, first.start, first.end, &replacement.text, next.start, next.end);
+    if (!named && (!matches!(replacement.text[..next.start].trim(), "" | "是")
+        || !replacement.text[next.end..].trim().is_empty())) || first.key == next.key { return None; }
     let unit = first.key.split(':').next()?;
     if unit != next.key.split(':').next()? || matches!(unit, "scalar" | "version" | "clock") { return None; }
     let targets = spans.iter().flat_map(|span| facts::extract(&span.text))
         .filter(|fact| fact.key.split(':').next() == Some(unit)).count();
-    if targets != 1 { return None; }
+    if !named && targets != 1 { return None; }
     let mut expected = old.clone();
     expected.replace_range(first.start..first.end, &replacement.text[next.start..next.end]);
     Some(NumericRepair { target, replacement: spans.len(), old_key: first.key.clone(), expected })
+}
+
+// An explicit repeated label identifies the adjacent owner. Compare the exact
+// non-numeric wording; broad fingerprint overlap cannot decide whose value was
+// corrected. Negative/conditional values and historical changes stay guarded.
+fn same_numeric_owner(old: &str, start: usize, end: usize, new: &str, next_start: usize, next_end: usize) -> bool {
+    !old[..start].trim().is_empty()
+        && old[..start].trim() == new[..next_start].trim()
+        && old[end..].trim() == new[next_end..].trim()
+        && anchors(old).is_empty() && anchors(new).is_empty()
 }
 
 fn acknowledges_retired_value(text: &str, repair: &NumericRepair) -> bool {
@@ -203,6 +214,14 @@ fn resolve_correction<'a>(spans: &mut [Span<'a>], replacement: &Span<'a>) -> boo
     let Some(index) = spans.iter().rposition(|span| !FILLERS.contains(&span.text.trim()) && !span.text.trim().is_empty()) else { return false; };
     let old = &spans[index].text;
     let old_facts = facts::extract(old); let new_facts = facts::extract(&replacement.text);
+    if let Some(repair) = numeric_repair(spans, replacement) {
+        if same_numeric_owner(old, old_facts[0].start, old_facts[0].end,
+            &replacement.text, new_facts[0].start, new_facts[0].end) {
+            spans[repair.target].text = repair.expected;
+            extend_origins(&mut spans[repair.target], &replacement.origins);
+            return false;
+        }
+    }
     let replacement_label = new_facts.first().map(|fact| super::without_anchors(&replacement.text[..fact.start])).unwrap_or_default();
     if old_facts.len() == 1 && new_facts.len() == 1 && matches!(replacement_label.trim(), "" | "是") {
         // “不是3500元” / “可能3500元” is not a final positive value. The

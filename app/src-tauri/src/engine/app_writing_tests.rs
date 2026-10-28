@@ -189,3 +189,47 @@ async fn default_application_matching_gets_same_bounded_grace_without_reading_te
     complete(&h,|context|{let context=context.unwrap();assert_eq!(context.scene,AppWritingScene::Document);assert!(context.input.is_none());}).await;
     target.await.unwrap();
 }
+
+#[test]
+fn target_can_deliver_while_optional_context_is_still_reading(){
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);
+    {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.prefs.delivery_mode=DeliveryMode::Direct;s.prefs.app_writing.input_context_enabled=true;}
+    h.begin_stop_target(&identity("s"),Instant::now()).unwrap();
+    let (started_tx,started_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
+    let worker=h.clone();let native=std::thread::spawn(move||worker.resolve_stop_target_with_context("s",7,
+        ||Ok(Some(delivery_target_fixture())),|_|Some("msedge.exe".into()),|_|{
+            started_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(InputContext{control_label:"Document body".into(),before_text:"LATE_HOST_TEXT".into(),..Default::default()})
+        }));
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    {let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(s.target.is_some());assert!(!s.target_capture_pending);assert!(s.input_context_capture_pending);}
+    ready(&h,"s");
+    // Emulate generation's already-frozen context. Late host text cannot
+    // revise the saved draft, even though delivery can proceed now.
+    {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.input_context_frozen=true;s.input_context_status=InputContextStatus::Unavailable;}
+    let calls=std::sync::atomic::AtomicUsize::new(0);
+    h.deliver_once("s",7,|permit,target,text,gate|platform::delivery::dispatch_with_test_operations(permit,target,text,gate,|_|true,||{calls.fetch_add(1,Ordering::SeqCst);4}));
+    assert_eq!(calls.load(Ordering::SeqCst),1);assert!(!view(&h).worker_released,"native context lease is still owned");
+    release_tx.send(()).unwrap();native.join().unwrap();
+    let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(!s.input_context_capture_pending);assert!(s.input_context.is_none());
+    assert_eq!(s.input_context_status,InputContextStatus::Unavailable);
+}
+
+#[test]
+fn cancelled_or_panicked_context_cannot_remove_target_or_leak_its_lease(){
+    for panic_context in [false,true] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);
+        h.inner.lock().unwrap().active.as_mut().unwrap().prefs.app_writing.input_context_enabled=true;
+        h.begin_stop_target(&identity("s"),Instant::now()).unwrap();
+        let resolved=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||h.resolve_stop_target_with_context("s",7,
+            ||Ok(Some(delivery_target_fixture())),|_|Some("msedge.exe".into()),|_|{
+                if panic_context {panic!("synthetic reader failure");}
+                h.inner.lock().unwrap().active.as_ref().unwrap().cancel.cancel();
+                Ok(InputContext{before_text:"DISCARDED_CONTEXT".into(),..Default::default()})
+            })));
+        assert_eq!(resolved.is_err(),panic_context);
+        let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(s.target.is_some());
+        assert!(!s.target_capture_pending&&!s.input_context_capture_pending);assert!(s.input_context.is_none());
+        assert_eq!(s.input_context_status,InputContextStatus::Unavailable);
+    }
+}
