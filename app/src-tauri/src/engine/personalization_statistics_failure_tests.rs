@@ -2,12 +2,12 @@
 // microphone, native input, profile DB, or clipboard access.
 #[tokio::test]
 async fn statistics_event_failure_preserves_write_error_and_permanently_latches_this_process() {
-    let h=hub();assert!(!h.personalization_statistics_incomplete.load(Ordering::SeqCst));
+    let h=hub();assert!(!h.db.statistics_incomplete());
     assert_eq!(command(&h,"personalization.stats",json!({"window":"all"})).await.unwrap()["normal"]["total"],0);
     fault(&h,"CREATE TRIGGER reject_statistic_insert BEFORE INSERT ON personalization_events BEGIN SELECT RAISE(ABORT,'private-statistic-failure-sentinel'); END;");
     let event=personalization::task_event("failed-statistic-write",PersonalizationEventKind::Normal,None,PersonalizationEventStatus::Success,1);
     let original=h.record_personalization_event(event.clone()).await.unwrap_err();assert_eq!(original.code,"storageFailed");
-    assert!(h.personalization_statistics_incomplete.load(Ordering::SeqCst));
+    assert!(h.db.statistics_incomplete());
     fault(&h,"DROP TRIGGER reject_statistic_insert;");
     h.record_personalization_event(event).await.unwrap();
     for window in ["all","week"] {
@@ -43,7 +43,7 @@ async fn statistics_initial_and_terminal_write_failures_do_not_discard_ordinary_
         let after=h.db.get_result(id).unwrap();assert_eq!(after.source,before);
         assert_eq!(after.output.as_ref().unwrap().text(),before.text());assert!(after.output.as_ref().unwrap().rewrite_fallback.is_none());
         assert_eq!(after.output.as_ref().unwrap().writing_receipt.as_ref().unwrap().personalization.as_ref().unwrap().version,saved.version);
-        assert!(h.personalization_statistics_incomplete.load(Ordering::SeqCst));
+        assert!(h.db.statistics_incomplete());
         let DbValue::PersonalizationEvents(recorded)=h.db.run(DbCommand::GetPersonalizationEvents{since:None}).unwrap() else{panic!("events required");};
         if terminal {assert_eq!(recorded.len(),1);assert_eq!(recorded[0].status,PersonalizationEventStatus::Started);}
         else {assert!(recorded.is_empty(),"a missing task must not yield a seemingly complete zero denominator");}

@@ -40,6 +40,10 @@ fn fluent_gate_is_explicit_and_legacy_contract_remains_frozen_outside_it() {
     assert!(uses_fluent_contract(&config,&mode));
     assert_eq!(FLUENT_PIPELINE_VERSION,"fluent-dictation-v2+protected-long-v3+semantic-review-compact-v3");
     assert_eq!(production_protocol_version(&config,&mode),MINIMUM_PIPELINE_VERSION);
+    assert!(MINIMUM_PIPELINE_VERSION.ends_with("+minimum-correction-v1"));
+    let mut scene_mode=mode.clone();scene_mode.mode_id="chat".into();
+    assert_eq!(production_protocol_version(&config,&scene_mode),writing_context::PIPELINE_VERSION);
+    assert_eq!(manual_protocol_version(&config,&scene_mode,&source),writing_context::VERSION);
     let dictionary=DictionarySnapshot::default();
     assert!(MINIMUM_PROTOCOL_PROMOTED);
     assert_eq!(production_request_body(&config,&mode,&source,&dictionary).unwrap(),minimum::prepare(&config,&mode,&source,&dictionary,true).unwrap().body);

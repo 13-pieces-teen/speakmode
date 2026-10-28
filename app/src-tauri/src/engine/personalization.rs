@@ -128,13 +128,19 @@ impl AppHub {
         Ok(json!({"saved":true}))
     }
     pub(super) async fn record_personalization_event(&self,event:PersonalizationEvent)->Result<()> {
-        let result=self.db_write(DbCommand::RecordPersonalizationEvent{event},self.operation_guard(),DbPriority::Normal).await.map(|_|());
-        if result.is_err(){self.personalization_statistics_incomplete.store(true,Ordering::SeqCst);}
-        result
+        self.submit_personalization_event(event)?.wait().await.map(|_|()).map_err(Into::into)
+    }
+    fn submit_personalization_event(&self,event:PersonalizationEvent)->Result<DbTicket> {
+        Ok(self.db.submit(DbCommand::RecordPersonalizationEvent{event},Some(self.operation_guard()),DbPriority::Normal)?)
+    }
+    /// Reuse the bounded SQLite actor. Dropping the ticket never drops its job;
+    /// failures are latched by the actor before subsequent statistics reads.
+    pub(super) fn enqueue_personalization_event(&self,event:PersonalizationEvent) {
+        let _=self.submit_personalization_event(event);
     }
     fn require_complete_personalization_statistics(&self)->Result<()> {
-        if self.personalization_statistics_incomplete.load(Ordering::SeqCst) {
-            return Err(ApiError::new("personalization_statistics_incomplete","personalization","部分个性化统计未能保存，本次运行暂不展示汇总。统计失败不会删除识别稿或成稿，可以继续正常使用。"));
+        if self.db.statistics_incomplete() {
+            return Err(ApiError::new("personalization_statistics_incomplete","personalization","部分个性化统计未能保存或上次退出未确认，暂不展示汇总。统计失败不会删除识别稿或成稿，可以继续正常使用。"));
         }
         Ok(())
     }

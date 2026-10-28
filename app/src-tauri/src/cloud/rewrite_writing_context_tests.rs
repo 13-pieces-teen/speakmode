@@ -78,7 +78,7 @@ async fn occupational_background_does_not_waive_native_fact_checks() {
     let input="预算三千，暂时不发布。";let context=personalized_context(AppWritingScene::Technical);
     let server=Server::new(vec![Reply::draft("预算999，暂时不发布。"),Reply::new(ACCEPT)]).await;
     let out=run_context(&server,input,&context,Duration::from_secs(3)).await;
-    assert!(out.result.is_err());assert_eq!(server.count(),1);
+    assert!(out.result.is_err());assert_correction_not_review(&server);assert!(out.trace.final_review.is_none());
 }
 
 #[tokio::test]
@@ -265,7 +265,7 @@ async fn known_present_past_regression_is_rejected_before_model_acceptance() {
     let server=Server::new(vec![Reply::draft("I focused on research and I use Python."),Reply::new(ACCEPT)]).await;
     let mut context=context(AppWritingScene::Document);context.language=DraftLanguage::English;
     let out=run_context(&server,input,&context,Duration::from_secs(3)).await;
-    assert_eq!(out.result.err().unwrap().code,"rewrite_admission_rejected");assert_eq!(server.count(),1);
+    assert_eq!(out.result.err().unwrap().code,"rewrite_admission_rejected");assert_correction_not_review(&server);
 }
 
 #[tokio::test]
@@ -280,7 +280,7 @@ async fn formatting_request_omission_cannot_be_approved_by_a_blind_reviewer() {
         let server=Server::new(vec![Reply::new(json!({"resolvedMode":"structure","text":output}).to_string()),Reply::new(ACCEPT)]).await;
         let out=run_context(&server,source,&context(AppWritingScene::Technical),Duration::from_secs(3)).await;
         assert_eq!(out.result.err().unwrap().code,"rewrite_admission_rejected","{source}");
-        assert_eq!(server.count(),1);assert!(out.trace.review.is_none());
+        assert_correction_not_review(&server);assert!(out.trace.review.is_none());assert!(out.trace.final_review.is_none());
     }
 }
 

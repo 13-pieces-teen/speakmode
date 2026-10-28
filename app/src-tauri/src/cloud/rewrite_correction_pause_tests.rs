@@ -24,6 +24,21 @@ const ORIGINAL: &str = "明天给会议室订三个麦克风，啊不对，是�
 const CLEAN: &str = "明天给会议室订五个麦克风，下午两点前送到就行。";
 
 #[test]
+fn repeated_numeric_label_repairs_only_the_adjacent_same_owner() {
+    let original=source(&["预算三千，","不对，","预算三千五。"]);
+    let spans=analysis_spans(&original);
+    let repaired=spans.iter().find(|span|span.text=="预算三千五"&&span.origins.len()==3).unwrap();
+    assert_eq!(repaired.origins.iter().map(|s|s.source_id).collect::<Vec<_>>(),vec!["item-0","item-2","item-1"]);
+    assert_eq!(original.items[0].text,"预算三千，");
+    for input in ["预算三千，不对，费用三千五。","预算三千，不对，预算可能三千五。",
+        "预算三千，不对，预算不是三千五。","原来预算三千，不对，预算三千五。",
+        "预算三千，场地已确认，不对，预算三千五。"] {
+        let src=source(&[input]);let spans=analysis_spans(&src);
+        assert!(spans.iter().any(|span|span.text.contains("三千")&&!span.text.contains("三千五")),"{input}");
+    }
+}
+
+#[test]
 fn explicit_pause_repair_and_exact_retired_value_confirmation_are_accepted() {
     assert!(accepted(&[ORIGINAL], CLEAN));
     for pause in ["啊不对", "嗯不对", "呃我说错了", "嗯呃啊更正一下"] {

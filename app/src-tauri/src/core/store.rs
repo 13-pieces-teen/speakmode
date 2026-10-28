@@ -133,6 +133,18 @@ PRAGMA user_version=4;
 // JSON untouched so its absent dispatch marker continues to mean unknown.
 const MIGRATION_V5: &str = "PRAGMA user_version=5;";
 
+// A background event can be lost on process termination. Persist the run
+// boundary so a restart cannot silently turn missing events into a full count.
+const MIGRATION_V6: &str = r#"
+CREATE TABLE IF NOT EXISTS personalization_statistics_health (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ incomplete INTEGER NOT NULL CHECK(incomplete IN (0,1)),
+ running INTEGER NOT NULL CHECK(running IN (0,1))
+);
+INSERT OR IGNORE INTO personalization_statistics_health VALUES(1,0,0);
+PRAGMA user_version=6;
+"#;
+
 #[derive(Clone)]
 struct MemorySession {
     record: SessionRecord,
@@ -158,7 +170,7 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 5 { return Err(invalid("database schema is newer than this application")); }
+        if version > 6 { return Err(invalid("database schema is newer than this application")); }
         if version == 0 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V1)?;
@@ -186,6 +198,11 @@ impl Store {
         if version < 5 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V5)?;
+            tx.commit()?;
+        }
+        if version < 6 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V6)?;
             tx.commit()?;
         }
         Ok(Self { connection, memory_sessions: HashMap::new(), latest_memory_ready: None,commit_guard:None,health })

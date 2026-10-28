@@ -147,7 +147,7 @@ async fn ordinary_wrapper_omission_still_requires_independent_review_and_keeps_c
     assert!(admission(input,output));
     let server=Server::new(vec![Reply::draft(output),Reply::new(rejection("地址证明","材料","coverage"))]).await;
     let outcome=run_email(&server,input).await;
-    assert!(outcome.result.is_err());assert_eq!(server.count(),2);assert!(!outcome.trace.repair_attempted);
+    assert!(outcome.result.is_err());assert_eq!(server.count(),2);assert!(outcome.trace.correction_attempted);assert!(outcome.trace.final_review.is_none());
 }
 
 #[tokio::test]

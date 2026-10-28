@@ -1,6 +1,17 @@
 // Included within Store's module. Image/profile content lives in a deletable side table,
 // while immutable output revisions retain only the frozen identity/version marker.
 impl Store {
+    pub(super) fn begin_statistics_run(&mut self)->StoreResult<bool> {
+        let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;
+        tx.execute("UPDATE personalization_statistics_health SET incomplete=MAX(incomplete,running),running=1 WHERE singleton=1",[])?;
+        let incomplete=tx.query_row("SELECT incomplete FROM personalization_statistics_health WHERE singleton=1",[],|row|row.get(0))?;
+        tx.commit()?;Ok(incomplete)
+    }
+    pub(super) fn finish_statistics_run(&mut self,incomplete:bool)->StoreResult<()> {
+        let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;
+        tx.execute("UPDATE personalization_statistics_health SET incomplete=MAX(incomplete,?1),running=0 WHERE singleton=1",[incomplete])?;
+        tx.commit()?;Ok(())
+    }
     fn ensure_personalization_live(&self,output:&OutputRevision)->StoreResult<()> {
         if let Some(snapshot)=output.writing_receipt.as_ref().and_then(|receipt|receipt.personalization.as_ref()).filter(|snapshot|!snapshot.reference_cleared) {
             if let Some(profile_id)=&snapshot.profile_id {

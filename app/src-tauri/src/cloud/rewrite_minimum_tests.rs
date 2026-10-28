@@ -14,8 +14,30 @@ mod personalization_lab_tests;
 mod personalization_quality_regression_tests;
 #[path="rewrite_email_authoring_tests.rs"]
 mod email_authoring_tests;
+#[path="rewrite_correction_tests.rs"]
+mod correction_tests;
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
+
+#[test]
+fn simplification_regressions_scope_date_correction_and_letter_protection_locally(){
+    for (source_text,output) in [
+        ("我们约在二零二六年十月二十三日，预算三千，不对，预算三千五。场地费是两千，不是五千。","我们约在2026年10月23日，预算三千五。场地费是两千，不是五千。"),
+        ("我在看 A D H D 的研究。表格的四个选项分别是 A、B、C、D，请分别保留。变量名是 `user_id`，不要改成 `userId`。","我在看 ADHD 的研究。表格的四个选项分别是 A、B、C、D，请分别保留。变量名是 `user_id`，不要改成 `userId`。"),
+    ] {
+        let (_,mode,source)=fixture(source_text);
+        let draft=RewriteResult{resolved_mode:BaseMode::Light,blocks:vec![crate::core::OutputBlock{id:"b".into(),text:output.into(),source_refs:vec!["item-0".into()]}]};
+        let admitted=super::super::review_admission_with_writing_context(&mode,&source,&draft,None);
+        assert!(admitted.is_ok(),"error={:?}; evidence={}",admitted.err(),super::super::integrity::admission_evidence(&source,&draft.blocks));
+        for bad in if source_text.contains("预算") {
+            vec![output.replace("2026年","2027年"),output.replace("预算三千五","预算六千"),
+                output.replace("，不是五千","")]
+        } else {vec![output.replace("A、B、C、D","ABCD"),output.replace("`user_id`","`userid`")]} {
+            let mut changed=draft.clone();changed.blocks[0].text=bad;
+            assert!(super::super::review_admission_with_writing_context(&mode,&source,&changed,None).is_err());
+        }
+    }
+}
 
 fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
     let mut config = ProviderConfig::default(); config.region = Some("beijing".into());
@@ -88,6 +110,12 @@ pub(crate) fn rejection(source:&str,draft:&str,dimension:&str)->String {
     value["issues"]=json!([{"dimension":dimension,"sourceQuote":source,"draftQuote":draft,"reason":"局部搭配不自然"}]);value.to_string()
 }
 fn client()->Client{Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().build().unwrap()}
+fn assert_correction_not_review(server:&Server) {
+    let requests=server.requests.lock().unwrap();assert_eq!(requests.len(),2);
+    let data:Value=serde_json::from_str(requests[1]["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert!(data.get("rejectedDraft").is_some());assert!(data.get("correctionFeedback").is_some());
+    assert!(data.get("draftText").is_none(),"an inadmissible draft must not reach semantic acceptance");
+}
 async fn test_run(server:&Server,input:&str,wait:Duration)->Outcome{
     let(config,mode,source)=fixture(input);
     execute(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,wait).await
@@ -125,8 +153,8 @@ async fn writing_contract_label_does_not_hide_named_or_ordered_reviewer_wire_met
             let before=source.clone();
             let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
                 CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,Some(&context),Some(format)).await;
-            assert_eq!(out.result.is_ok(),accept);assert_eq!(out.trace.calls,2);assert_eq!(server.count(),2);
-            assert!(!out.trace.repair_attempted);assert_eq!(source,before);
+            assert_eq!(out.result.is_ok(),accept);assert_eq!(out.trace.calls,if accept{2}else{3});assert_eq!(server.count(),2);
+            assert_eq!(out.trace.correction_attempted,!accept);assert_eq!(source,before);
             if !accept {assert_eq!(out.result.as_ref().err().unwrap().code,"rewrite_semantic_rejected");}
             let serialized=serde_json::to_value(&out.trace).unwrap();
             assert_eq!(serialized["review"]["protocolVersion"],super::super::writing_context::VERSION);
@@ -177,11 +205,13 @@ async fn successful_local_repair_changes_only_selected_sentence_and_requires_fre
     assert_eq!(final_data["sourceText"],input);assert!(final_data["draftText"].as_str().unwrap().starts_with(repaired));
 }
 #[tokio::test]
-async fn fidelity_rejection_and_insufficient_budget_never_start_repair(){
+async fn fidelity_rejection_has_one_correction_but_insufficient_budget_never_starts_it(){
     let input="我感觉方案还没有太能做到。";
     for(dim,wait)in[("facts",Duration::from_secs(4)),("cleanup",Duration::from_secs(1))]{
-        let server=Server::new(vec![Reply::draft(input),Reply::new(rejection(input,input,dim))]).await;
-        let out=test_run(&server,input,wait).await;assert!(out.result.is_err());assert_eq!(server.count(),2);assert!(!out.trace.repair_attempted);
+        let server=Server::new(vec![Reply::draft(input),Reply::new(rejection(input,input,dim)),Reply::draft(input),Reply::new(ACCEPT)]).await;
+        let out=test_run(&server,input,wait).await;assert!(out.result.is_err());
+        assert_eq!(server.count(),if dim=="facts"{3}else{2});assert_eq!(out.trace.correction_attempted,dim=="facts");
+        assert!(out.trace.final_review.is_none(),"unchanged rejected draft cannot be reviewed again");
     }
 }
 #[test]

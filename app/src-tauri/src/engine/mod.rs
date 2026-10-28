@@ -144,9 +144,6 @@ pub struct AppHub {
     pub(crate) inner:Mutex<Inner>,
     pub(crate) db:DbClient,
     db_command_workers:std::sync::atomic::AtomicUsize,
-    // Metadata only. Once a task receipt is lost, later successful writes do
-    // not establish a complete denominator for this process.
-    personalization_statistics_incomplete:std::sync::atomic::AtomicBool,
     settings_io:Mutex<()>,
     subscribers:Mutex<HashMap<String,EventSink>>,
     publication:Mutex<()>,
@@ -267,7 +264,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),personalization_statistics_incomplete:std::sync::atomic::AtomicBool::new(false),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}

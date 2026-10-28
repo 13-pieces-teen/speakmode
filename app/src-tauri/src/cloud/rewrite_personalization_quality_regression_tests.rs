@@ -25,7 +25,7 @@ async fn personalized_letter_lists_are_rejected_even_with_an_all_pass_reviewer()
         let server=Server::new(vec![Reply::draft(bad),Reply::new(ACCEPT)]).await;
         let out=run(&server,input).await;
         assert!(out.result.is_err(),"merged list must never reach delivery");
-        assert_eq!(server.count(),1,"native list protection must precede semantic acceptance");
+        assert_correction_not_review(&server);assert!(out.trace.review.is_none());assert!(out.trace.final_review.is_none());
     }
 }
 
@@ -35,7 +35,7 @@ async fn personalized_generic_degrees_cannot_gain_a_temperature_scale(){
     for bad in ["样件外壳最高42℃，内部没有测量。","样件外壳最高42℉，内部没有测量。"] {
         let server=Server::new(vec![Reply::draft(bad),Reply::new(ACCEPT)]).await;
         let out=run(&server,input).await;
-        assert!(out.result.is_err());assert_eq!(server.count(),1);
+        assert!(out.result.is_err());assert_correction_not_review(&server);assert!(out.trace.final_review.is_none());
     }
 }
 
