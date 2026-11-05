@@ -49,11 +49,6 @@ const MENU_MODIFIERS: Modifiers = Modifiers::CMD.union(Modifiers::OPT);
 /// the shell.
 const MENU_MASK_VK: u16 = 0xE8;
 
-/// dwExtraInfo marker stamped on injected mask events so the keyboard hook
-/// recognizes its own injections and passes them through untouched
-/// ("HKMM" in ASCII).
-const MENU_MASK_EXTRA_INFO: usize = 0x484B_4D4D;
-
 // WTS session notification plumbing not exposed by the `windows` crate bindings.
 const NOTIFY_FOR_THIS_SESSION: u32 = 0;
 const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
@@ -618,7 +613,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
             let is_key_down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
 
             super::activity::observe(wparam.0 as u32,
-                matches!(kb_struct.dwExtraInfo, MENU_MASK_EXTRA_INFO | crate::STANDALONE_MENU_MASK_EXTRA_INFO | 0x534D_5041));
+                matches!(kb_struct.dwExtraInfo, crate::STANDALONE_MENU_MASK_EXTRA_INFO | 0x534D_5041));
 
             // Our own injected menu mask: pass it through untouched. It
             // exists solely for the shell's benefit and must not update
@@ -886,7 +881,7 @@ fn send_menu_mask() {
                 wScan: 0,
                 dwFlags: flags,
                 time: 0,
-                dwExtraInfo: MENU_MASK_EXTRA_INFO,
+                dwExtraInfo: crate::STANDALONE_MENU_MASK_EXTRA_INFO,
             },
         },
     };

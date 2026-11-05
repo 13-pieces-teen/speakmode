@@ -65,7 +65,8 @@ export function useRecorderSize(assembly:RefObject<HTMLElement|null>,menuElement
     if(ready)settlingFrames=0;
     else if(window.innerHeight+1>=Math.ceil(baseHeight+menuHeight+10-.01)&&settlingFrames++<12)schedule();
    }
-   desired.current={width:assembly.current.dataset.details==='true'?344:336,height:Math.min(420,Math.max(66,Math.ceil(baseHeight+(menuHeight?menuHeight+10:0)-.01))),menuOpen};
+   const width=assembly.current.getBoundingClientRect().width+parseFloat(style.paddingLeft)+parseFloat(style.paddingRight);
+   desired.current={width:Math.ceil(width),height:Math.min(420,Math.max(68,Math.ceil(baseHeight+(menuHeight?menuHeight+10:0)-.01))),menuOpen};
    void sendLatest();
   }
   const schedule=()=>{cancelAnimationFrame(frame);frame=requestAnimationFrame(measure);};

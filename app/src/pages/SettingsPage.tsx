@@ -135,6 +135,9 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
         <SettingRow title="轻语增强" description="适合安静环境下轻声输入，下次录音生效。" htmlFor="soft-voice-enabled" feedback={<SettingFeedback feedback={feedback} target="softVoiceEnabled" />}>
           <Switch id="soft-voice-enabled" aria-describedby="soft-voice-enabled-description settings-preview-scope" disabled={disabled} checked={preferences.softVoiceEnabled} onCheckedChange={value => handle(update('softVoiceEnabled', value, '轻语增强（下一次口述生效）'))} />
         </SettingRow>
+        <SettingRow title="实时字幕" description="录音时显示单行识别文字，关闭后仍正常识别与保留结果。" htmlFor="recorder-captions-enabled" feedback={<SettingFeedback feedback={feedback} target="recorderCaptionsEnabled" />}>
+          <Switch id="recorder-captions-enabled" aria-describedby="recorder-captions-enabled-description" disabled={disabled} checked={preferences.recorderCaptionsEnabled} onCheckedChange={value => handle(update('recorderCaptionsEnabled', value, '实时字幕'))} />
+        </SettingRow>
         <SettingRow title="识别语言" description="中英文混合输入时，保留自动检测。下一次口述生效。" htmlFor="recognition-language" feedback={<SettingFeedback feedback={feedback} target="language" />}>
           <Select.Root value={preferences.language} disabled={disabled} onValueChange={value => handle(update('language', value as RecognitionLanguage, '识别语言（下一次口述生效）'))}>
             <Select.Trigger id="recognition-language" aria-label="识别语言" aria-describedby="recognition-language-description settings-preview-scope" variant="surface" className="settings-select" />

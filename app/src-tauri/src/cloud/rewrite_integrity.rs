@@ -37,6 +37,7 @@ pub(super) fn admission_evidence(source: &SourceRevision, blocks: &[OutputBlock]
 }
 
 /// Known dimensions that an experimental reviewer may not mark not-applicable.
+#[cfg(test)]
 pub(super) fn review_required_evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> (bool, bool) {
     review_admission::required_evidence(source, blocks)
 }

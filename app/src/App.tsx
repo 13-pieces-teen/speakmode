@@ -18,6 +18,7 @@ import {RecorderWindow} from './windows/RecorderWindow';
 import {SessionRecovery} from './components/SessionRecovery';
 import {RetainedRecovery} from './components/RetainedRecovery';
 import {OnboardingFlow} from './onboarding/OnboardingFlow';
+import type {MainResultRequest} from './services/contracts';
 import {WindowChrome} from './components/WindowChrome';
 export function App(){return <DesktopProvider><ModeProvider><NavigationGuardProvider>{new URLSearchParams(location.search).get('window')==='recorder'?<RecorderWindow/>:<AppContent/>}</NavigationGuardProvider></ModeProvider></DesktopProvider>;}
 function AppContent(){
@@ -25,6 +26,16 @@ function AppContent(){
  const [view,setView]=useState<View>('home'),[selectedId,setSelectedId]=useState<string|null>(null),[modeOrigin,setModeOrigin]=useState<'home'|'settings'>('home'),[modeDirty,setModeDirty]=useState(false),[pendingView,setPendingView]=useState<View|'recorder'|null>(null),[error,setError]=useState('');
  const preferences=fromNativePreferences(desktop.preferences);
  const autoOpened=useRef(false);
+ const handledResult=useRef<string|null>(null),pendingResult=useRef<MainResultRequest|null>(null);
+ useEffect(()=>{
+  const request=desktop.mainResultRequest;
+  if(!request||request.requestId===handledResult.current||desktop.onboarding?.active)return;
+  handledResult.current=request.requestId;
+  const target=request.target==='result'?'history':'home';
+  if(view==='modes'&&modeDirty){pendingResult.current=request;setPendingView(target);}
+  else navigation.request(()=>{setSelectedId(request.target==='result'?request.sessionId:null);setView(target);});
+  void desktop.command('app.ackMainResult',{requestId:request.requestId}).catch(e=>setError(errorMessage(e)));
+ },[desktop.mainResultRequest,desktop.onboarding?.active,desktop.command,navigation,view,modeDirty]);
  useEffect(()=>{
   if(desktop.status!=='ready'||!desktop.onboarding||autoOpened.current)return;
   if(!desktop.onboarding.progress.autoShow||desktop.onboarding.active){autoOpened.current=true;return;}
@@ -33,8 +44,8 @@ function AppContent(){
  },[desktop.status,desktop.onboarding,desktop.command,desktop.refresh]);
  const showError=(e:unknown)=>setError(errorMessage(e));
  function openRecord(id:string){navigation.request(()=>{setSelectedId(id);setView('history');});}
- function commitNavigation(next:View|'recorder'){setModeDirty(false);setPendingView(null);if(next==='recorder'){void desktop.command('session.start').catch(showError);return;}setView(next);if(next==='history')setSelectedId(null);if(next==='home')void desktop.searchHistory('').catch(showError);}
- function navigate(next:View|'recorder'){if(view==='modes'&&modeDirty){setPendingView(next);return;}navigation.request(()=>commitNavigation(next));}
+ function commitNavigation(next:View|'recorder'){setModeDirty(false);setPendingView(null);if(next==='recorder'){void desktop.command('session.start').catch(showError);return;}setView(next);if(pendingResult.current){setSelectedId(pendingResult.current.target==='result'?pendingResult.current.sessionId:null);pendingResult.current=null;}else if(next==='history')setSelectedId(null);if(next==='home')void desktop.searchHistory('').catch(showError);}
+ function navigate(next:View|'recorder'){pendingResult.current=null;if(view==='modes'&&modeDirty){setPendingView(next);return;}navigation.request(()=>commitNavigation(next));}
  function manageModes(origin:'home'|'settings'){navigation.request(()=>{setModeOrigin(origin);setView('modes');});}
  async function updatePreferences(next:Preferences,captureId?:string){await desktop.command('preferences.update',{patch:toNativePatch(next),expectedVersion:desktop.preferences.version,...(captureId?{captureId}:{})});await desktop.refresh();}
  async function updateDefault(mode:Mode){await modes.setDefaultMode(mode);}
@@ -56,7 +67,7 @@ function AppContent(){
   {view==='dictionary'&&<DictionaryPage/>}
   {view==='personalization'&&<PersonalizationPage onSkip={()=>navigate('home')} onDictionary={()=>navigate('dictionary')} onSettings={()=>navigate('settings')}/>}
   {view==='settings'&&<SettingsPage preferences={preferences} onPreferencesChange={updatePreferences} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onManageModes={()=>manageModes('settings')} onOnboarding={openOnboarding}/>}
-  {view==='modes'&&<ModesPage records={dictations.records.filter(r=>r.detail)} origin={modeOrigin==='home'?'首页':'设置'} onBack={()=>navigate(modeOrigin)} onDirtyChange={setModeDirty} leaving={pendingView!==null} onKeepEditing={()=>setPendingView(null)} onDiscardAndLeave={()=>pendingView&&commitNavigation(pendingView)}/>}
+  {view==='modes'&&<ModesPage records={dictations.records.filter(r=>r.detail)} origin={modeOrigin==='home'?'首页':'设置'} onBack={()=>navigate(modeOrigin)} onDirtyChange={setModeDirty} leaving={pendingView!==null} onKeepEditing={()=>{setPendingView(null);pendingResult.current=null;}} onDiscardAndLeave={()=>pendingView&&commitNavigation(pendingView)}/>}
  </AppShell>;
 }
 

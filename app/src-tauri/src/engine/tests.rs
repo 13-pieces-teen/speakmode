@@ -20,6 +20,8 @@ mod app_writing_tests;
 mod rewrite_deadline_tests;
 #[path="recorder_copy_tests.rs"]
 mod recorder_copy_tests;
+#[path="recorder_controls_tests.rs"]
+mod recorder_controls_tests;
 #[path="personalization_tests.rs"]
 mod personalization_tests;
 #[path="typeless_import_tests.rs"]
@@ -69,7 +71,7 @@ pub(super) fn hub() -> Arc<AppHub> {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
             onboarding:OnboardingRuntime::default(),
-            guards: Default::default(), sequence: 0, active: None, recovery: None,
+            guards: Default::default(), sequence: 0, main_result_request:None, active: None, recovery: None,
             candidate: None, preview: None, preview_sources:Default::default(),personalization_workers:Default::default(),personalization_revocations:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, asr_key_configured:false, rewrite_key_configured:false, requests: Default::default(),
             request_order: Default::default(),settings_pending:None,
@@ -77,7 +79,7 @@ pub(super) fn hub() -> Arc<AppHub> {
         db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
         subscribers: Mutex::new(HashMap::new()), publication: Mutex::new(()),
         data_dir: test_data_directory(),
-        hooks: Mutex::new(None), native_actions: Mutex::new(None), recorder_control: Mutex::new(None), stop_target_control: Mutex::new(None), native_io: Mutex::new(()),
+        hooks: Mutex::new(None), native_actions: Mutex::new(None), recorder_dismiss_control: Mutex::new(None), recorder_control: Mutex::new(None), stop_target_control: Mutex::new(None), native_io: Mutex::new(()),
         lifecycle_epoch: std::sync::atomic::AtomicU64::new(0), capture_available: AtomicBool::new(true),quitting:AtomicBool::new(false),shortcut_capture_available:AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),
     })
 }

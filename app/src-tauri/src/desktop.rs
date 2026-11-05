@@ -386,7 +386,7 @@ mod win {
         let mut recorder = state.recorder.lock().map_err(|_| window_error("lock"))?;
         // Hiding may be part of dispatch, so it MUST NOT restore a former target.
         close_menu(handle, &mut recorder, false)?;
-        if show { place(window, 336.0, 66.0, true)?; }
+        if show { place(window, 298.0, 68.0, true)?; }
         // All recorder visibility/style/size changes are Win32-only after creation.
         // Mixing Tauri/Tao .show()/set_focusable() here would reapply Tao's cached
         // VISIBLE flags and may reactivate or hide a native-shown overlay.
@@ -413,7 +413,7 @@ mod win {
             // A stale intent may never leave the native surface activated just
             // because the frontend rejected it before opening its DOM menu.
             close_menu(handle, &mut recorder, true)?;
-            if recorder.visible { place(window, 336.0, 66.0, false)?; }
+            if recorder.visible { place(window, 298.0, 68.0, false)?; }
         }
         Ok(())
     }
@@ -575,6 +575,17 @@ fn install_native_actions(app: &AppHandle, state: &Arc<DesktopState>) {
             "autostart" => set_autostart(&handle, enabled),
             _ => Err(native_error("unknown_native_action", "未提供此本机操作")),
         }
+    }));
+    let handle = app.clone(); let weak = Arc::downgrade(state);
+    state.hub.set_recorder_dismiss_control(Arc::new(move |id, generation| {
+        let state = weak.upgrade().ok_or_else(|| native_error("app_exiting", "应用已退出"))?;
+        let window = handle.get_webview_window("recording").ok_or_else(|| window_error("missing recorder"))?;
+        let state2 = Arc::clone(&state);
+        on_ui(&handle, &state, move || {
+            state2.hub.validate_recorder_dismiss(&id, generation)?;
+            #[cfg(windows)] { win::visible(&window, &state2, false) }
+            #[cfg(not(windows))] { let _ = window; Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
+        })
     }));
     let handle = app.clone(); let weak = Arc::downgrade(state);
     state.hub.set_recorder_control(Arc::new(move |w, h, menu| {

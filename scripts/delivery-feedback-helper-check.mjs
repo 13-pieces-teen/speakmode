@@ -9,6 +9,10 @@ await mkdir(out,{recursive:true});
 const source=await readFile(root+'/app/src/services/deliveryFeedback.ts','utf8');
 await writeFile(out+'/delivery-feedback-check.mjs',ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText);
 const {deliveryFeedback}=await import(pathToFileURL(out+'/delivery-feedback-check.mjs'));
+const presenterSource=await readFile(root+'/app/src/services/recorderPresentation.ts','utf8');
+await writeFile(out+'/recorder-presentation-check.mjs',ts.transpileModule(presenterSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace("'./deliveryFeedback'","'./delivery-feedback-check.mjs'"));
+const {recorderPresentation}=await import(pathToFileURL(out+'/recorder-presentation-check.mjs'));
+
 const tests=[],session=(state,deliveryState,deliveryFailureReason)=>({sessionId:'synthetic-result',generation:1,state,deliveryState,deliveryFailureReason,workerReleased:true});
 const test=async(name,run)=>{try{await run();tests.push({name,status:'PASS'});}catch(error){tests.push({name,status:'FAIL',error:String(error)});}};
 await test('Ready without receipt is not reported as pasted or failed',()=>{
@@ -101,14 +105,15 @@ export const errorMessage=error=>String(error);
 export const fromModeId=value=>value,toModeId=value=>value,builtinModes=[];
 export const isPersonalMode=()=>false,scenarioOptions=()=>[];
 export const Button='button',Popover={Root:'popoverRoot',Trigger:'popoverTrigger',Content:'popoverContent'};
-export const CheckIcon='check',ChevronDownIcon='chevron',Cross2Icon='cross',ModeIcon='mode';
-export const CaptionStrip='caption',RecorderWaveform='waveform',fragment='fragment',Fragment='fragment';
+export const StopIcon='stop',CheckIcon='check',ChevronDownIcon='chevron',Cross2Icon='cross',ExclamationTriangleIcon='warning',ModeIcon='mode';
+export const RecorderModeMenu='modeMenu',CaptionStrip='caption',RecorderWaveform='waveform',fragment='fragment',Fragment='fragment';
 export const element=(type,props,...children)=>({type,props:{...props,children:children.length===1?children[0]:children}});
 `);
 const imports=new Map([
+ ['../services/recorderPresentation',pathToFileURL(out+'/recorder-presentation-check.mjs').href],
  ['../services/deliveryFeedback',pathToFileURL(out+'/delivery-feedback-check.mjs').href],
  ['../modes',pathToFileURL(out+'/modes-check.mjs').href],
- ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../hooks/useModes','../components/ui','../model','../services/bridge','./useRecorderSize','./CaptionStrip','./RecorderWaveform'].map(name=>[name,pathToFileURL(stubsPath).href]),
+ ...['react','@radix-ui/themes','@radix-ui/react-icons','../services/DesktopProvider','../hooks/useModes','../components/ui','../model','../services/bridge','./useRecorderSize','./CaptionStrip','./RecorderWaveform','./RecorderModeMenu'].map(name=>[name,pathToFileURL(stubsPath).href]),
 ]);
 const replaceImports=context=>node=>ts.visitNode(node,function visit(current){
  if(ts.isImportDeclaration(current)&&ts.isStringLiteral(current.moduleSpecifier)){
@@ -125,7 +130,7 @@ const {RecorderWindow}=await import(pathToFileURL(out+'/recorder-check.mjs'));
 const {setDesktop}=await import(pathToFileURL(stubsPath));
 const copyButtons=(tree)=>{
  const found=[];
- const visit=node=>{if(Array.isArray(node))return node.forEach(visit);if(!node||typeof node!=='object')return;if(node.type==='button'&&['复制文本','复制已识别文字'].includes(node.props.children))found.push(node);visit(node.props?.children);};
+ const visit=node=>{if(Array.isArray(node))return node.forEach(visit);if(!node||typeof node!=='object')return;if(node.type==='button'&&['复制文字','复制已有文字'].includes(node.props.children))found.push(node);visit(node.props?.children);};
  visit(tree);return found;
 };
 const renderRecorder=(deliveryState,{available=true,reject=false,extra={}}={})=>{
@@ -146,7 +151,7 @@ await test('Unsent result offers inline copy without navigating or retrying past
 await test('Pending dispatch exposes no competing copy and browser copy is disabled',()=>{
  for(const state of ['prepared','dispatched'])assert.equal(renderRecorder(state).buttons.length,0);
  assert.equal(renderRecorder('skipped',{available:false}).buttons[0].props.disabled,true);
- assert.equal(renderRecorder('skipped',{extra:{workerReleased:false}}).buttons[0].props.disabled,true);
+ assert.equal(renderRecorder('skipped',{extra:{workerReleased:false}}).buttons.length,0);
 });
 await test('Copy failure never opens a panel or retries input',async()=>{
  const {buttons,calls}=renderRecorder('skipped',{reject:true});buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
@@ -154,7 +159,7 @@ await test('Copy failure never opens a panel or retries input',async()=>{
 });
 await test('Incomplete ASR can copy recovery directly without claiming a complete result',async()=>{
  const {buttons,calls}=renderRecorder(null,{extra:{state:'incomplete',error:'识别未完整',canCopyRecovery:true,recoverableContentId:'synthetic-result'}});
- assert.equal(buttons.length,1);assert.equal(buttons[0].props.children,'复制已识别文字');
+ assert.equal(buttons.length,1);assert.equal(buttons[0].props.children,'复制已有文字');
  buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
  assert.deepEqual(calls,[{name:'recoverable.copy',payload:{sessionId:'synthetic-result',expectedGeneration:1,recoverableContentId:'synthetic-result'}}]);
 });
@@ -187,8 +192,8 @@ await test('Main window stays quiet after normal delivery without clearing resul
  for(const state of [undefined,'prepared','dispatched','unconfirmed','confirmed']){
   for(const extra of [{},{rewriteFallback:'timeout'}]){
    const {tree,calls,opened}=renderRecovery({...session('ready',state,state==='unconfirmed'?'inputDispatchedUnconfirmed':undefined),...extra});
-   if(state==='unconfirmed'&&extra.rewriteFallback){
-    assert(tree);assert.equal(nodes(tree,node=>node.type==='h2'&&node.props.children==='整理未完成').length,1);
+   if(!['prepared','dispatched'].includes(state)&&extra.rewriteFallback){
+    assert(tree);assert.equal(nodes(tree,node=>node.type==='h2').length,1);
    }else assert.equal(tree,null);
    assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);
   }
@@ -218,6 +223,40 @@ await test('A real saved-result error remains visible even when the dispatch rec
  const message='本机输入回执未保存；不会再次自动输入，请核对目标后手动复制';
  const {tree,calls}=renderRecovery({...session('ready','unconfirmed','inputDispatchedUnconfirmed'),error:message});
  assert(tree);assert.equal(nodes(tree,node=>node.type==='p'&&node.props.children===message).length,1);assert.deepEqual(calls,[]);
+});
+await test('Compact state mapping requires actual capture and never reports unconfirmed paste as success',()=>{
+ assert.equal(recorderPresentation({...session('recording'),captureReady:false}).label,'准备录音');
+ assert.equal(recorderPresentation({...session('recording'),captureReady:true}).label,'正在聆听');
+ for(const phase of ['finalizingAsr','rewriting'])assert.equal(recorderPresentation(session(phase)).label,'正在转成文字');
+ const normal=recorderPresentation(session('ready','unconfirmed'));
+ assert.equal(normal.state,'settled');assert.equal(normal.primary,null);assert.equal(normal.showResult,false);assert.notEqual(normal.label,'已填入');
+});
+await test('Captions default off and onboarding can explicitly demonstrate them',()=>{
+ const live={...session('recording'),captureReady:true};
+ assert.equal(recorderPresentation(live).showCaptions,false);
+ assert.equal(recorderPresentation(live,true).showCaptions,true);
+ assert.equal(recorderPresentation({...live,onboardingLesson:'chat'}).showCaptions,true);
+ assert.equal(recorderPresentation({...live,state:'ready'},true).showCaptions,false);
+});
+await test('Dismiss is separate from cancel and pending delivery cannot be dismissed',()=>{
+ assert.equal(recorderPresentation(session('recording')).close,'cancel');
+ for(const phase of ['failed','incomplete','cancelled'])assert.equal(recorderPresentation(session(phase)).close,'dismiss');
+ for(const delivery of ['prepared','dispatched'])assert.equal(recorderPresentation(session('ready',delivery)).close,null);
+ assert.equal(recorderPresentation({...session('ready','skipped'),workerReleased:false}).close,null);
+});
+await test('Dismiss and current result actions carry identity and never retry input',async()=>{
+ const calls=[];setDesktop({available:true,error:'',session:session('ready','skipped'),command:async(name,payload)=>calls.push({name,payload})});
+ let tree=RecorderWindow();
+ nodes(tree,node=>node.props?.['aria-label']==='收起提示')[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls,[{name:'window.dismissRecorder',payload:{sessionId:'synthetic-result',expectedGeneration:1}}]);
+ calls.length=0;tree=RecorderWindow();
+ nodes(tree,node=>node.type==='button'&&node.props.children==='查看结果')[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls,[{name:'app.showMain',payload:{sessionId:'synthetic-result',expectedGeneration:1,currentResult:true}}]);
+});
+await test('Partial input and receipt persistence errors retain a copy action, without automatic re-paste',()=>{
+ for(const extra of [{deliveryFailureReason:'partialInputUnconfirmed'},{error:'输入回执未保存'}]){
+  const view=recorderPresentation({...session('ready','unconfirmed'),...extra});assert.equal(view.state,'attention');assert.equal(view.primary,'copyOutput');assert.equal(view.close,'dismiss');
+ }
 });
 const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Presentation logic and actual recorder/main-window recovery render and handlers with synthetic hooks and command spies. No DOM, native acceptance, automatic paste, microphone, provider, or user data.',sourceSha256:createHash('sha256').update(source).digest('hex'),recorderSourceSha256:createHash('sha256').update(recorderSource).digest('hex'),modesSourceSha256:createHash('sha256').update(modesSource).digest('hex'),sessionRecoverySourceSha256:createHash('sha256').update(recoverySource).digest('hex'),tests};
 await writeFile(out+'/helper-receipt.json',JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt,null,2));process.exitCode=receipt.status==='PASS'?0:1;
