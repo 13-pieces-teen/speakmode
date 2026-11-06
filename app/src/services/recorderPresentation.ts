@@ -22,7 +22,9 @@ export function recorderPresentation(session:LiveSession|null,captionsEnabled=fa
  const starting=phase==='starting',recording=phase==='recording';
  const processing=['finalizingasr','finalizing_asr','rewriting','delivering'].includes(phase);
  if(starting||recording||processing){
-  const listening=recording&&session.captureReady===true;
+  // Native startup also waits for ASR readiness. Microphone feedback starts
+  // as soon as real samples arrive, including while the provider connects.
+  const listening=(starting||recording)&&session.captureReady===true;
   return {...view,state:starting||recording?'listening':'processing',label:listening?'正在聆听':starting||recording?'准备录音':'正在转成文字',
    waveform:listening,canStop:starting||recording,close:phase==='delivering'?null:'cancel',
    showCaptions:(captionsEnabled||!!session.onboardingLesson)&&!session.rewriteFallback&&!starting};

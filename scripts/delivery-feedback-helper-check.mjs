@@ -231,6 +231,27 @@ await test('Compact state mapping requires actual capture and never reports unco
  const normal=recorderPresentation(session('ready','unconfirmed'));
  assert.equal(normal.state,'settled');assert.equal(normal.primary,null);assert.equal(normal.showResult,false);assert.notEqual(normal.label,'已填入');
 });
+await test('Live microphone feedback does not wait for the provider connection',()=>{
+ for(const state of ['starting','recording']){
+  for(const providerReady of [false,true]){
+   const live={...session(state),captureReady:true,providerReady,level:0.2};
+   const view=recorderPresentation(live);
+   assert.equal(view.label,'正在聆听');assert.equal(view.waveform,true);
+   assert.equal(view.canStop,true);assert.equal(view.close,'cancel');
+   setDesktop({available:true,error:'',session:live,command:async()=>{}});
+   assert.equal(nodes(RecorderWindow(),node=>node.type==='waveform').length,1);
+  }
+ }
+});
+await test('Provider readiness alone cannot start the microphone feedback, and stopping retires it',()=>{
+ for(const captureReady of [false,undefined]){
+  const view=recorderPresentation({...session('starting'),captureReady,providerReady:true});
+  assert.equal(view.label,'准备录音');assert.equal(view.waveform,false);
+ }
+ for(const state of ['finalizingAsr','rewriting','cancelled','failed','incomplete']){
+  assert.equal(recorderPresentation({...session(state),captureReady:true,providerReady:false}).waveform,false);
+ }
+});
 await test('Captions default off and onboarding can explicitly demonstrate them',()=>{
  const live={...session('recording'),captureReady:true};
  assert.equal(recorderPresentation(live).showCaptions,false);
