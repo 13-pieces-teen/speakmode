@@ -120,6 +120,30 @@ async fn test_run(server:&Server,input:&str,wait:Duration)->Outcome{
     let(config,mode,source)=fixture(input);
     execute(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,wait).await
 }
+
+#[tokio::test]
+async fn production_app_spelling_reaches_full_review_without_a_correction() {
+    let input = "用户可以在我们的这个 A P P 里启动录音。";
+    let expected = "用户可以在我们的这个 APP 里启动录音。";
+    let server = Server::new(vec![Reply::draft(expected), Reply::new(ACCEPT)]).await;
+    let (config, mode, source) = fixture(input);
+    let original = source.clone();
+    let result = super::super::rewrite_with_client_optional_context(&client(), &config,
+        "synthetic-secret", &mode, &source, &DictionarySnapshot::default(),
+        CancellationToken::new(), &server.endpoint,
+        RewriteExecution::for_duration(Duration::from_secs(4)), None).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, expected);
+    assert_eq!(source, original);
+    assert_eq!(server.count(), 2);
+    for request in server.requests.lock().unwrap().iter() {
+        let data: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(data["sourceText"], input);
+        assert_eq!(data["notationHints"]["acronyms"][0], json!({"spoken":"A P P","written":"APP"}));
+        assert_eq!(data["notationHints"]["separateLetterGroups"], json!([]));
+    }
+}
+
 #[tokio::test]
 async fn ordered_review_runs_through_real_http_without_bypassing_review(){
     let input="请先检查麦克风，暂时不要发布。";
