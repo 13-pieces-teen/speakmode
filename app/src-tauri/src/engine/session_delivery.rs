@@ -75,12 +75,12 @@ impl AppHub {
             self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt.id.clone(),expected:DeliveryState::Prepared,next:DeliveryState::Dispatched,reason:None},None,DbPriority::Critical)
                 .and_then(|_|self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt.id.clone(),expected:DeliveryState::Dispatched,next:state,reason:Some(reason.clone())},None,DbPriority::Critical))
         }else{self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt.id.clone(),expected:DeliveryState::Prepared,next:state,reason:Some(reason.clone())},None,DbPriority::Critical)};
-        {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){if let Some(d)=s.delivery.as_mut(){d.state=state;d.reason=Some(reason);}if persisted.is_err(){s.error=Some(ApiError::new("delivery_receipt_save_failed","storage","本机输入回执未保存；不会再次自动输入，请核对目标后手动复制").for_session(id,generation));}}}
+        {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){if let Some(d)=s.delivery.as_mut(){d.state=state;d.reason=Some(reason.clone());}if persisted.is_err(){s.error=Some(ApiError::new("delivery_receipt_save_failed","storage","本机输入回执未保存；不会再次自动输入，请核对目标后手动复制").for_session(id,generation));}}}
         self.publish_session();self.changed();
         let current=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked);
         // A saved/raw fallback is not a polished result. Keep its recovery
         // notice visible even when the one allowed paste was dispatched.
-        if current{let _=self.native_action("recording",output.rewrite_fallback.is_some()||matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
+        if current{let _=self.native_action("recording",output.rewrite_fallback.is_some()||persisted.is_err()||reason=="partialInputUnconfirmed"||matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
     }
 
     pub fn copy_recoverable(&self,p:&Value)->Result<Value> {

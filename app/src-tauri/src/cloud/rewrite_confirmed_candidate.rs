@@ -80,13 +80,6 @@ pub async fn generate(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,sour
     run(shared_client()?,config,secret,mode,source,dictionary,context,cancel,&endpoint,Duration::from_secs(20)).await.result
 }
 
-pub(crate) async fn generate_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
-    dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,
-    writing:Option<&crate::core::writing_context::WritingContext>)->Result<ManualCandidate,CloudError> {
-    generate_with_writing_context_execution(config,secret,mode,source,dictionary,context,cancel,writing,
-        RewriteExecution::for_duration(Duration::from_secs(20))).await
-}
-
 pub(crate) async fn generate_with_writing_context_execution(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,context:&ConfirmedContext,cancel:CancellationToken,
     writing:Option<&crate::core::writing_context::WritingContext>,execution:RewriteExecution)->Result<ManualCandidate,CloudError> {

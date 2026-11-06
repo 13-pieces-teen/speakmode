@@ -53,14 +53,14 @@ export function TermCorrectionPanel({record,onClose,onSaved}:{record:Dictation;o
  const selected=selection?Array.from(selection.text).slice(selection.range.start,selection.range.end).join(''):'';
  return <section className="history-term-correction" aria-labelledby={titleId} aria-busy={busy}>
   <div className="history-section-topline"><h3 id={titleId} ref={heading} tabIndex={-1} className="section-title">纠正一个词</h3><span className="history-secondary">仅修改选中的这一处</span></div>
-  <p className="history-secondary">在人名、产品名或专业词上划选错误写法，核对预览后保存。</p>
+  <p className="history-secondary">划选需要纠正的词，输入正确写法。</p>
   {output&&output.blocks.length>1&&<Select.Root value={blockId} onValueChange={choose} disabled={busy}><Select.Trigger aria-label="选择纠词目标段"/><Select.Content>{output.blocks.map((item,index)=><Select.Item key={item.id} value={item.id}>第 {index+1} 段 · {item.text.slice(0,28)}</Select.Item>)}</Select.Content></Select.Root>}
   {block&&<TextArea className="history-correction-source" key={`${output?.id}:${blockId}`} aria-label="划选当前文本中要纠正的词" readOnly value={block.text} rows={5} disabled={busy||stale} onSelect={event=>capture(event.currentTarget)} onPointerUp={event=>capture(event.currentTarget)} onKeyDown={selectByKeyboard} onKeyUp={event=>capture(event.currentTarget)}/>}
   <p className="history-correction-selection" role="status">{selected?<>已选：<strong>{selected}</strong>{Array.from(selected).length>80?' · 请选择 80 字以内的词条。':''}</>:'支持鼠标划选，也可以用 Shift + ← / → 选择。'}</p>
   <label className="history-correction-label" htmlFor={inputId}>正确写法</label><TextField.Root id={inputId} value={replacement} disabled={busy} placeholder="例如 SpeakMode" onChange={event=>{setReplacement(event.target.value);setError('');}} maxLength={160} aria-describedby={`${inputId}-hint`} autoComplete="off"/>
-  <p id={`${inputId}-hint`} className="history-secondary">{termError||`${Array.from(replacement.trim()).length} / 80 字`}</p>
-  <label className="history-correction-remember" htmlFor={checkboxId}><Checkbox id={checkboxId} checked={remember} disabled={busy||!desktop.dictionary} onCheckedChange={value=>{setRemember(value===true);if(value===true)setDictionaryVersion(desktop.dictionary?.version);}}/><span><strong>记住这个写法</strong><small>{record.temporary?'本次正文不保存；勾选后，这个词会单独保存在个人词典。':'加入个人词典，从下一次口述开始提供识别提示。'} 已有 {desktop.dictionary?.entries.length??0} / 200 词。</small></span></label>
-  {remember&&<p className="history-secondary">{exists?'词典中已有此词，将保留已有词条。':'词典可随时修改或删除；撤销本次文本修改不会删除词条。'}</p>}
+  <p id={`${inputId}-hint`} className="history-secondary">{termError}</p>
+  <label className="history-correction-remember" htmlFor={checkboxId}><Checkbox id={checkboxId} checked={remember} disabled={busy||!desktop.dictionary} onCheckedChange={value=>{setRemember(value===true);if(value===true)setDictionaryVersion(desktop.dictionary?.version);}}/><span><strong>记住这个写法</strong><small>{record.temporary?'本次正文不保存；勾选后，这个词会单独保存在个人词典。':'加入个人词典，从下一次口述开始提供识别提示。'}</small></span></label>
+  {remember&&<p className="history-secondary">{exists?'词典中已有此词。':'撤销文本修改不会删除已记住的词。'}</p>}
   {full&&<p className="history-secondary" role="status">词典已满，仍可使用已有词条；如果是新词，本次文字与词典均不会保存。可取消“记住这个写法”只纠正文稿。</p>}
   {stale&&<div className="history-correction-conflict" role="alert"><p>当前文本已有新版本，草稿仍保留。请重新选择要纠正的位置。</p><Button variant="soft" color="gray" disabled={busy} onClick={reselect}>重新选择当前版本</Button></div>}
   {dictionaryStale&&<div className="history-correction-conflict" role="alert"><p>词典已更新，当前纠词草稿仍保留。</p><Button variant="soft" color="gray" disabled={busy} onClick={()=>setDictionaryVersion(desktop.dictionary?.version)}>使用最新词典状态</Button></div>}

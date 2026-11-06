@@ -706,6 +706,7 @@ impl AppHub {
             if result.is_ok()&&s.pending.as_ref().is_some_and(|(key,_)|key==&pending_id){s.pending=None;self.diagnostics.mark(s.diagnostic_trace.as_ref(),Stage::SourceCheckpointCommitted);}}
         result.map_err(|mut error|{error=error.for_session(id,generation);error.pending_commit_id=Some(pending_id);error.commit_stage=Some("sourceCheckpoint".into());error.can_retry_save=true;error.retry_kind=Some("save".into());error})?;Ok(())
     }
+    #[cfg(test)]
     fn checkpoint(&self,id:&str,generation:u64,source:SourceRevision)->Result<()> {
         let(seed,pending,guard)=self.prepare_checkpoint(id,generation,source.clone())?;
         let result=self.db_blocking(DbCommand::Checkpoint{seed,source},Some(guard),DbPriority::Critical);self.checkpoint_receipt(id,generation,pending,result)
@@ -866,6 +867,7 @@ impl AppHub {
                 s.delivery_worker_released=!(s.reason==CreationReason::NormalInitial&&s.prefs.delivery_mode==DeliveryMode::Direct&&!s.cancel.is_cancelled());}}
         result.map_err(|mut error|{error=error.for_session(id,generation);error.pending_commit_id=Some(pending_id);error.commit_stage=Some("ready".into());error.can_retry_save=true;error.retry_kind=Some("save".into());error})?;Ok(())
     }
+    #[cfg(test)]
     fn commit_output(&self,id:&str,generation:u64,output:OutputRevision)->Result<()> {
         let(pending,guard)=self.prepare_output(id,generation,output.clone())?;let result=self.db_blocking(DbCommand::Ready{output:output.clone()},Some(Arc::clone(&guard)),DbPriority::Critical);self.output_receipt(id,generation,pending,output,guard,result)
     }

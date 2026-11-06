@@ -117,6 +117,7 @@ pub(super) fn evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> serde
 /// Detect only known dimensions, not names or arbitrary semantic facts. Counts
 /// require reviewer evidence even though admission intentionally does not compare
 /// them. Inspect both texts so newly introduced risk cannot be marked absent.
+#[cfg(test)]
 pub(super) fn required_evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> (bool, bool) {
     let spans = effective_spans(source);
     let (mut facts_required, mut scope_required) = (false, false);

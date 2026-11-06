@@ -91,7 +91,6 @@ pub mod scene_layout;
 #[path="rewrite_writing_context.rs"]
 pub mod writing_context;
 pub use manual_candidate::{ManualCandidate, ManualReviewIssue, rewrite_manual_candidate};
-pub(crate) use manual_candidate::rewrite_manual_candidate_with_writing_context;
 pub(crate) use manual_candidate::rewrite_manual_candidate_with_writing_context_execution;
 
 // Identifies the task contract independently of the selected provider/model.
@@ -662,6 +661,7 @@ async fn rewrite_with_client_dictionary(client:&reqwest::Client,config:&Provider
 
 // The engine regression substitutes only the transport endpoint, keeping the
 // production dispatcher, coordinator, storage and deadline unchanged.
+#[cfg(test)]
 pub(crate) async fn rewrite_with_client_execution(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError> {
     rewrite_with_client_optional_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,None).await
 }

@@ -1,6 +1,5 @@
 //! Coordinator behavior with synthetic source and provider seams; no credentials or network.
 use super::*;
-use crate::core::personalization::*;
 
 include!("personalization_statistics_failure_tests.rs");
 include!("personalization_routing_tests.rs");

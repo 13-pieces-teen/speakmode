@@ -1,4 +1,5 @@
 mod session;
+mod recorder_controls;
 mod diagnostics;
 mod typeless_import;
 mod personalization;
@@ -118,6 +119,7 @@ pub(crate) struct Inner {
     onboarding:OnboardingRuntime,
     guards:HashMap<String,Arc<CommitGuard>>,
     sequence:u64,
+    main_result_request:Option<Value>,
     pub(crate) active:Option<session::ActiveSession>,
     recovery:Option<session::ActiveSession>,
     candidate:Option<CandidateSlot>,
@@ -157,6 +159,7 @@ pub struct AppHub {
     pub data_dir:PathBuf,
     pub(crate) hooks:Mutex<Option<platform::hotkeys::HotkeyService>>,
     native_actions:Mutex<Option<Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>>>,
+    recorder_dismiss_control:Mutex<Option<Arc<dyn Fn(String,u64)->Result<()>+Send+Sync>>>,
     recorder_control:Mutex<Option<Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>>>,
     stop_target_control:Mutex<Option<Arc<dyn Fn(platform::delivery::ForegroundAnchor)->Result<platform::delivery::ForegroundAnchor>+Send+Sync>>>,
 }
@@ -264,9 +267,10 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,main_result_request:None,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_dismiss_control:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
+    pub fn set_recorder_dismiss_control(&self,control:Arc<dyn Fn(String,u64)->Result<()>+Send+Sync>){*self.recorder_dismiss_control.lock().unwrap()=Some(control);}
     pub fn set_recorder_control(&self,control:Arc<dyn Fn(f64,f64,bool)->Result<()>+Send+Sync>){*self.recorder_control.lock().unwrap()=Some(control);}
     pub fn set_stop_target_control(&self,control:Arc<dyn Fn(platform::delivery::ForegroundAnchor)->Result<platform::delivery::ForegroundAnchor>+Send+Sync>){*self.stop_target_control.lock().unwrap()=Some(control);}
     fn native_action(&self,name:&str,value:bool)->Result<()> {
@@ -298,7 +302,7 @@ impl AppHub {
         i.expire_audio_caches();
         let cache=self.db.snapshot();
         let mut modes=cache.modes;
-        if window=="recording" {for m in &mut modes{m.rules.clear();}return Ok(json!({"sequence":i.sequence,"session":i.active.as_ref().map(|s|s.view()),"modes":modes}));}
+        if window=="recording" {for m in &mut modes{m.rules.clear();}return Ok(json!({"sequence":i.sequence,"session":i.active.as_ref().map(|s|s.view()),"modes":modes,"recorderCaptionsEnabled":cache.preferences.recorder_captions_enabled}));}
         if window!="main"{return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
         let config=cache.provider_config;
         let configuration=cloud::endpoints(&config);let valid=configuration.is_ok();
@@ -306,11 +310,11 @@ impl AppHub {
         let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,asr_credential_configured:i.asr_key_configured,rewrite_credential_configured:i.rewrite_key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
         provider["modelCatalog"]=wire(model_catalog)?;
         provider["providerCatalog"]=wire(cloud::models::providers())?;
-        Ok(json!({"sequence":i.sequence,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"onboarding":{"progress":cache.onboarding,"active":i.onboarding.active,"shortcutPresses":i.onboarding.shortcut_presses},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
+        Ok(json!({"sequence":i.sequence,"mainResultRequest":i.main_result_request,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"onboarding":{"progress":cache.onboarding,"active":i.onboarding.active,"shortcutPresses":i.onboarding.shortcut_presses},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
     }
 
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
-        if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.resizeRecorder"|"session.captionRendered"|"result.copy"|"recoverable.copy") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
+        if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.dismissRecorder"|"window.resizeRecorder"|"session.captionRendered"|"result.copy"|"recoverable.copy") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
         if !matches!(window,"main"|"recording"){return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
         let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"usage.total"|"personalization.get"|"personalization.stats"|"diagnostics.get"|"session.captionRendered");
         if !mutation{return self.execute_command(window,request).await;}
@@ -519,7 +523,23 @@ impl AppHub {
                 tokio::task::spawn_blocking(move||control(width,height,menu)).await
                     .map_err(|_|ApiError::new("window_unavailable","window","浮层调整未完成"))??;Ok(Value::Null)
             },
-            "app.showMain"=>{self.native_action("showMain",true)?;Ok(Value::Null)},
+            "window.dismissRecorder"=>{
+                if window!="recording"{return Err(ApiError::new("forbidden","ipc","此操作仅允许录音窗口"));}
+                let id=text(&p,"sessionId")?.to_owned();let generation=number(&p,"expectedGeneration")?;
+                self.validate_recorder_dismiss(&id,generation)?;
+                let control=self.recorder_dismiss_control.lock().unwrap().clone().ok_or_else(||ApiError::new("desktop_required","window","需要桌面窗口"))?;
+                tokio::task::spawn_blocking(move||control(id,generation)).await.map_err(|_|ApiError::new("window_unavailable","window","收起提示未完成"))??;
+                Ok(Value::Null)
+            },
+            "app.showMain"=>{
+                if p["currentResult"].as_bool()==Some(true){self.request_current_result(&p)?;}
+                self.native_action("showMain",true)?;Ok(Value::Null)
+            },
+            "app.ackMainResult"=>{
+                let request_id=text(&p,"requestId")?;let mut i=self.inner.lock().unwrap();
+                if i.main_result_request.as_ref().is_some_and(|r|r["requestId"].as_str()==Some(request_id)){i.main_result_request=None;}
+                Ok(Value::Null)
+            },
             "app.quit"=>{self.native_action("quit",true)?;Ok(Value::Null)},
             _=>Err(ApiError::new("unknown_command","ipc","此操作未提供")),
         };
@@ -652,6 +672,7 @@ impl AppHub {
         if let Some((_,token))=i.preview.take(){token.cancel();}
         if let Some(slot)=i.candidate.take(){slot.cancel.cancel();if let Some(guard)=slot.adopting{guard.cancel();}}
     }
+    #[cfg(test)]
     fn auxiliary_rewrite_snapshot(&self)->(ProviderConfig,DictionarySnapshot) {
         // History does not persist its original vocabulary. An explicit preview
         // or reprocess freezes today's provider and dictionary together once.

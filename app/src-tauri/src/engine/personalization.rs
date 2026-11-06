@@ -1,6 +1,6 @@
 //! Explicit profile snapshots and real, non-delivering paired trials.
 use super::*;
-pub(super) use crate::core::personalization::*;
+pub(super) use crate::core::personalization::{EffectivePersonalization,PersonalizationEventKind,PersonalizationEventStatus};
 use crate::core::writing_context::{WritingContext, WritingReceipt, selected_scene};
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicBool, Ordering};

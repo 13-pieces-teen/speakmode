@@ -47,13 +47,6 @@ pub async fn rewrite_manual_candidate(config:&ProviderConfig, secret:&str,
 
 /// Personalized history candidates use the same frozen guidance and independent
 /// checks as live dictation. A rejected draft remains explicitly reviewable.
-pub(crate) async fn rewrite_manual_candidate_with_writing_context(config:&ProviderConfig,secret:&str,
-    mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,
-    context:Option<&crate::core::writing_context::WritingContext>)->Result<ManualCandidate,CloudError> {
-    rewrite_manual_candidate_with_writing_context_execution(config,secret,mode,source,dictionary,cancel,context,
-        RewriteExecution::for_duration(Duration::from_secs(20))).await
-}
-
 pub(crate) async fn rewrite_manual_candidate_with_writing_context_execution(config:&ProviderConfig,secret:&str,
     mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,
     context:Option<&crate::core::writing_context::WritingContext>,execution:RewriteExecution)->Result<ManualCandidate,CloudError> {
