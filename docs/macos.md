@@ -2,7 +2,7 @@
 
 Mac 与 Windows 使用同一份前端、云端协议、整理规则、数据模型和交付状态机。
 Mac 原生边界负责麦克风、快捷键、输入位置、剪贴板、窗口、权限、钥匙串和退出资源回收。
-默认快捷键在 Mac 显示为右 Option；也可在设置录制 Command / Control / Option 组合键。
+默认快捷键在 Mac 显示为右 Option，也可在设置录制 Command / Control / Option 组合键。
 
 ## 构建
 
@@ -21,7 +21,7 @@ Tauri 自动合并 `tauri.macos.conf.json`，生成 `.app` 和 `.dmg`。
 可把 Rust target 作为脚本第二个参数；先自行安装对应的 Rust 标准库。
 Apple Silicon 原生使用 `aarch64-apple-darwin`，Intel 使用 `x86_64-apple-darwin`；
 通用包可用 `Package universal-apple-darwin`，需要同时安装两种 target。
-最低系统版本设为 macOS 12，目前本机验收环境为 Intel / macOS 26.6.2，不能据此宣称旧系统或 Apple Silicon 已通过测试。
+最低系统版本设为 macOS 12，此前 0.2.30 的原生验收使用 Intel / macOS 26.6.2。旧系统和 Apple Silicon 的验收仍待完成。
 
 本地调试包：
 
@@ -59,7 +59,24 @@ Typeless 导入只在用户点击时读取本机固定缓存目录，沿用完�
 
 ## 验证与边界
 
-当前已完成前端 TypeScript / Vite 构建、12 个前端辅助/组件检查入口，以及 914 项桌面 Rust 回归
+### 0.2.35 分支同步（2026-11-06）
+
+`macos-parity` 合入主分支 `101f6f7`，包含录音启动状态修复 `00b279f`。
+桌面版本更新为 0.2.35，前端版本更新为 0.4.32。
+
+- 麦克风收到实际采样后显示“正在聆听”和声波。录音字幕偏好支持保存、读取和旧配置默认值。
+- 原生浮层尺寸同步为 298 × 68，并接入按会话校验的关闭操作。
+- Mac 投递实现适配新版共享接口，继续使用 AX 输入框身份和选区校验。
+- Tauri 的 `macOSPrivateApi` 移至共享配置，与 Cargo feature 对齐。平台打包配置仍分别使用 `.app` / `.dmg` 和 NSIS。
+
+本次在 Windows x64 完成 TypeScript / Vite 构建、13 个前端辅助/组件检查入口、
+Mac / Windows 快捷键与字幕偏好回归，以及桌面 Rust 测试，共 1087 项通过、0 失败、4 项原有忽略。
+构建仍有 Radix 的 `use client` 和产物体积提示。
+0.2.35 的 macOS 原生编译、安装包、物理快捷键、真实录音转写和跨应用输入均待 Mac 环境验收。
+
+### 0.2.30 原生验证记录
+
+此前在 Mac 完成前端 TypeScript / Vite 构建、12 个前端辅助/组件检查入口，以及 914 项桌面 Rust 回归
 （0 失败、3 项原有忽略）。键盘库的 57 项单测通过，其中 3 个实际 event-tap 用例在测试进程没有授权时提前跳过，
 不能据此称为真实物理快捷键验收。新增的粘贴来源过滤与重置世代回调测试实际执行并通过。
 另在已授权的同一应用包中完成真实 CoreAudio 采样、钥匙串写入→读取→删除，
@@ -74,7 +91,7 @@ Typeless 导入只在用户点击时读取本机固定缓存目录，沿用完�
 
 以下仍需真实验收，不能由上述本机验收代替：全局物理快捷键、多显示器/全屏浮层、
 真实账号的完整口述链路、Apple Silicon、macOS 12 及签名公证分发。
-本机 Windows 构建不可执行；Windows 原生实现保留，NSIS 配置移动到自动合并的 `tauri.windows.conf.json`。
+Windows 构建使用 `scripts/build-desktop.ps1`，NSIS 配置由 `tauri.windows.conf.json` 自动合并。
 
 调试构建提供显式原生探针，发行构建不包含探针：
 

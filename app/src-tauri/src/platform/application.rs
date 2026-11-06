@@ -35,7 +35,7 @@ mod tests {
         let (mut created,mut exit,mut kernel,mut user)=(FILETIME::default(),FILETIME::default(),FILETIME::default(),FILETIME::default());
         unsafe { GetProcessTimes(GetCurrentProcess(),&mut created,&mut exit,&mut kernel,&mut user).unwrap(); }
         let mut target = TargetSnapshot { hwnd:0,process_id:std::process::id(),focused_hwnd:0,runtime_id:vec![],selection:None,
-            process_created_at:u64::from(created.dwHighDateTime)<<32|u64::from(created.dwLowDateTime) };
+            process_created_at:u64::from(created.dwHighDateTime)<<32|u64::from(created.dwLowDateTime),compatibility:None };
         let expected=std::env::current_exe().unwrap().file_name().unwrap().to_str().unwrap().to_ascii_lowercase();
         assert_eq!(name_for_target(&target),Some(expected));
         target.process_created_at+=1; assert!(name_for_target(&target).is_none());

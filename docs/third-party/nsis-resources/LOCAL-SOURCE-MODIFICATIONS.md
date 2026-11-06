@@ -35,6 +35,9 @@ approval or evidence of a successful installation.
   use this replacement. Original license and upstream checkout remain unchanged.
   Behavioral tests and real physical-key acceptance are reported separately in
   the 0.1.9 experiment record; this source notice does not certify host input.
+- SpeakMode 0.2.34 (2026-11-05) uses the shared standalone-menu mask constant in
+  the Windows hook and synthetic mask event. Both prior constants were
+  `0x484B_4D4D`; removing the duplicate match arm changes no accepted event value.
 
 The first-party wrapper and lifecycle tests are in `platform/hotkeys.rs`; they
 are separate from the upstream library license. Isolated thread-owner regression

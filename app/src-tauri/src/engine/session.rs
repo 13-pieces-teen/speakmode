@@ -12,6 +12,8 @@ mod recovery;
 #[path="rewrite_fallback.rs"]
 mod rewrite_fallback;
 use rewrite_fallback::RewriteWaitPolicy;
+#[path="session_delivery.rs"]
+mod session_delivery;
 #[path="recorder_copy.rs"]
 mod recorder_copy;
 #[path="app_writing.rs"]
@@ -110,6 +112,8 @@ pub struct LiveSession {
 #[derive(Clone)]
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
 pub(crate) struct ActiveSession {
+    personalization:crate::core::personalization::PersonalizationConfig,
+    personalization_commit:Option<Arc<CommitGuard>>,
     onboarding_lesson:Option<OnboardingLesson>,
     diagnostic_trace:Option<TraceHandle>,caption_render_token:Option<String>,
     pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,dictionary:DictionarySnapshot,
@@ -119,7 +123,7 @@ pub(crate) struct ActiveSession {
     stop:Arc<AtomicBool>,cancel:CancellationToken,worker_released:bool,
     source:Option<SourceRevision>,output:Option<OutputRevision>,
     pending:Option<(String,PendingCommit)>,cache:Option<Vec<i16>>,cache_complete:bool,cache_created:Option<Instant>,
-    target:Option<platform::delivery::TargetSnapshot>,target_capture_pending:bool,
+    target:Option<platform::delivery::TargetSnapshot>,target_capture_pending:bool,input_context_capture_pending:bool,
     target_application:Option<String>,writing_scene:Option<AppWritingScene>,
     input_context:Option<app_writing::CapturedInput>,input_context_status:InputContextStatus,input_context_frozen:bool,
     target_capture_failure_reason:Option<String>,
@@ -130,6 +134,23 @@ pub(crate) struct ActiveSession {
     processing_worker_released:bool,db_pending:usize,cancel_pending:bool,
 }
 impl ActiveSession {
+    pub(super) fn revoke_personalization(&mut self,disabled:bool,deleted:&[String]) {
+        if let Some(profile)=self.output.as_mut().and_then(|o|o.writing_receipt.as_mut()).and_then(|r|r.personalization.as_mut()) {
+            if profile.profile_id.as_ref().is_some_and(|id|deleted.contains(id)){profile.clear_reference();}
+        }
+        let referenced=self.personalization.enabled&&(disabled||self.personalization.active_profile_id.as_ref().is_some_and(|id|deleted.contains(id)));
+        if !referenced{return;}
+        self.personalization=Default::default();
+        if !self.busy()&&self.pending.is_none(){return;}
+        self.stop.store(true,Ordering::SeqCst);self.cancel.cancel();self.discard_input_context();
+        self.original_delivery_revoked=true;
+        if let Some(permit)=&self.delivery_permit{permit.cancel_before_injection();}
+        if let Some(guard)=self.personalization_commit.take(){guard.cancel();}
+        // Retain the immutable ASR/checkpoint; only discard an uncommitted draft.
+        if self.pending.as_ref().is_some_and(|(_,p)|matches!(p,PendingCommit::Ready(_))){self.pending=None;}
+        self.phase=SessionPhase::Incomplete;
+        self.error=Some(ApiError::new("personalization_revoked","personalization","画像已停用或删除，当前个性化整理已停止；已有识别稿仍可复制或重新整理").for_session(&self.id,self.generation));
+    }
     fn discard_input_context(&mut self) {
         self.input_context=None;self.input_context_frozen=true;
         self.input_context_status=if self.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};
@@ -162,7 +183,7 @@ impl ActiveSession {
         if let Some(delivery)=self.delivery.as_mut(){if matches!(delivery.state,DeliveryState::Prepared|DeliveryState::Dispatched){delivery.state=DeliveryState::Unconfirmed;delivery.reason=Some("deletedBeforeReceipt".into());}}
     }
     pub(crate) fn view(&self)->LiveSession {
-        let released=self.worker_released&&self.delivery_worker_released&&self.processing_worker_released&&!self.target_capture_pending&&self.db_pending==0&&!self.cancel_pending;
+        let released=self.resources_released();
         let problem=matches!(self.phase,SessionPhase::Failed|SessionPhase::Incomplete)&&!self.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed");
         let can_retry_save=released&&problem&&self.pending.is_some();
         let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())&&self.cache_created.is_some_and(|t|t.elapsed()<AUDIO_CACHE_RETENTION);
@@ -181,7 +202,11 @@ impl ActiveSession {
         self.delivery=None;self.delivery_failure_reason=None;self.delivery_permit=None;self.reason=CreationReason::History;self.original_delivery_revoked=true;
     }
     pub(crate) fn busy(&self)->bool {
-        self.db_pending>0 || self.cancel_pending || self.target_capture_pending || !self.worker_released || !self.delivery_worker_released || !self.processing_worker_released || self.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed") || matches!(self.phase,SessionPhase::Starting|SessionPhase::Recording|SessionPhase::FinalizingAsr|SessionPhase::Rewriting) || self.delivery.as_ref().is_some_and(|d|matches!(d.state,DeliveryState::Prepared|DeliveryState::Dispatched))
+        !self.resources_released() || self.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed") || matches!(self.phase,SessionPhase::Starting|SessionPhase::Recording|SessionPhase::FinalizingAsr|SessionPhase::Rewriting) || self.delivery.as_ref().is_some_and(|d|matches!(d.state,DeliveryState::Prepared|DeliveryState::Dispatched))
+    }
+    fn resources_released(&self)->bool {
+        self.worker_released&&self.delivery_worker_released&&self.processing_worker_released
+            &&!self.target_capture_pending&&!self.input_context_capture_pending&&self.db_pending==0&&!self.cancel_pending
     }
 }
 
@@ -196,13 +221,16 @@ impl Drop for ProcessingLease {
     }
 }
 
-/// Stop target inspection owns a separate lease: Ready may be committed while
-/// UI Automation is still resolving, but delivery/new capture/exit must wait.
+/// Native inspection owns its resources until both target and optional context
+/// finish. Delivery waits only for the target; shutdown still waits for both.
 struct StopTargetLease<'a> {hub:&'a AppHub,id:&'a str,generation:u64,armed:bool}
 impl Drop for StopTargetLease<'_> {
     fn drop(&mut self){
         if !self.armed{return;}
-        {let mut i=self.hub.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==self.id&&s.generation==self.generation){s.target_capture_pending=false;}}
+        {let mut i=self.hub.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==self.id&&s.generation==self.generation){
+            s.target_capture_pending=false;s.input_context_capture_pending=false;
+            if s.input_context_status==InputContextStatus::Pending {s.input_context_status=InputContextStatus::Unavailable;}
+        }}
         self.hub.publish_session();
     }
 }
@@ -303,7 +331,7 @@ impl AppHub {
             let id=Uuid::new_v4().to_string();
             i.park_retryable_failure()?;
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{personalization:cache.personalization,personalization_commit:None,onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,input_context_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
@@ -352,33 +380,44 @@ impl AppHub {
         read_context:impl FnOnce(&platform::delivery::TargetSnapshot)->platform::Result<InputContext>) {
         let _lease=StopTargetLease{hub:self,id,generation,armed:true};
         let target=capture();
-        let prefs={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation
-            &&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending).map(|s|s.prefs.app_writing.clone())};
-        let Some(prefs)=prefs else{return;};
         let application=target.as_ref().ok().and_then(Option::as_ref).and_then(application);
-        let needs_context={let i=self.inner.lock().unwrap();i.active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation
-            &&!s.input_context_frozen&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked)};
-        let context=if needs_context && application.as_deref().is_some_and(|app|prefs.permits_input_context(app)) {
-            target.as_ref().ok().and_then(Option::as_ref).and_then(|target|
-                read_context(target).ok().filter(|c|!c.is_empty())
-                    .map(|context|app_writing::CapturedInput{target:target.clone(),context,captured_at:Instant::now()}))
-        }else{None};
-        let mut i=self.inner.lock().unwrap();
-        if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending){
-            if !s.input_context_frozen {
-                s.input_context_status=if !prefs.input_context_enabled {InputContextStatus::Disabled}
-                    else if context.is_some(){InputContextStatus::Available}else{InputContextStatus::Unavailable};
-                s.input_context=context;
-            }
+        // Publish the target before optional host text. These capabilities have
+        // separate completion conditions: a slow reader must not block a paste.
+        let context_target={let mut i=self.inner.lock().unwrap();
+            let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation
+                &&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending) else{return;};
             match target {
                 Ok(target)=>{s.target=target;s.target_application=application;s.target_capture_failure_reason=None;}
                 Err(error)=>{s.target=None;s.target_application=None;s.target_capture_failure_reason=Some(stop_capture_failure_reason(&error).into());}
+            }
+            s.target_capture_pending=false;
+            let context_target=(!s.input_context_frozen&&s.target_application.as_deref().is_some_and(|app|s.prefs.app_writing.permits_input_context(app)))
+                .then(||s.target.clone()).flatten();
+            s.input_context_capture_pending=context_target.is_some();
+            if !s.input_context_frozen {s.input_context_status=if !s.prefs.app_writing.input_context_enabled {InputContextStatus::Disabled}
+                else if context_target.is_some(){InputContextStatus::Pending}else{InputContextStatus::Unavailable};}
+            context_target
+        };
+        self.publish_session();
+        let Some(context_target)=context_target else{return;};
+        let context=read_context(&context_target).ok().filter(|c|!c.is_empty())
+            .map(|context|app_writing::CapturedInput{target:context_target.clone(),context,captured_at:Instant::now()});
+        let mut i=self.inner.lock().unwrap();
+        if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target.as_ref()==Some(&context_target)){
+            if !s.input_context_frozen {
+                s.input_context_status=if context.is_some(){InputContextStatus::Available}else{InputContextStatus::Unavailable};
+                s.input_context=context;
             }
         }
     }
 
     async fn stop_session_at(self:&Arc<Self>,p:&Value,intent:Instant)->Result<Value> {
-        self.stop_session_at_with_target_result(p,intent,||platform::delivery::capture_foreground_anchor().map(Some),|anchor|platform::delivery::capture_target_for_anchor(&anchor).map(Some)).await
+        // Synchronous stop metadata precedes worker scheduling and any Mode
+        // return. It is used by automatic keyboard routing when a provider
+        // cannot expose the caret. Mere pointer motion does not change it.
+        let activity=platform::delivery::capture_compatibility_activity();
+        self.stop_session_at_with_target_result(p,intent,||platform::delivery::capture_foreground_anchor().map(Some),move|anchor|
+            platform::delivery::capture_target_for_anchor_with_activity(&anchor,activity).map(Some)).await
     }
     async fn stop_session_at_with_target_result(self:&Arc<Self>,p:&Value,intent:Instant,
         anchor:impl FnOnce()->platform::Result<Option<platform::delivery::ForegroundAnchor>>,
@@ -548,7 +587,7 @@ impl AppHub {
         let deadline=Instant::now()+Duration::from_secs(5);
         loop {
                 if self.lifecycle_epoch.load(Ordering::SeqCst)!=epoch{return Ok(());}
-                let released={let i=self.inner.lock().unwrap();i.shortcut_capture.is_none()&&i.auxiliary_workers.is_empty()&&i.active.as_ref().is_none_or(|s|s.worker_released&&s.processing_worker_released&&s.delivery_worker_released&&!s.target_capture_pending&&s.db_pending==0&&!s.cancel_pending&&!s.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed"))};
+                let released={let i=self.inner.lock().unwrap();i.shortcut_capture.is_none()&&i.auxiliary_workers.is_empty()&&i.active.as_ref().is_none_or(|s|s.resources_released()&&!s.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed"))};
                 if released&&self.db.outstanding()==0&&self.db_command_workers.load(Ordering::SeqCst)==0&&platform::audio::capture_resources_released()&&self.native_io.try_lock().is_ok(){break;}
                 if Instant::now()>=deadline{return Err(ApiError::new("system_cleanup_busy","native","上一条录音尚未释放，恢复后请稍候"));}
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -570,7 +609,7 @@ impl AppHub {
         let cleanup=tokio::task::spawn_blocking(move||hub.shutdown()).await.map_err(|_|ApiError::new("shutdown_failed","native","退出清理未完成"))?;
         let deadline=Instant::now()+Duration::from_secs(5);
         loop {
-            let released={let i=self.inner.lock().unwrap();i.shortcut_capture.is_none()&&i.auxiliary_workers.is_empty()&&i.active.as_ref().is_none_or(|s|s.worker_released&&s.processing_worker_released&&s.delivery_worker_released&&!s.target_capture_pending&&s.db_pending==0&&!s.cancel_pending)};
+            let released={let i=self.inner.lock().unwrap();i.shortcut_capture.is_none()&&i.auxiliary_workers.is_empty()&&i.active.as_ref().is_none_or(|s|s.resources_released())};
             if released&&self.db.outstanding()==0&&self.db_command_workers.load(Ordering::SeqCst)==0&&platform::audio::capture_resources_released()&&self.native_io.try_lock().is_ok(){break;}
             if Instant::now()>=deadline{return Err(ApiError::new("shutdown_busy","native","采音或输入尚未确认释放，请稍候再退出"));}
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -667,6 +706,7 @@ impl AppHub {
             if result.is_ok()&&s.pending.as_ref().is_some_and(|(key,_)|key==&pending_id){s.pending=None;self.diagnostics.mark(s.diagnostic_trace.as_ref(),Stage::SourceCheckpointCommitted);}}
         result.map_err(|mut error|{error=error.for_session(id,generation);error.pending_commit_id=Some(pending_id);error.commit_stage=Some("sourceCheckpoint".into());error.can_retry_save=true;error.retry_kind=Some("save".into());error})?;Ok(())
     }
+    #[cfg(test)]
     fn checkpoint(&self,id:&str,generation:u64,source:SourceRevision)->Result<()> {
         let(seed,pending,guard)=self.prepare_checkpoint(id,generation,source.clone())?;
         let result=self.db_blocking(DbCommand::Checkpoint{seed,source},Some(guard),DbPriority::Critical);self.checkpoint_receipt(id,generation,pending,result)
@@ -685,9 +725,7 @@ impl AppHub {
         // dictionary that the user may have changed while speaking.
         let Some(dictionary)=self.recording_rewrite_dictionary(&id,generation)else{return;};
         self.finish_rewrite_with_context_policy(id,generation,move|config,mode,source,cancel,execution,context|async move{
-            if let Some(context)=context {
-                rewrite::rewrite_with_writing_context(&config,&secret,&mode,&source,&dictionary,cancel,execution,&context).await
-            } else {rewrite::rewrite_with_execution(&config,&secret,&mode,&source,&dictionary,cancel,execution).await}
+            rewrite::rewrite_with_optional_context(&config,&secret,&mode,&source,&dictionary,cancel,execution,context.as_ref()).await
         },None::<RewriteWaitPolicy>,|hub,id,generation| {
             let hub=Arc::clone(hub);let id=id.to_owned();
             tokio::task::spawn_blocking(move||hub.initial_delivery(&id,generation));
@@ -733,8 +771,9 @@ impl AppHub {
         let context_deadline=(tokio::time::Instant::now()+Duration::from_millis(600)).min(rewrite_deadline);
         loop {
             let pending={let i=self.inner.lock().unwrap();i.active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation
-                &&!s.cancel.is_cancelled()&&s.target_capture_pending&&(s.prefs.app_writing.input_context_enabled
-                    || (s.prefs.app_writing.enabled&&s.mode.mode_id=="auto"&&s.mode.rules.is_empty())))};
+                &&!s.cancel.is_cancelled()&&((s.input_context_capture_pending&&s.prefs.app_writing.input_context_enabled)
+                    || (s.target_capture_pending&&(s.prefs.app_writing.input_context_enabled
+                        || (s.prefs.app_writing.enabled&&s.mode.mode_id=="auto"&&s.mode.rules.is_empty())))))};
             if !pending || tokio::time::Instant::now()>=context_deadline {break;}
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -748,12 +787,19 @@ impl AppHub {
             s.input_context=None;s.input_context_frozen=true;
             (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen)};
         self.publish_session();
-        self.diagnostics.rewrite_started(trace.as_ref(),if writing_context.is_some(){rewrite::writing_context::VERSION}else{rewrite::production_protocol_version(&config,&mode)},policy.deadline.as_millis().min(u64::MAX as u128) as u64);
+        self.diagnostics.rewrite_started(trace.as_ref(),rewrite::production_protocol_version_with_context(&config,&mode,writing_context.as_ref()),policy.deadline.as_millis().min(u64::MAX as u128) as u64);
+        let profile_event_id=if reason==CreationReason::Retry{format!("{}:retry:{}",id,Uuid::new_v4())}else{id.clone()};
+        let event_kind=if reason!=CreationReason::NormalInitial||self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some()){personalization::PersonalizationEventKind::Preview}else{personalization::PersonalizationEventKind::Normal};
+        let profile_started=Instant::now();
+        let profile_event=personalization::task_event(&profile_event_id,event_kind,writing_context.as_ref(),personalization::PersonalizationEventStatus::Started,0);
+        let profile_dispatch=personalization::DispatchTracker::default();
+        self.enqueue_personalization_event(profile_event.clone());
         let rewrite_cancel=cancel.child_token();
         let observer_hub=Arc::downgrade(self);let observer_trace=trace.clone();
         let execution=rewrite::execution::RewriteExecution::observed(rewrite_deadline,move|event|{
             if let Some(hub)=observer_hub.upgrade(){hub.diagnostics.rewrite_request(observer_trace.as_ref(),event);}
         });
+        let execution=profile_dispatch.observe(execution,writing_context.as_ref());
         let generated=tokio::select! {
             biased;
             _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
@@ -766,6 +812,7 @@ impl AppHub {
         // replaced session, even if its future returned success after cutoff.
         if !self.valid_active(&id,generation){
             self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Cancelled,None,Some("cancelled"));
+            self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,profile_started.elapsed().as_millis() as u64));
             return;
         }
         // Synchronous decoding/validation can finish without yielding to the
@@ -789,6 +836,8 @@ impl AppHub {
                         && s.source.as_ref().is_some_and(|saved|saved==&source));
                 if !eligible {
                     self.diagnostics.rewrite_finished(trace.as_ref(),if error.code=="cancelled" {RewriteOutcome::Cancelled} else {RewriteOutcome::Failed},None,Some(&error.code));
+                    let status=if error.code=="cancelled"{personalization::PersonalizationEventStatus::Cancelled}else{personalization::PersonalizationEventStatus::Failed};
+                    self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64));
                     self.fail(&id,generation,error.into(),true);return;
                 }
                 self.diagnostics.mark(trace.as_ref(),Stage::RewriteFallbackSelected);
@@ -797,23 +846,28 @@ impl AppHub {
             },
         };
         if rewrite_fallback.is_some(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
-        let receipt=writing_context.as_ref().filter(|_|rewrite_fallback.is_none()).map(|context|crate::core::writing_context::WritingReceipt{scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
+        let status=if rewrite_fallback.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
+        self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64));
+        if !self.valid_active(&id,generation){return;}
+        let receipt=writing_context.as_ref().filter(|_|rewrite_fallback.is_none()).map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
         let output=OutputRevision{writing_receipt:receipt, confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}
         self.publish_session();self.changed();deliver(self,&id,generation);
     }
     fn prepare_output(&self,id:&str,generation:u64,output:OutputRevision)->Result<(String,Arc<CommitGuard>)> {
-        let guard=self.record_guard(id,generation);let mut i=self.inner.lock().unwrap();let s=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&(!s.cancel.is_cancelled()||s.phase==SessionPhase::Ready)).ok_or_else(||ApiError::new("cancelled","session","口述已取消").for_session(id,generation))?;
-        if guard.is_cancelled(){return Err(ApiError::new("cancelled","session","口述已取消").for_session(id,generation));}
+        let record_guard=self.record_guard(id,generation);let mut i=self.inner.lock().unwrap();let s=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&(!s.cancel.is_cancelled()||s.phase==SessionPhase::Ready)).ok_or_else(||ApiError::new("cancelled","session","口述已取消").for_session(id,generation))?;
+        if record_guard.is_cancelled(){return Err(ApiError::new("cancelled","session","口述已取消").for_session(id,generation));}
+        let guard=if output.writing_receipt.as_ref().is_some_and(|r|r.personalization.is_some()){let g=record_guard.operation();s.personalization_commit=Some(g.clone());g}else{record_guard};
         let pending_id=Uuid::new_v4().to_string();s.pending=Some((pending_id.clone(),PendingCommit::Ready(output)));s.db_pending+=1;Ok((pending_id,guard))
     }
     fn output_receipt(&self,id:&str,generation:u64,pending_id:String,output:OutputRevision,guard:Arc<CommitGuard>,result:Result<DbValue>)->Result<()> {
         let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.db_pending=s.db_pending.saturating_sub(1);
-            if result.is_ok()&&!guard.is_cancelled(){s.pending=None;s.output=Some(output);s.phase=SessionPhase::Ready;s.cache=None;s.cache_complete=false;s.error=None;
+            if result.is_ok()&&!guard.is_cancelled()&&!s.cancel.is_cancelled(){s.personalization_commit=None;s.pending=None;s.output=Some(output);s.phase=SessionPhase::Ready;s.cache=None;s.cache_complete=false;s.error=None;
                 self.diagnostics.mark(s.diagnostic_trace.as_ref(),Stage::ReadyCommitted);self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"ready",None);
                 s.delivery_worker_released=!(s.reason==CreationReason::NormalInitial&&s.prefs.delivery_mode==DeliveryMode::Direct&&!s.cancel.is_cancelled());}}
         result.map_err(|mut error|{error=error.for_session(id,generation);error.pending_commit_id=Some(pending_id);error.commit_stage=Some("ready".into());error.can_retry_save=true;error.retry_kind=Some("save".into());error})?;Ok(())
     }
+    #[cfg(test)]
     fn commit_output(&self,id:&str,generation:u64,output:OutputRevision)->Result<()> {
         let(pending,guard)=self.prepare_output(id,generation,output.clone())?;let result=self.db_blocking(DbCommand::Ready{output:output.clone()},Some(Arc::clone(&guard)),DbPriority::Critical);self.output_receipt(id,generation,pending,output,guard,result)
     }
@@ -821,74 +875,7 @@ impl AppHub {
         let(pending,guard)=self.prepare_output(id,generation,output.clone())?;let hub=Arc::clone(self);let id=id.to_owned();self.db_command_workers.fetch_add(1,Ordering::SeqCst);
         tokio::spawn(async move{let _lease=CommandLease(Arc::clone(&hub));let result=hub.db_write(DbCommand::Ready{output:output.clone()},Arc::clone(&guard),DbPriority::Critical).await;hub.output_receipt(&id,generation,pending,output,guard,result)}).await.map_err(|_|ApiError::new("save_interrupted","storage","结果保存未确认，请核对本机记录"))?
     }
-    fn initial_delivery(&self,id:&str,generation:u64) {
-        self.initial_delivery_with(id,generation,|target|platform::delivery::validate_target(target).is_ok(),
-            |permit,target,text,gate|platform::delivery::dispatch_once(permit,target,text,gate));
-    }
-    fn initial_delivery_with(&self,id:&str,generation:u64,
-        validate:impl Fn(&platform::delivery::TargetSnapshot)->bool,
-        dispatch:impl Fn(&platform::delivery::DeliveryPermit,&platform::delivery::TargetSnapshot,&str,&dyn Fn()->bool)->platform::delivery::DispatchReceipt) {
-        let trace=self.trace(id,generation);
-        struct Finished<'a>{hub:&'a AppHub,id:&'a str,generation:u64}
-        impl Drop for Finished<'_>{fn drop(&mut self){{let mut i=self.hub.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==self.id&&s.generation==self.generation){s.delivery_worker_released=true;s.delivery_permit=None;}}self.hub.publish_session();}}
-        let _finished=Finished{hub:self,id,generation};
-        // Failed/terminal delivery decisions are never reset by a duplicate
-        // completion callback, including an unavailable ledger write.
-        if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&(s.delivery.is_some()||s.delivery_failure_reason.is_some())){return;}
-        // Stop already cut audio. Resolve its bounded native inspection before
-        // making any delivery decision, including the no-target fallback.
-        let deadline=Instant::now()+Duration::from_millis(4300);
-        let target_timed_out=loop {
-            let pending={let i=self.inner.lock().unwrap();i.active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.target_capture_pending)};
-            if !pending {break false;}
-            if Instant::now()>=deadline {break true;}
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        let eligible={let i=self.inner.lock().unwrap();i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!self.quitting.load(Ordering::SeqCst)&&!s.original_delivery_revoked&&s.phase==SessionPhase::Ready&&s.prefs.delivery_mode==DeliveryMode::Direct&&s.reason==CreationReason::NormalInitial).and_then(|s|s.output.clone().map(|output|(if target_timed_out{None}else{s.target.clone()},output,s.target_capture_failure_reason.clone())))};
-        let Some((target,output,capture_failure))=eligible else{let _=self.native_action("recording",false);if self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.phase==SessionPhase::Ready&&!s.cancel.is_cancelled()&&s.prefs.delivery_mode==DeliveryMode::Preview){let _=self.native_action("showMain",true);}return;};
-        let rejection=match &target{None=>Some(if target_timed_out{"targetInspectionTimeout"}else{capture_failure.as_deref().unwrap_or("targetUnavailableAtStop")}),Some(target) if !validate(target)=>Some("targetChangedBeforeDelivery"),_=>None};
-        // A skipped automatic delivery is still a once-only decision. Preserve
-        // an opaque ledger receipt even when no input target could be captured.
-        let fingerprint=target.as_ref().map(|target|format!("{}:{}:{}",target.hwnd,target.process_id,target.process_created_at)).unwrap_or_else(||"unavailableAtStop".into());
-        let attempt=DeliveryAttempt{id:Uuid::new_v4().to_string(),session_id:id.into(),generation,output_revision_id:output.id.clone(),target_fingerprint:fingerprint,claimed_at:now(),state:DeliveryState::Prepared,reason:None};
-        let guard=self.record_guard(id,generation).operation();
-        let attempt=match self.db_blocking(DbCommand::PrepareDelivery{attempt},Some(guard),DbPriority::Critical){Ok(DbValue::Delivery(value))=>value,_=>{
-            let show={let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.delivery.is_none()){s.delivery_failure_reason=Some("deliveryLedgerUnavailable".into());true}else{false}};
-            self.publish_session();if show{let _=self.native_action("recording",true);}return;
-        }};
-        self.diagnostics.mark(trace.as_ref(),Stage::DeliveryClaim);
-        let permit=Arc::new(platform::delivery::DeliveryPermit::from_committed_attempt(attempt.id.clone(),generation));
-        {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.delivery=Some(attempt.clone());s.delivery_permit=Some(Arc::clone(&permit));if s.cancel.is_cancelled()||s.original_delivery_revoked||s.output.as_ref().is_none_or(|current|current.id!=output.id){permit.cancel_before_injection();}}else{permit.cancel_before_injection();}}
-        // COMMIT of Prepared is acknowledged before the native gate is entered.
-        // Native control is released before any ledger persistence wait.
-        let receipt=if let Some(reason)=rejection {
-            permit.cancel_before_injection();
-            platform::delivery::DispatchReceipt{outcome:platform::delivery::DispatchOutcome::Skipped,clipboard_changed:false,input_events:0,reason:Some(reason.into()),reason_code:Some(reason.into())}
-        }else{let _native=self.native_io.lock().unwrap();dispatch(&permit,target.as_ref().unwrap(),&output.text(),&||{
-            let i=self.inner.lock().unwrap();!self.quitting.load(Ordering::SeqCst)&&self.capture_available.load(Ordering::SeqCst)&&i.active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked&&s.output.as_ref().is_some_and(|current|current.id==output.id)&&s.delivery.as_ref().is_some_and(|d|d.id==attempt.id&&d.output_revision_id==output.id&&d.state==DeliveryState::Prepared))
-        })};
-        self.diagnostics.mark(trace.as_ref(),Stage::NativeDeliveryReceipt);
-        let state=match receipt.outcome{platform::delivery::DispatchOutcome::Skipped=>DeliveryState::Skipped,platform::delivery::DispatchOutcome::Failed=>DeliveryState::Failed,platform::delivery::DispatchOutcome::Unconfirmed=>DeliveryState::Unconfirmed};
-        let reason=if receipt.clipboard_changed&&matches!(state,DeliveryState::Skipped)&&receipt.reason_code.as_deref()==Some("cancelledBeforeInjection"){"clipboardChangedInjectionSkipped".to_owned()}
-            else if receipt.clipboard_changed&&matches!(state,DeliveryState::Failed)&&receipt.reason_code.as_deref()==Some("nativeDispatchFailed"){"clipboardChangedDispatchFailed".to_owned()}
-            else{receipt.reason_code.unwrap_or_else(||match state{DeliveryState::Skipped=>"targetChangedBeforeDelivery",DeliveryState::Failed=>"nativeDispatchFailed",_=>if receipt.input_events==4{"inputDispatchedUnconfirmed"}else{"partialInputUnconfirmed"}}.to_owned())};
-        let persisted=if receipt.input_events>0{
-            self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt.id.clone(),expected:DeliveryState::Prepared,next:DeliveryState::Dispatched,reason:None},None,DbPriority::Critical)
-                .and_then(|_|self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt.id.clone(),expected:DeliveryState::Dispatched,next:state,reason:Some(reason.clone())},None,DbPriority::Critical))
-        }else{self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt.id.clone(),expected:DeliveryState::Prepared,next:state,reason:Some(reason.clone())},None,DbPriority::Critical)};
-        {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){if let Some(d)=s.delivery.as_mut(){d.state=state;d.reason=Some(reason);}if persisted.is_err(){s.error=Some(ApiError::new("delivery_receipt_save_failed","storage","本机输入回执未保存；不会再次自动输入，请核对目标后手动复制").for_session(id,generation));}}}
-        self.publish_session();self.changed();
-        let current=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked);
-        if current{let _=self.native_action("recording",matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
-    }
 
-    pub fn copy_recoverable(&self,p:&Value)->Result<Value> {
-        let content={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
-            if p.get("recoverableContentId").and_then(Value::as_str).is_some_and(|id|id!=s.id){return Err(ApiError::new("stale_session","recovery","来源已过期"));}
-            if let Some(source)=&s.source{source.text()}else{s.captions.iter().map(|c|c.text.as_str()).collect::<Vec<_>>().join("\n")}};
-        if content.trim().is_empty(){return Err(ApiError::new("empty_recovery","recovery","没有可复制的识别内容"));}
-        let _native=self.native_io.lock().unwrap();platform::delivery::copy_text(&content)?;Ok(json!({"copied":true,"adopted":false}))
-    }
     fn prepare_use_source(&self,p:&Value,saved:&HistoryDetail)->Result<(String,u64,Arc<CommitGuard>)> {
         let id=saved.session.seed.id.clone();let guard=self.record_guard(&id,saved.session.seed.generation);
         if p.get("sourceRevisionId").and_then(Value::as_str).is_some_and(|s|s!=saved.source.id){return Err(ApiError::new("revisionConflict","recovery","来源已经变化"));}
@@ -956,7 +943,7 @@ impl AppHub {
         let secret=credentials::read_for(&config,CredentialStage::Rewrite)?;
         {let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=generation||!s.view().can_retry_rewrite{return Err(ApiError::new("stale_session","recovery","整理请求已过期"));}
-            s.cancel=CancellationToken::new();s.phase=SessionPhase::Rewriting;s.reason=CreationReason::Retry;s.error=None;s.processing_worker_released=false;s.caption_render_token=None;
+            s.personalization=self.db.snapshot().personalization;s.cancel=CancellationToken::new();s.phase=SessionPhase::Rewriting;s.reason=CreationReason::Retry;s.error=None;s.processing_worker_released=false;s.caption_render_token=None;
             s.diagnostic_trace=self.diagnostics.begin(&s.id,s.generation,Origin::RewriteRetry,retry_intent,&s.config,&s.mode);self.diagnostics.attempt(s.diagnostic_trace.as_ref(),s.asr_attempt_id.as_deref().unwrap_or(""));
         }
         let processing=self.processing_lease(&id,generation);
@@ -973,7 +960,7 @@ impl AppHub {
         let secrets=credentials::read_session(&config)?;
         let (generation,language,dictionary,cache,cancel,attempt)={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
             if s.id!=id||s.generation!=old_generation||!s.view().can_retry_asr||p.get("failedAttemptId").and_then(Value::as_str)!=s.asr_attempt_id.as_deref(){return Err(ApiError::new("stale_attempt","recovery","识别请求已过期"));}
-            s.generation+=1;s.cancel=CancellationToken::new();s.phase=SessionPhase::FinalizingAsr;s.reason=CreationReason::Retry;s.error=None;s.captions.clear();s.processing_worker_released=false;
+            s.personalization=self.db.snapshot().personalization;s.generation+=1;s.cancel=CancellationToken::new();s.phase=SessionPhase::FinalizingAsr;s.reason=CreationReason::Retry;s.error=None;s.captions.clear();s.processing_worker_released=false;
             let attempt=Uuid::new_v4().to_string();s.asr_attempt_id=Some(attempt.clone());
             s.caption_render_token=None;s.provider_ready=false;
             s.diagnostic_trace=self.diagnostics.begin(&s.id,s.generation,Origin::AsrRetry,retry_intent,&s.config,&s.mode);self.diagnostics.attempt(s.diagnostic_trace.as_ref(),&attempt);

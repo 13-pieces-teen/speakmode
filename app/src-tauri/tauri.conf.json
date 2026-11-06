@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SpeakMode",
-  "version": "0.2.30",
+  "version": "0.2.35",
   "identifier": "dev.speakmode.desktop",
   "build": {
     "beforeDevCommand": "npm run dev -- --host 127.0.0.1 --port 1420 --strictPort",
@@ -13,6 +13,7 @@
     ]
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -31,8 +32,8 @@
         "label": "recording",
         "title": "SpeakMode 录音",
         "url": "index.html?window=recorder",
-        "width": 336,
-        "height": 66,
+        "width": 298,
+        "height": 68,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

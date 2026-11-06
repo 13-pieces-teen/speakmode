@@ -6,6 +6,7 @@ import {HistoryPage} from './pages/HistoryPage';
 import {SettingsPage} from './pages/SettingsPage';
 import {ModesPage} from './pages/ModesPage';
 import {DictionaryPage} from './pages/DictionaryPage';
+import {PersonalizationPage} from './pages/PersonalizationPage';
 import {ModeProvider,useModes} from './hooks/useModes';
 import {useDictations} from './hooks/useDictations';
 import {DesktopProvider,useDesktop} from './services/DesktopProvider';
@@ -18,6 +19,7 @@ import {SessionRecovery} from './components/SessionRecovery';
 import {RetainedRecovery} from './components/RetainedRecovery';
 import {OnboardingFlow} from './onboarding/OnboardingFlow';
 import {MacPermissions} from './components/MacPermissions';
+import type {MainResultRequest} from './services/contracts';
 import {WindowChrome} from './components/WindowChrome';
 export function App(){return <DesktopProvider><ModeProvider><NavigationGuardProvider>{new URLSearchParams(location.search).get('window')==='recorder'?<RecorderWindow/>:<AppContent/>}</NavigationGuardProvider></ModeProvider></DesktopProvider>;}
 function AppContent(){
@@ -25,6 +27,16 @@ function AppContent(){
  const [view,setView]=useState<View>('home'),[selectedId,setSelectedId]=useState<string|null>(null),[modeOrigin,setModeOrigin]=useState<'home'|'settings'>('home'),[modeDirty,setModeDirty]=useState(false),[pendingView,setPendingView]=useState<View|'recorder'|null>(null),[error,setError]=useState('');
  const preferences=fromNativePreferences(desktop.preferences);
  const autoOpened=useRef(false);
+ const handledResult=useRef<string|null>(null),pendingResult=useRef<MainResultRequest|null>(null);
+ useEffect(()=>{
+  const request=desktop.mainResultRequest;
+  if(!request||request.requestId===handledResult.current||desktop.onboarding?.active)return;
+  handledResult.current=request.requestId;
+  const target=request.target==='result'?'history':'home';
+  if(view==='modes'&&modeDirty){pendingResult.current=request;setPendingView(target);}
+  else navigation.request(()=>{setSelectedId(request.target==='result'?request.sessionId:null);setView(target);});
+  void desktop.command('app.ackMainResult',{requestId:request.requestId}).catch(e=>setError(errorMessage(e)));
+ },[desktop.mainResultRequest,desktop.onboarding?.active,desktop.command,navigation,view,modeDirty]);
  useEffect(()=>{
   if(desktop.status!=='ready'||!desktop.onboarding||autoOpened.current)return;
   if(!desktop.onboarding.progress.autoShow||desktop.onboarding.active){autoOpened.current=true;return;}
@@ -33,8 +45,8 @@ function AppContent(){
  },[desktop.status,desktop.onboarding,desktop.command,desktop.refresh]);
  const showError=(e:unknown)=>setError(errorMessage(e));
  function openRecord(id:string){navigation.request(()=>{setSelectedId(id);setView('history');});}
- function commitNavigation(next:View|'recorder'){setModeDirty(false);setPendingView(null);if(next==='recorder'){void desktop.command('session.start').catch(showError);return;}setView(next);if(next==='history')setSelectedId(null);if(next==='home')void desktop.searchHistory('').catch(showError);}
- function navigate(next:View|'recorder'){if(view==='modes'&&modeDirty){setPendingView(next);return;}navigation.request(()=>commitNavigation(next));}
+ function commitNavigation(next:View|'recorder'){setModeDirty(false);setPendingView(null);if(next==='recorder'){void desktop.command('session.start').catch(showError);return;}setView(next);if(pendingResult.current){setSelectedId(pendingResult.current.target==='result'?pendingResult.current.sessionId:null);pendingResult.current=null;}else if(next==='history')setSelectedId(null);if(next==='home')void desktop.searchHistory('').catch(showError);}
+ function navigate(next:View|'recorder'){pendingResult.current=null;if(view==='modes'&&modeDirty){setPendingView(next);return;}navigation.request(()=>commitNavigation(next));}
  function manageModes(origin:'home'|'settings'){navigation.request(()=>{setModeOrigin(origin);setView('modes');});}
  async function updatePreferences(next:Preferences,captureId?:string){await desktop.command('preferences.update',{patch:toNativePatch(next),expectedVersion:desktop.preferences.version,...(captureId?{captureId}:{})});await desktop.refresh();}
  async function updateDefault(mode:Mode){await modes.setDefaultMode(mode);}
@@ -52,11 +64,12 @@ function AppContent(){
   {desktop.available&&<SessionRecovery onOpen={openRecord}/>} 
   {desktop.available&&<RetainedRecovery/>}
   {view==='home'&&desktop.onboarding&&!desktop.onboarding.progress.completedAt&&<div className="environment-banner"><div><strong>用两次口述，熟悉 SpeakMode</strong><p>设置服务、测试快捷键，在聊天与文档场景中练习。</p></div><Button variant="soft" onClick={openOnboarding}>{desktop.onboarding.progress.step==='welcome'?'开始使用引导':'继续使用引导'}</Button></div>}
-  {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onManageModes={()=>manageModes('home')}/>}
+  {view==='home'&&<HomePage preferences={preferences} records={homeRecords} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onOpen={openRecord} onHistory={()=>navigate('history')} onSettings={()=>navigate('settings')} onPersonalization={()=>navigate('personalization')} onManageModes={()=>manageModes('home')}/>}
   {view==='history'&&<HistoryPage selectedId={selectedId} onSelect={setSelectedId}/>}
   {view==='dictionary'&&<DictionaryPage/>}
+  {view==='personalization'&&<PersonalizationPage onSkip={()=>navigate('home')} onDictionary={()=>navigate('dictionary')} onSettings={()=>navigate('settings')}/>}
   {view==='settings'&&<SettingsPage preferences={preferences} onPreferencesChange={updatePreferences} defaultMode={modes.defaultMode} onDefaultModeChange={updateDefault} onManageModes={()=>manageModes('settings')} onOnboarding={openOnboarding}/>}
-  {view==='modes'&&<ModesPage records={dictations.records.filter(r=>r.detail)} origin={modeOrigin==='home'?'首页':'设置'} onBack={()=>navigate(modeOrigin)} onDirtyChange={setModeDirty} leaving={pendingView!==null} onKeepEditing={()=>setPendingView(null)} onDiscardAndLeave={()=>pendingView&&commitNavigation(pendingView)}/>}
+  {view==='modes'&&<ModesPage records={dictations.records.filter(r=>r.detail)} origin={modeOrigin==='home'?'首页':'设置'} onBack={()=>navigate(modeOrigin)} onDirtyChange={setModeDirty} leaving={pendingView!==null} onKeepEditing={()=>{setPendingView(null);pendingResult.current=null;}} onDiscardAndLeave={()=>pendingView&&commitNavigation(pendingView)}/>}
  </AppShell>;
 }
 

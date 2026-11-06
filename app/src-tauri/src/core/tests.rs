@@ -22,6 +22,156 @@ fn path() -> PathBuf {
 }
 fn draft(name:&str) -> ModeDraft {ModeDraft{id:None,name:name.into(),base_mode:BaseMode::Light,rules:"保留条件，用简洁段落。".into(),expected_revision:None}}
 
+fn personal_config() -> PersonalizationConfig {
+    PersonalizationConfig {enabled:true,active_profile_id:Some("developer".into()),profiles:vec![PersonalProfile{id:"developer".into(),name:"工作身份".into(),profession:"软件开发".into(),domain:"人工智能".into(),description:"只有本机画像详情中的特有背景".into(),tasks:vec!["项目进展".into()],audience:"同事".into(),scenes:vec![AppWritingScene::Technical],instructions:"连续叙述按话题分段".into()}],..Default::default()}
+}
+fn personalization_event(task_id:&str) -> PersonalizationEvent {
+    PersonalizationEvent {task_id:task_id.into(),kind:PersonalizationEventKind::Comparison,status:PersonalizationEventStatus::Started,scene:AppWritingScene::Technical,profile_id:Some("developer".into()),profile_version:2,personalized:true,created_at:"2026-10-23T10:00:00+08:00".into(),duration_ms:0,reference_dispatch:Some(ReferenceDispatch::NotStarted),feedback:None}
+}
+
+include!("personalization_dispatch_tests.rs");
+
+#[test]
+fn restart_fails_unfinished_personalization_without_rewriting_history_or_feedback() {
+    let file=path();let saved;let historical;let mut before=Vec::new();
+    {
+        let mut store=Store::open(&file).unwrap();saved=store.save_personalization(personal_config(),1).unwrap();
+        historical=ready(&mut store,"restart-history",StoragePolicy::History);
+        for (id,kind) in [("unfinished-comparison",PersonalizationEventKind::Comparison),("unfinished-normal",PersonalizationEventKind::Normal),("unfinished-preview",PersonalizationEventKind::Preview)] {
+            let mut event=personalization_event(id);event.kind=kind;event.personalized=true;event.duration_ms=17;
+            store.record_personalization_event(event.clone()).unwrap();before.push(event);
+        }
+        for (id,status) in [("completed",PersonalizationEventStatus::Success),("raw-fallback",PersonalizationEventStatus::Fallback),("already-failed",PersonalizationEventStatus::Failed),("user-cancelled",PersonalizationEventStatus::Cancelled)] {
+            let mut event=personalization_event(id);event.status=status;event.personalized=true;event.duration_ms=321;
+            if status==PersonalizationEventStatus::Success{event.feedback=Some(PersonalizationFeedback::Better);}
+            store.record_personalization_event(event.clone()).unwrap();before.push(event);
+        }
+    }
+    {
+        let mut store=Store::open(&file).unwrap();
+        // Opening a connection alone is not authority to interrupt live work.
+        assert_eq!(store.personalization_events(None).unwrap().iter().filter(|event|event.status==PersonalizationEventStatus::Started).count(),3);
+        store.recover_after_restart().unwrap();
+        let after=store.personalization_events(None).unwrap();assert_eq!(after.len(),before.len());
+        for original in &before {
+            let actual=after.iter().find(|event|event.task_id==original.task_id).unwrap();let mut expected=original.clone();
+            if expected.status==PersonalizationEventStatus::Started{expected.status=PersonalizationEventStatus::Failed;expected.reference_dispatch=Some(ReferenceDispatch::Unknown);}
+            assert_eq!(actual,&expected);actual.validate().unwrap();
+        }
+        assert!(after.iter().all(|event|event.status!=PersonalizationEventStatus::Started));
+        assert_eq!(store.personalization().unwrap(),saved);assert_eq!(store.get_result("restart-history").unwrap(),historical);
+        let mut late=before[0].clone();late.status=PersonalizationEventStatus::Success;
+        assert!(matches!(store.record_personalization_event(late),Err(StoreError::Conflict{..})),"the old process cannot finish a recovered job");
+        assert!(store.set_personalization_feedback("unfinished-comparison",PersonalizationFeedback::Better).is_err());
+        let raw=|store:&Store|store.test_connection().prepare("SELECT task_id,data FROM personalization_events ORDER BY task_id").unwrap().query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        let once=raw(&store);store.recover_after_restart().unwrap();assert_eq!(raw(&store),once,"recovery is idempotent");
+    }
+    let mut store=Store::open(&file).unwrap();store.recover_after_restart().unwrap();
+    assert_eq!(store.personalization_events(None).unwrap().iter().filter(|event|event.status==PersonalizationEventStatus::Failed).count(),4);
+    assert_eq!(store.get_result("restart-history").unwrap(),historical);drop(store);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn restart_event_recovery_is_atomic_and_leaves_invalid_statistics_unchanged() {
+    let mut store=Store::in_memory().unwrap();
+    store.checkpoint_source(seed("unfinished-source",StoragePolicy::History),source("unfinished-source")).unwrap();
+    for id in ["first-pending","second-pending"]{store.record_personalization_event(personalization_event(id)).unwrap();}
+    let malformed="{not valid event json";
+    store.test_connection().execute("INSERT INTO personalization_events(task_id,created_at,data) VALUES('invalid-statistics','2026-10-23',?1)",[malformed]).unwrap();
+    store.test_connection().execute_batch("CREATE TRIGGER abort_event_recovery BEFORE UPDATE ON personalization_events WHEN NEW.task_id='second-pending' BEGIN SELECT RAISE(ABORT,'synthetic recovery failure'); END;").unwrap();
+    assert!(store.recover_after_restart().is_err());
+    assert_eq!(store.get_result("unfinished-source").unwrap().session.status,StoredSessionStatus::Checkpointed);
+    let data=|id:&str|store.test_connection().query_row("SELECT data FROM personalization_events WHERE task_id=?1",[id],|row|row.get::<_,String>(0)).unwrap();
+    for id in ["first-pending","second-pending"]{assert_eq!(serde_json::from_str::<PersonalizationEvent>(&data(id)).unwrap().status,PersonalizationEventStatus::Started);}
+    store.test_connection().execute_batch("DROP TRIGGER abort_event_recovery;").unwrap();
+    store.recover_after_restart().unwrap();
+    assert_eq!(store.get_result("unfinished-source").unwrap().session.status,StoredSessionStatus::Interrupted);
+    assert_eq!(store.test_connection().query_row("SELECT data FROM personalization_events WHERE task_id='invalid-statistics'",[],|row|row.get::<_,String>(0)).unwrap(),malformed);
+    for id in ["first-pending","second-pending"] {
+        let data:String=store.test_connection().query_row("SELECT data FROM personalization_events WHERE task_id=?1",[id],|row|row.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<PersonalizationEvent>(&data).unwrap().status,PersonalizationEventStatus::Failed);
+    }
+    assert!(store.personalization_events(None).is_err(),"corrupt statistics remain a read error, never fabricated valid events");
+}
+
+#[test]
+fn personalization_config_cas_survives_reopen_without_changing_shared_settings() {
+    let file=path();let saved;
+    {let mut store=Store::open(&file).unwrap();assert_eq!(store.personalization().unwrap(),PersonalizationConfig::default());
+        let prefs=store.preferences().unwrap();let dictionary=store.dictionary().unwrap();saved=store.save_personalization(personal_config(),1).unwrap();
+        assert_eq!(saved.version,2);assert!(matches!(store.save_personalization(saved.clone(),1),Err(StoreError::Conflict{current}) if current=="2"));
+        assert_eq!(store.preferences().unwrap(),prefs);assert_eq!(store.dictionary().unwrap(),dictionary);
+    }
+    let store=Store::open(&file).unwrap();assert_eq!(store.personalization().unwrap(),saved);drop(store);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn personalization_delete_removes_reference_payload_and_never_revives_old_identity() {
+    let file=path();let output_id;
+    {let mut store=Store::open(&file).unwrap();let saved=store.save_personalization(personal_config(),1).unwrap();
+        store.checkpoint_source(seed("personalized",StoragePolicy::History),source("personalized")).unwrap();
+        let mut next=output("personalized");next.writing_receipt=Some(super::writing_context::WritingReceipt{scene:AppWritingScene::Technical,language:DraftLanguage::AsSpoken,context_used:false,contract_version:"personalization-v1".into(),personalization:saved.freeze(AppWritingScene::Technical)});output_id=next.id.clone();
+        store.commit_ready(next.clone()).unwrap();assert_eq!(store.get_output(&output_id).unwrap(),next);
+        let raw:String=store.test_connection().query_row("SELECT data FROM outputs WHERE id=?1",[&output_id],|row|row.get(0)).unwrap();
+        assert!(!raw.contains("只有本机画像详情中的特有背景"));assert!(!raw.contains("连续叙述按话题分段"));assert!(!raw.contains("软件开发"));
+        assert_eq!(store.test_connection().query_row("SELECT COUNT(*) FROM personalization_references",[],|row|row.get::<_,u64>(0)).unwrap(),1);
+        let mut without=saved.clone();without.profiles.clear();without.active_profile_id=None;let removed=store.save_personalization(without,2).unwrap();
+        assert_eq!(store.test_connection().query_row("SELECT COUNT(*) FROM personalization_references",[],|row|row.get::<_,u64>(0)).unwrap(),0);
+        let reference=store.get_output(&output_id).unwrap().writing_receipt.unwrap().personalization.unwrap();assert!(reference.reference_cleared);assert_eq!(reference.profile_id.as_deref(),Some("developer"));assert_eq!(reference.version,saved.version);assert!(reference.background.is_none());assert!(reference.rules.is_empty());
+        let mut resurrect=saved;resurrect.version=removed.version;assert!(matches!(store.save_personalization(resurrect,removed.version),Err(StoreError::Invalid(_))));
+        assert_eq!(store.get_source("source-personalized").unwrap(),source("personalized"));
+    }
+    let store=Store::open(&file).unwrap();assert!(store.get_output(&output_id).unwrap().writing_receipt.unwrap().personalization.unwrap().reference_cleared);drop(store);fs::remove_file(file).unwrap();
+}
+
+#[test]
+fn personalization_memory_only_has_no_persisted_snapshot_and_deleted_reference_is_cleared() {
+    let mut store=Store::in_memory().unwrap();let saved=store.save_personalization(personal_config(),1).unwrap();
+    store.checkpoint_source(seed("personal-memory",StoragePolicy::MemoryOnly),source("personal-memory")).unwrap();let mut next=output("personal-memory");
+    next.writing_receipt=Some(super::writing_context::WritingReceipt{scene:AppWritingScene::Technical,language:DraftLanguage::AsSpoken,context_used:false,contract_version:"personalization-v1".into(),personalization:saved.freeze(AppWritingScene::Technical)});
+    store.commit_ready(next).unwrap();assert_eq!(store.test_connection().query_row("SELECT COUNT(*) FROM personalization_references",[],|row|row.get::<_,u64>(0)).unwrap(),0);
+    let mut removed=saved;removed.profiles.clear();removed.active_profile_id=None;store.save_personalization(removed,2).unwrap();
+    assert!(store.get_result("personal-memory").unwrap().output.unwrap().writing_receipt.unwrap().personalization.unwrap().reference_cleared);
+}
+
+#[test]
+fn personalization_events_deduplicate_terminal_state_and_feedback_without_body_data() {
+    let mut store=Store::in_memory().unwrap();let mut event=personalization_event("comparison-1");store.record_personalization_event(event.clone()).unwrap();
+    assert!(store.set_personalization_feedback(&event.task_id,PersonalizationFeedback::Better).is_err());
+    event.status=PersonalizationEventStatus::Success;event.personalized=true;event.duration_ms=123;store.record_personalization_event(event.clone()).unwrap();store.record_personalization_event(event.clone()).unwrap();
+    store.set_personalization_feedback(&event.task_id,PersonalizationFeedback::Better).unwrap();store.set_personalization_feedback(&event.task_id,PersonalizationFeedback::Same).unwrap();
+    let events=store.personalization_events(None).unwrap();assert_eq!(events.len(),1);assert_eq!(events[0].feedback,Some(PersonalizationFeedback::Same));
+    let mut late=event.clone();late.status=PersonalizationEventStatus::Started;assert!(matches!(store.record_personalization_event(late),Err(StoreError::Conflict{..})));
+    let mut other=event.clone();other.created_at="2026-10-24T10:00:00+08:00".into();assert!(store.record_personalization_event(other).is_err());
+    assert!(store.personalization_events(Some("2026-10-23T02:00:01Z")).unwrap().is_empty());
+    assert_eq!(store.personalization_events(Some("2026-10-23T01:59:59Z")).unwrap().len(),1);
+    let mut failed=personalization_event("comparison-failed");failed.status=PersonalizationEventStatus::Fallback;failed.feedback=Some(PersonalizationFeedback::Better);assert!(store.record_personalization_event(failed).is_err());
+    let raw:String=store.test_connection().query_row("SELECT data FROM personalization_events",[],|row|row.get(0)).unwrap();assert!(!raw.contains("sourceText"));assert!(!raw.contains("profession"));assert!(!raw.contains("description"));
+    event.status=PersonalizationEventStatus::Cancelled;store.record_personalization_event(event.clone()).unwrap();assert!(store.set_personalization_feedback(&event.task_id,PersonalizationFeedback::Better).is_err());
+    event.status=PersonalizationEventStatus::Success;assert!(store.record_personalization_event(event).is_err());
+}
+
+#[test]
+fn personalization_event_completion_replay_preserves_explicit_feedback() {
+    let mut store=Store::in_memory().unwrap();let mut event=personalization_event("feedback-replay");store.record_personalization_event(event.clone()).unwrap();
+    event.status=PersonalizationEventStatus::Success;event.personalized=true;event.duration_ms=321;store.record_personalization_event(event.clone()).unwrap();
+    store.set_personalization_feedback(&event.task_id,PersonalizationFeedback::Better).unwrap();
+    store.record_personalization_event(event.clone()).unwrap();
+    let recorded=store.personalization_events(None).unwrap();assert_eq!(recorded.len(),1);assert_eq!(recorded[0].feedback,Some(PersonalizationFeedback::Better));assert_eq!(recorded.iter().filter(|event|event.status==PersonalizationEventStatus::Success&&event.feedback.is_some()).count(),1);
+    store.set_personalization_feedback(&event.task_id,PersonalizationFeedback::Worse).unwrap();store.record_personalization_event(event.clone()).unwrap();
+    assert_eq!(store.personalization_events(None).unwrap()[0].feedback,Some(PersonalizationFeedback::Worse));
+    event.status=PersonalizationEventStatus::Cancelled;store.record_personalization_event(event).unwrap();
+    let recorded=store.personalization_events(None).unwrap();assert_eq!(recorded[0].feedback,None);assert_eq!(recorded.iter().filter(|event|event.status==PersonalizationEventStatus::Success&&event.feedback.is_some()).count(),0);
+}
+
+#[test]
+fn personalization_v4_migration_keeps_v3_data_and_defaults_disabled() {
+    let file=path();let preferences;
+    {let mut store=Store::open(&file).unwrap();let mut next=store.preferences().unwrap();next.language="en".into();preferences=store.save_preferences(next,1).unwrap();ready(&mut store,"v3-personalization",StoragePolicy::History);
+        store.test_connection().execute_batch("DROP TABLE personalization_references;DROP TABLE personalization_deleted_profiles;DROP TABLE personalization_events;DROP TABLE personalization_config;PRAGMA user_version=3;").unwrap();}
+    let store=Store::open(&file).unwrap();assert_eq!(store.preferences().unwrap(),preferences);assert_eq!(store.get_source("source-v3-personalization").unwrap(),source("v3-personalization"));assert!(!store.personalization().unwrap().enabled);assert!(store.personalization_events(None).unwrap().is_empty());drop(store);fs::remove_file(file).unwrap();
+}
+
 #[test]
 fn rewrite_fallback_metadata_is_optional_and_rejects_unknown_reasons() {
     let original=output("compat");let serialized=serde_json::to_value(&original).unwrap();
@@ -109,7 +259,7 @@ fn dictionary_v2_migration_preserves_v1_preferences_modes_history_sources_and_us
         expected_preferences=store.save_preferences(preferences,1).unwrap();
         expected_detail=ready(&mut store,"v1-preserved",StoragePolicy::History);
         // This is precisely the pre-dictionary v1 schema and existing bodies.
-        store.test_connection().execute_batch("DROP TABLE onboarding;DROP TABLE dictionary_entries;DROP TABLE dictionary_meta;PRAGMA user_version=1;").unwrap();
+        store.test_connection().execute_batch("DROP TABLE personalization_references;DROP TABLE personalization_deleted_profiles;DROP TABLE personalization_events;DROP TABLE personalization_config;DROP TABLE onboarding;DROP TABLE dictionary_entries;DROP TABLE dictionary_meta;PRAGMA user_version=1;").unwrap();
     }
     let store=Store::open(&file).unwrap();
     assert_eq!(store.preferences().unwrap(),expected_preferences);
@@ -117,7 +267,7 @@ fn dictionary_v2_migration_preserves_v1_preferences_modes_history_sources_and_us
     assert_eq!(store.get_result("v1-preserved").unwrap(),expected_detail);
     assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
     assert_eq!(store.dictionary().unwrap(),DictionarySnapshot::default());
-    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),3);
+    assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|row|row.get::<_,u32>(0)).unwrap(),6);
     assert!(store.test_connection().execute("UPDATE sources SET data='changed'",[]).is_err());
     drop(store);fs::remove_file(file).unwrap();
 }
@@ -191,7 +341,7 @@ fn cancelled_dictionary_transaction_rolls_back_version_and_entire_batch() {
 fn migrations_and_preferences_survive_reopen_without_mode_or_key_fields() {
     let path=path();
     {let mut store=Store::open(&path).unwrap();let mut prefs=store.preferences().unwrap();prefs.keep_history=false;prefs.language="zh".into();let saved=store.save_preferences(prefs,1).unwrap();assert_eq!(saved.version,2);assert_eq!(store.list_modes().unwrap().len(),7);}
-    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),3);
+    let store=Store::open(&path).unwrap();assert_eq!(store.preferences().unwrap().version,2);assert!(!store.preferences().unwrap().keep_history);assert_eq!(store.test_connection().pragma_query_value(None,"user_version",|r|r.get::<_,u32>(0)).unwrap(),6);
     drop(store);fs::remove_file(path).unwrap();
 }
 #[test]
@@ -707,7 +857,7 @@ fn onboarding_progress_survives_restart_and_v2_upgrade_does_not_force_the_guide(
         assert_eq!(store.onboarding().unwrap().step,OnboardingStep::Chat);
         assert!(!store.onboarding().unwrap().auto_show);
         assert!(store.onboarding().unwrap().completed_at.is_none());
-        store.test_connection().execute_batch("DROP TABLE onboarding;PRAGMA user_version=2;").unwrap();
+        store.test_connection().execute_batch("DROP TABLE personalization_references;DROP TABLE personalization_deleted_profiles;DROP TABLE personalization_events;DROP TABLE personalization_config;DROP TABLE onboarding;PRAGMA user_version=2;").unwrap();
     }
     let store=Store::open(&file).unwrap();
     let legacy=store.onboarding().unwrap();assert!(!legacy.auto_show);assert!(legacy.completed_at.is_none());assert!(legacy.completed_lessons.is_empty());

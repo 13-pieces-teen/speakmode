@@ -267,3 +267,212 @@ async fn fluent_pipeline_production_dispatcher_generates_then_reviews_the_same_d
     assert_eq!(review_data["draftText"], output.blocks[0].text);
     assert_eq!(requests[1], semantic_review::prepare_minimum(&config, &mode, &source, &output).unwrap().body);
 }
+
+fn dispatch_body(personalized: bool) -> Value {
+    let mut data=json!({"sourceText":"A literal personalization key is not profile data."});
+    if personalized {data["personalization"]=json!({"scene":"general","rules":[]});}
+    json!({"model":"synthetic","messages":[{"role":"system","content":"Return JSON"},
+        {"role":"user","content":data.to_string()}],"max_tokens":64,"enable_thinking":false})
+}
+
+#[test]
+fn dispatch_profile_flag_requires_a_top_level_object_in_user_wire_data() {
+    assert!(wire_has_personalization(&dispatch_body(true)));
+    for content in ["not-json",r#"{"personalization":null}"#,r#"{"personalization":true}"#,
+        r#"{"sourceText":"personalization"}"#,r#"{"writingContext":{"personalization":{}}}"#] {
+        assert!(!wire_has_personalization(&json!({"messages":[{"role":"user","content":content}]})));
+    }
+    assert!(!wire_has_personalization(&json!({"messages":[{"role":"system","content":"{\"personalization\":{}}"}]})));
+}
+
+#[tokio::test]
+async fn dispatch_observers_compose_without_adding_or_replacing_timing_events() {
+    use super::super::execution::{DispatchEvent,RequestEvent,RequestOutcome};
+    let server=Server::new(vec![Reply::new("accepted");4]).await;
+    let (config,_,_)=fixture("测试。");
+    let timing=Arc::new(Mutex::new(Vec::<RequestEvent>::new()));let timed=timing.clone();
+    let first=Arc::new(Mutex::new(Vec::<DispatchEvent>::new()));let first_seen=first.clone();
+    let second=Arc::new(Mutex::new(Vec::<DispatchEvent>::new()));let second_seen=second.clone();
+    let deadline=Instant::now()+Duration::from_secs(3);
+    let execution=RewriteExecution::observed(deadline,move|event|timed.lock().unwrap().push(event))
+        .with_dispatch_observer(move|event|first_seen.lock().unwrap().push(event))
+        .with_dispatch_observer(move|event|second_seen.lock().unwrap().push(event));
+    assert_eq!(execution.deadline,deadline);
+    let stages=[RequestStage::Generation,RequestStage::Review,RequestStage::Repair,RequestStage::FinalReview];
+    for stage in stages {
+        assert_eq!(request_observed(&client(),&config,"synthetic",&server.endpoint,&dispatch_body(true),
+            &CancellationToken::new(),&execution,stage).await.unwrap(),"accepted");
+    }
+    assert_eq!(server.count(),4);
+    let dispatches=first.lock().unwrap();assert_eq!(*dispatches,*second.lock().unwrap());
+    assert_eq!(dispatches.iter().map(|event|event.stage).collect::<Vec<_>>(),stages);
+    assert!(dispatches.iter().all(|event|event.personalization));
+    let timed=timing.lock().unwrap();assert_eq!(timed.len(),8);
+    for (pair,stage) in timed.chunks_exact(2).zip(stages) {
+        assert_eq!(pair[0].stage,stage);assert_eq!(pair[1].stage,stage);
+        assert!(pair[0].finished_at.is_none());assert!(pair[0].outcome.is_none());
+        assert_eq!(pair[1].started_at,pair[0].started_at);assert!(pair[1].finished_at.is_some());
+        assert_eq!(pair[1].outcome,Some(RequestOutcome::ResponseReceived));
+    }
+}
+
+#[tokio::test]
+async fn dispatch_profile_flag_uses_the_adapted_wire_body_for_all_six_providers() {
+    for provider in ["aliyun","openai","deepseek","kimi","zhipu","custom"] {
+        let server=Server::new(vec![Reply::new("accepted");2]).await;
+        let (mut config,_,_)=fixture("测试。");config.rewrite_provider=provider.into();
+        let dispatches=Arc::new(Mutex::new(Vec::new()));let seen=dispatches.clone();
+        let execution=RewriteExecution::for_duration(Duration::from_secs(3))
+            .with_dispatch_observer(move|event|seen.lock().unwrap().push(event));
+        for personalized in [false,true] {
+            request_observed(&client(),&config,"synthetic",&server.endpoint,&dispatch_body(personalized),
+                &CancellationToken::new(),&execution,RequestStage::Generation).await.unwrap();
+        }
+        assert_eq!(server.count(),2,"{provider}");
+        assert_eq!(dispatches.lock().unwrap().iter().map(|event|event.personalization).collect::<Vec<_>>(),[false,true],"{provider}");
+        for (body,personalized) in server.requests.lock().unwrap().iter().zip([false,true]) {
+            assert_eq!(wire_has_personalization(body),personalized,"{provider}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn dispatch_never_counts_local_conversion_url_or_header_build_failures() {
+    use super::super::execution::{RequestEvent,RequestOutcome};
+    for variant in 0..5 {
+        let server=Server::new(vec![Reply::new("must not arrive")]).await;
+        let (mut config,_,_)=fixture("测试。");
+        let mut body=dispatch_body(true);let mut secret="synthetic";let mut endpoint=server.endpoint.as_str();
+        match variant {
+            0=>config.rewrite_provider="unknown".into(),1=>body=json!([]),
+            2=>secret="invalid\nheader",3=>config.workspace=Some("invalid\nworkspace".into()),
+            _=>endpoint="invalid url",
+        }
+        let dispatches=Arc::new(Mutex::new(Vec::new()));let seen=dispatches.clone();
+        let timing=Arc::new(Mutex::new(Vec::<RequestEvent>::new()));let timed=timing.clone();
+        let execution=RewriteExecution::observed(Instant::now()+Duration::from_secs(2),move|event|timed.lock().unwrap().push(event))
+            .with_dispatch_observer(move|event|seen.lock().unwrap().push(event));
+        assert!(request_observed(&client(),&config,secret,endpoint,&body,&CancellationToken::new(),&execution,RequestStage::Generation).await.is_err());
+        assert_eq!(server.count(),0,"variant {variant}");assert!(dispatches.lock().unwrap().is_empty(),"variant {variant}");
+        let timing=timing.lock().unwrap();assert_eq!(timing.len(),2);
+        assert!(timing[0].finished_at.is_none());assert_eq!(timing[1].outcome,Some(RequestOutcome::Failed));
+    }
+}
+
+#[tokio::test]
+async fn dispatch_pre_cancel_and_expired_deadline_never_enter_the_send_future() {
+    for (cancelled,expired) in [(true,false),(false,true),(true,true)] {
+        let server=Server::new(vec![Reply::new("must not arrive")]).await;
+        let (config,_,_)=fixture("测试。");let cancel=CancellationToken::new();if cancelled{cancel.cancel();}
+        let dispatches=Arc::new(Mutex::new(Vec::new()));let seen=dispatches.clone();
+        let deadline=if expired{Instant::now()-Duration::from_millis(1)}else{Instant::now()+Duration::from_secs(2)};
+        let execution=RewriteExecution::until(deadline).with_dispatch_observer(move|event|seen.lock().unwrap().push(event));
+        let error=request_observed(&client(),&config,"synthetic",&server.endpoint,&dispatch_body(true),&cancel,&execution,RequestStage::Generation).await.unwrap_err();
+        assert_eq!(error.code,if cancelled{"cancelled"}else{"rewrite_timeout"});
+        assert!(dispatches.lock().unwrap().is_empty());assert_eq!(server.count(),0);
+    }
+    // A timing callback may cancel after its early start event. It is still not
+    // a send attempt; transport checks again before polling the send future.
+    let server=Server::new(vec![Reply::new("must not arrive")]).await;
+    let (config,_,_)=fixture("测试。");let cancel=CancellationToken::new();let stop=cancel.clone();
+    let count=Arc::new(std::sync::atomic::AtomicUsize::new(0));let seen=count.clone();
+    let execution=RewriteExecution::observed(Instant::now()+Duration::from_secs(2),move|event|if event.finished_at.is_none(){stop.cancel();})
+        .with_dispatch_observer(move|_|{seen.fetch_add(1,std::sync::atomic::Ordering::SeqCst);});
+    assert_eq!(request_observed(&client(),&config,"synthetic",&server.endpoint,&dispatch_body(true),&cancel,&execution,RequestStage::Generation).await.unwrap_err().code,"cancelled");
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst),0);assert_eq!(server.count(),0);
+}
+
+#[tokio::test]
+async fn dispatch_is_recorded_once_when_http_fails_or_is_cancelled_after_arrival() {
+    for status in [401,503] {
+        let server=Server::new(vec![Reply{status,..Reply::new("private response")}]).await;
+        let (config,_,_)=fixture("测试。");let count=Arc::new(std::sync::atomic::AtomicUsize::new(0));let seen=count.clone();
+        let execution=RewriteExecution::for_duration(Duration::from_secs(2)).with_dispatch_observer(move|_|{seen.fetch_add(1,std::sync::atomic::Ordering::SeqCst);});
+        let error=request_observed(&client(),&config,"synthetic",&server.endpoint,&dispatch_body(true),&CancellationToken::new(),&execution,RequestStage::Generation).await.unwrap_err();
+        assert_eq!(error.code,if status==401{"authentication_failed"}else{"rewrite_service_error"});
+        assert_eq!(server.count(),1);assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst),1);
+    }
+    let server=Server::new(vec![Reply::new("private response").after(1500)]).await;
+    let (config,_,_)=fixture("测试。");let cancel=CancellationToken::new();let stop=cancel.clone();let endpoint=server.endpoint.clone();
+    let count=Arc::new(std::sync::atomic::AtomicUsize::new(0));let seen=count.clone();
+    let execution=RewriteExecution::for_duration(Duration::from_secs(3)).with_dispatch_observer(move|_|{seen.fetch_add(1,std::sync::atomic::Ordering::SeqCst);});
+    let task=tokio::spawn(async move{request_observed(&client(),&config,"synthetic",&endpoint,&dispatch_body(true),&stop,&execution,RequestStage::Generation).await});
+    server.wait_for(1).await;cancel.cancel();assert_eq!(task.await.unwrap().unwrap_err().code,"cancelled");
+    assert_eq!(server.count(),1);assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst),1);
+}
+
+fn dispatch_writing_context() -> crate::core::writing_context::WritingContext {
+    use crate::core::{AppWritingScene,DraftLanguage};
+    use crate::core::personalization::{PersonalizationConfig,ExpressionStyle};
+    let config=PersonalizationConfig{enabled:true,
+        preferences:ExpressionStyle{keep_english_terms:true,..Default::default()},..Default::default()};
+    crate::core::writing_context::WritingContext{scene:AppWritingScene::General,language:DraftLanguage::AsSpoken,
+        input:None,personalization:config.freeze(AppWritingScene::General)}
+}
+
+#[tokio::test]
+async fn dispatch_tracking_survives_manual_and_confirmed_preview_paths_with_and_without_context() {
+    use super::super::{manual_candidate,confirmed_candidate};
+    use crate::core::{ConfirmedContext,DraftLanguage};
+    for personalized in [false,true] {
+        for confirmed in [false,true] {
+            let input="I have not released the report.";
+            let (config,mode,source)=fixture(input);let context=dispatch_writing_context();
+            assert!(context.personalization.is_some());
+            let writing=personalized.then_some(&context);
+            let expected_calls=if confirmed||personalized{2}else{1};
+            let mut replies=vec![Reply::draft(input)];if expected_calls==2{replies.push(Reply::new(ACCEPT));}
+            let server=Server::new(replies).await;
+            let dispatches=Arc::new(Mutex::new(Vec::new()));let seen=dispatches.clone();
+            let execution=RewriteExecution::for_duration(Duration::from_secs(3))
+                .with_dispatch_observer(move|event|seen.lock().unwrap().push(event));
+            let result=if confirmed {
+                let confirmed_context=ConfirmedContext{source_revision_id:source.id.clone(),language:DraftLanguage::AsSpoken,corrections:Vec::new()};
+                confirmed_candidate::run_until_with_writing_context(&client(),&config,"synthetic",&mode,&source,
+                    &DictionarySnapshot::default(),&confirmed_context,CancellationToken::new(),&server.endpoint,execution,writing).await.result
+            } else {
+                manual_candidate::run_until_with_writing_context(&client(),&config,"synthetic",&mode,&source,
+                    &DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,writing,execution).await
+            };
+            let candidate=result.unwrap();assert!(candidate.review_issues.is_empty());
+            assert_eq!(candidate.draft.blocks[0].text,input);assert_eq!(source.text(),input);
+            assert_eq!(server.count(),expected_calls,"confirmed={confirmed} personalized={personalized}");
+            let observed=dispatches.lock().unwrap();assert_eq!(observed.len(),expected_calls);
+            assert!(observed.iter().all(|event|event.personalization==personalized));
+            assert_eq!(observed[0].stage,RequestStage::Generation);
+            if expected_calls==2{assert_eq!(observed[1].stage,RequestStage::Review);}
+            for body in server.requests.lock().unwrap().iter(){assert_eq!(wire_has_personalization(body),personalized);}
+        }
+    }
+}
+
+#[tokio::test]
+async fn dispatch_tracking_records_profile_payload_in_generation_review_repair_and_final_review() {
+    let input="嗯，呃呃，就是就是，我我觉得方案暂时不可行。";
+    let server=Server::new(vec![Reply::draft(input),Reply::new(ACCEPT),
+        Reply::new(json!({"replacements":[{"id":"r0","text":"我觉得方案暂时不可行。"}]}).to_string()),Reply::new(ACCEPT)]).await;
+    let (config,mode,source)=fixture(input);let context=dispatch_writing_context();
+    let dispatches=Arc::new(Mutex::new(Vec::new()));let seen=dispatches.clone();
+    let execution=RewriteExecution::for_duration(Duration::from_secs(3))
+        .with_dispatch_observer(move|event|seen.lock().unwrap().push(event));
+    let outcome=super::super::minimum_pipeline::execute_until_with_writing_context(&client(),&config,"synthetic",&mode,
+        &source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,execution,None,Some(&context)).await;
+    assert!(outcome.result.is_ok(),"{:?}",outcome.result.err());assert_eq!(server.count(),4);
+    let observed=dispatches.lock().unwrap();
+    assert_eq!(observed.iter().map(|event|event.stage).collect::<Vec<_>>(),
+        [RequestStage::Generation,RequestStage::Review,RequestStage::Repair,RequestStage::FinalReview]);
+    assert!(observed.iter().all(|event|event.personalization));
+    for body in server.requests.lock().unwrap().iter(){assert!(wire_has_personalization(body));}
+}
+
+#[tokio::test]
+async fn dispatch_selected_profile_with_local_english_guard_failure_is_not_a_send() {
+    let server=Server::new(vec![Reply::new("must not arrive")]).await;
+    let (config,mode,source)=fixture("请把这两个约束分开列点。");let mut context=dispatch_writing_context();
+    context.language=crate::core::DraftLanguage::English;assert!(context.personalization.is_some());
+    let count=Arc::new(std::sync::atomic::AtomicUsize::new(0));let seen=count.clone();
+    let execution=RewriteExecution::for_duration(Duration::from_secs(3)).with_dispatch_observer(move|_|{seen.fetch_add(1,std::sync::atomic::Ordering::SeqCst);});
+    let result=super::super::manual_candidate::run_until_with_writing_context(&client(),&config,"synthetic",&mode,
+        &source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,Some(&context),execution).await;
+    assert!(result.is_err());assert_eq!(server.count(),0);assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst),0);
+}

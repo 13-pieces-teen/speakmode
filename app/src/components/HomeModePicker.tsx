@@ -12,6 +12,7 @@ interface HomeModePickerProps {
   value: Mode;
   onChange: (mode: Mode) => Promise<void>;
   onManage: () => void;
+  onPersonalization?: () => void;
 }
 
 interface SaveError {
@@ -21,7 +22,7 @@ interface SaveError {
 }
 
 /** A compact entry point; only the native preference refresh changes selection. */
-export function HomeModePicker({ value, onChange, onManage }: HomeModePickerProps) {
+export function HomeModePicker({ value, onChange, onManage, onPersonalization }: HomeModePickerProps) {
   const catalog = useModes();
   const options = scenarioOptions(value, catalog.modes);
   const currentName = catalog.label(value);
@@ -100,6 +101,7 @@ export function HomeModePicker({ value, onChange, onManage }: HomeModePickerProp
         <DropdownMenu.Item className="home-mode-manage" disabled={busy} onSelect={onManage}>
           管理场合<ArrowRightIcon aria-hidden="true" />
         </DropdownMenu.Item>
+        {onPersonalization&&<DropdownMenu.Item className="home-mode-manage" disabled={busy} onSelect={onPersonalization}>个性化设置<ArrowRightIcon aria-hidden="true"/></DropdownMenu.Item>}
       </DropdownMenu.Content>
     </DropdownMenu.Root>
     <span className="home-mode-status" id={statusId} role="status" aria-atomic="true">{status}</span>

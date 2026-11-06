@@ -16,6 +16,13 @@ for(const platform of ['MacIntel','Win32']){
  const prefs=await import(pathToFileURL(dir+'/preferences.mjs'));
  const apps=await import(pathToFileURL(dir+'/appWriting.mjs'));
  assert.equal(prefs.shortcutLabel('alt_right'),platform==='MacIntel'?'右 Option':'右 Alt');
+ assert.equal(prefs.defaultPreferences.recorderCaptionsEnabled,false);
+ const nativePreferences=prefs.toNativePatch({...prefs.defaultPreferences,recorderCaptionsEnabled:true});
+ assert.equal(nativePreferences.shortcut,'alt_right');
+ assert.equal(nativePreferences.recorderCaptionsEnabled,true);
+ assert.equal(prefs.fromNativePreferences(nativePreferences).recorderCaptionsEnabled,true);
+ delete nativePreferences.recorderCaptionsEnabled;
+ assert.equal(prefs.fromNativePreferences(nativePreferences).recorderCaptionsEnabled,false);
  for(const shortcut of ['alt_right','ctrl+shift+k','option_left+space','command_right+shift+k']){
   const canonical=prefs.shortcutCanonical(prefs.shortcutLabel(shortcut));
   assert.equal(canonical,shortcut);
@@ -33,4 +40,4 @@ for(const platform of ['MacIntel','Win32']){
  assert.ok(readMacShortcut(event).error);
  assert.ok(readMacShortcut({...event,altKey:true,nativeEvent:{isComposing:true}}).error);
 }
-console.log('PASS: Mac/Windows shortcut round-trip, application identities and Mac shortcut conflicts');
+console.log('PASS: Mac/Windows shortcut and caption preference round-trip, legacy defaults, application identities and Mac shortcut conflicts');

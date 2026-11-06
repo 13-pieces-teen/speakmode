@@ -149,5 +149,8 @@ pub use listener::{BlockingHotkeys, KeyboardListener, KeyOrigin, Lifecycle, Obse
 pub use manager::HotkeyManager;
 pub use types::{Hotkey, HotkeyEvent, HotkeyId, HotkeyState, Key, KeyEvent, Modifiers};
 
+#[cfg(target_os = "windows")]
+pub use platform::windows::activity::{InputActivitySnapshot, input_activity_snapshot};
+
 #[cfg(target_os = "macos")]
 pub use platform::macos::{check_accessibility, open_accessibility_settings};

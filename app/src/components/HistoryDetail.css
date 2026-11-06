@@ -54,8 +54,8 @@
 .history-sentence-line > span { display: block; margin-bottom: 8px; color: var(--sm-muted); font-size: 12px; line-height: 20px; }
 .history-sentence-line p { margin: 0; color: var(--sm-ink); font-size: 14px; line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @container history-detail (min-width: 620px) {
-  .history-reading-layout { grid-template-columns: minmax(0, 1fr) 164px; gap: 24px; }
-  .history-tools { grid-template-columns: minmax(0, 1fr); padding: 0 0 0 20px; border-top: 0; border-left: 1px solid var(--sm-line); }
+  .history-reading-layout { grid-template-columns: minmax(0, 1fr); }
+  .history-tools { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .history-version-tools { border-top: 1px solid var(--sm-line); padding-top: 16px; }
   .history-mode-panel .mode-selector { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .history-mode-panel .mode-option.rt-RadioCardsItem { align-items: flex-start; padding: 12px 10px; gap: 6px; }
@@ -112,3 +112,10 @@
 .confirmed-context-editor .rt-TextFieldRoot {margin-bottom:10px;}
 
 .history-writing-reference { margin: 0; color: var(--sm-muted); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+
+.history-quick-actions { display:flex; gap:12px; margin-top:18px; }
+.history-more { margin-top:18px; color:var(--sm-muted); font-size:12px; }
+.history-more > summary,.session-recovery-more > summary { cursor:pointer; padding:8px 0; }
+.history-more > summary:focus-visible,.session-recovery-more > summary:focus-visible { outline:2px solid var(--accent-9); outline-offset:3px; border-radius:4px; }
+.history-more .history-tools { margin-top:8px; }
+.session-recovery-more { margin-top:12px; }

@@ -1,16 +1,26 @@
 /* Keep the desktop padding transparent; popovers retain their own white surface. */
 html[data-surface=recorder],html[data-surface=recorder] body,html[data-surface=recorder] #root > .radix-themes[data-is-root-theme=true]{background:transparent!important}
 .recorder-surface{min-height:100dvh;display:flex;align-items:flex-end;justify-content:center;padding:8px 12px 12px;color:#20354c}
-.recorder-assembly{width:312px;min-width:0;flex:none}
+.recorder-assembly{width:274px;min-width:0;flex:none}
 .recorder-assembly[data-details=true]{width:320px}
-.recorder-toolbar{display:flex;align-items:center;gap:6px;width:312px;height:46px;padding:6px 8px;margin:0 auto;border:1px solid #dce5ef;border-radius:12px;background:#fff;box-shadow:0 3px 8px #23436814,0 8px 20px #23436812}
-.recorder-mode-trigger{flex:none;width:112px;min-width:0;height:30px;padding:0 7px;display:flex;align-items:center;gap:6px;border:1px solid #dce7f5;border-radius:7px;background:#eef4fc;color:#315b91;font-size:12px;font-weight:600;cursor:pointer;box-shadow:inset 0 1px 0 #fff}
-.recorder-mode-trigger>span{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}.recorder-mode-trigger>svg{width:14px;height:14px;flex:none}.recorder-mode-trigger>svg:last-child{width:10px;height:10px}.recorder-mode-trigger:hover:not(:disabled){background:#e5effc}.recorder-mode-trigger:disabled{color:#8192a8;background:#f0f3f7;cursor:default}
-.recorder-divider{height:18px;width:1px;background:#dce5ef;flex:none}
-.recorder-level{min-width:0;flex:1;display:grid;place-items:center;height:28px}
-.recorder-level-bars{max-width:100%;height:26px;display:flex;align-items:center;justify-content:center;gap:3px;width:80px}.recorder-level-bars span{display:block;flex:none;width:3px;height:24px;background:#6794d3;border-radius:3px;transform-origin:center}
-.recorder-phase{font-size:11px;color:#62758a;white-space:nowrap}
-.recorder-action{flex:none;width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid #e5ebf2;border-radius:8px;background:#f4f7fa;color:#687a90;cursor:pointer;transition:transform 100ms cubic-bezier(.2,.8,.2,1)}.recorder-action svg{width:18px;height:18px}.recorder-action:hover:not(:disabled){background:#eaf0f7;border-color:#d6e0ec;color:#354d69}.recorder-finish{background:#2b68c9;border-color:#285fb8;color:#fff;box-shadow:inset 0 1px 0 #ffffff29}.recorder-finish:hover:not(:disabled){background:#245db4;color:#fff}.recorder-action:active:not(:disabled){transform:scale(.95)}.recorder-action:disabled{background:#f0f3f7;border-color:#e2e8ef;color:#97a6b8;cursor:default;box-shadow:none}.recorder-action:focus-visible,.recorder-mode-trigger:focus-visible{outline:2px solid #174eb5;outline-offset:2px}
+.recorder-toolbar{position:relative;display:grid;grid-template-columns:32px minmax(0,1fr) 32px;align-items:center;gap:8px;width:274px;height:48px;padding:7px 8px;margin:0 auto;border:1px solid #35465d;border-radius:16px;background:var(--sm-ink,#202d40);color:#f4f7fc;box-shadow:inset 0 1px 0 #ffffff0a,0 3px 8px #17263c24,0 8px 18px #17263c14}
+.recorder-mode-anchor{position:absolute;left:0;top:0;width:1px;height:1px;pointer-events:none}
+.recorder-level{min-width:0;display:flex;align-items:center;justify-content:center;gap:10px;height:32px}
+.recorder-signal{width:28px;height:24px;flex:none;display:grid;place-items:center;color:#9abef0}
+.recorder-signal>svg{width:17px;height:17px;color:#f1c787}
+.recorder-level-bars{max-width:100%;height:24px;display:flex;align-items:center;justify-content:center;gap:2px;width:28px;flex:none}.recorder-level-bars span{display:block;flex:none;width:2px;height:20px;background:#9abef0;border-radius:2px;transform-origin:center}
+/* Show seven actual samples, including the newest one, with room between them. */
+.recorder-level-bars span:nth-child(even){display:none}
+.recorder-phase{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:500;line-height:20px;color:#f4f7fc;white-space:nowrap}
+.recorder-toolbar[data-state=attention] .recorder-phase{color:#f8e4bf}
+.recorder-progress{width:14px;height:14px;border:2px solid #ffffff26;border-top-color:#9abef0;border-right-color:#9abef0;border-radius:50%;animation:recorder-progress-turn 900ms linear infinite}
+.recorder-resting{width:5px;height:5px;border-radius:50%;background:#a9b7c9}
+.recorder-action-slot{width:32px;height:32px;display:grid;place-items:center}
+.recorder-recovery{margin-top:8px;padding:12px 14px;border:1px solid #eadfcf;border-radius:12px;background:#fffcf7;color:#6c5940;font-size:12px;line-height:19px;box-shadow:0 3px 10px #2343680b}
+.recorder-recovery p{margin:0;max-height:96px;overflow:auto;overflow-wrap:anywhere}
+.recorder-recovery .recorder-copy-notice{margin-top:6px;color:#365b47}
+.recorder-recovery-actions{display:flex;justify-content:flex-end;align-items:center;gap:14px;margin-top:10px}
+.recorder-action{flex:none;width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid transparent;border-radius:10px;background:transparent;color:#b7c3d3;cursor:pointer;transition:transform 100ms cubic-bezier(.2,.8,.2,1)}.recorder-action svg{width:16px;height:16px}.recorder-action:hover:not(:disabled){background:#ffffff12;color:#fff}.recorder-finish{background:#f4f7fc;border-color:#ffffff80;color:#293a53;box-shadow:0 1px 3px #0d162326}.recorder-finish:hover:not(:disabled){background:#dce9fc;color:#202d40}.recorder-action:active:not(:disabled){transform:scale(.95)}.recorder-action:disabled{background:transparent;border-color:transparent;color:#728199;cursor:default;box-shadow:none}.recorder-action:focus-visible{outline:2px solid #abcaff;outline-offset:2px}
 .recorder-caption{margin-top:8px;border-radius:10px;background:#fff;box-shadow:0 0 0 1px #30507517,0 5px 15px #2343680f;padding:8px 14px;animation:recorder-caption-in 180ms cubic-bezier(.2,.7,.2,1)}
 .recorder-caption-viewport{border:0;background:transparent;padding:0;display:block;width:100%;text-align:left;color:#20354c;overflow:hidden;white-space:nowrap;line-height:24px;height:24px;font-size:14px}
 .recorder-caption-track{display:inline-block;white-space:pre;vertical-align:top}.recorder-caption[data-following=true] .recorder-caption-track{transition:transform 140ms cubic-bezier(.2,.7,.2,1)}
@@ -36,19 +46,11 @@ html[data-surface=recorder],html[data-surface=recorder] body,html[data-surface=r
 .recorder-mode-check{display:grid;place-items:center;width:16px;height:16px;border-radius:50%}.recorder-mode-check svg{width:11px;height:11px}.recorder-mode-option[aria-checked=true] .recorder-mode-check{background:#2b68c9;color:#fff}
 .recorder-mode-preview{flex:none;display:flex;align-items:flex-start;gap:7px;height:42px;margin:6px 6px 0;padding:7px 0 1px;border-top:1px solid #e9eef5;color:#657b95;font-size:10px;line-height:15px}.recorder-mode-preview>svg{flex:none;width:12px;height:12px;margin-top:1px}.recorder-mode-preview>span{min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 .recorder-mode-notice{flex:none;font-size:10px;line-height:15px;color:#71839b;margin:0 8px 6px;overflow-wrap:anywhere}
-.recorder-mode-trigger[data-motion=pointer] svg:last-child{transition:transform 150ms cubic-bezier(.16,1,.3,1)}.recorder-mode-trigger[data-state=open] svg:last-child{transform:rotate(180deg)}
-.recorder-mode-trigger[data-state=open]{border-color:#a9c4eb;background:#e5effc;color:#245aa9}
 /* Leave room for choices inside the bounded desktop window; reading state is preserved. */
 .recorder-assembly[data-mode-open=true] .recorder-caption[data-expanded=true] .recorder-caption-viewport{max-height:24px}
 .recorder-assembly[data-mode-open=true] .recorder-caption-reading{display:none}
-.recorder-assembly[data-mode-open=true] .recorder-message p{max-height:36px}
-.recorder-message,.recorder-environment{font-size:12px;background:#fff;padding:12px 14px;border-radius:10px;margin:10px 0;color:#6a4c35;overflow-wrap:anywhere}.recorder-message p{margin:0 0 8px;max-height:64px;overflow:auto}.recorder-result-link{text-align:center;margin-top:8px}
-.recorder-delivery{display:flex;align-items:center;gap:12px;margin:8px 0 0;padding:10px 12px;border:1px solid #dde6f1;border-radius:10px;background:#fff;color:#526984;font-size:12px;line-height:18px;box-shadow:0 3px 10px #2343680b}.recorder-delivery[data-warning=true]{border-color:#eadcc8;background:#fffbf5;color:#735838}.recorder-delivery p{flex:1;min-width:0;margin:0;overflow-wrap:anywhere}.recorder-delivery button{flex:none;white-space:nowrap}
+.recorder-environment{font-size:12px;background:#fff;padding:12px 14px;border-radius:10px;margin:10px 0;color:#6a4c35;overflow-wrap:anywhere}
 .recorder-limit-warning{font-size:12px;line-height:18px;color:#785a31;background:#fff8ed;border:1px solid #eddfc8;border-radius:10px;padding:8px 12px;margin:8px 0 0;overflow-wrap:anywhere}
 @keyframes recorder-caption-in{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
-@media(prefers-reduced-motion:reduce){.recorder-mode-menu{animation:none!important;transition:none!important;transform:none!important}.recorder-caption{animation:none}.recorder-caption-track,.recorder-caption[data-following=true] .recorder-caption-track,.recorder-level-bars span,.recorder-action,.recorder-mode-option,.recorder-mode-trigger svg:last-child{transition:none}.recorder-action:active:not(:disabled){transform:none}}
-
-
-
-
-.recorder-context-note { margin: 7px 14px 0; color: #66788c; font-size: 11px; text-align: center; }
+@keyframes recorder-progress-turn{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.recorder-mode-menu{animation:none!important;transition:none!important;transform:none!important}.recorder-caption,.recorder-progress{animation:none}.recorder-caption-track,.recorder-caption[data-following=true] .recorder-caption-track,.recorder-level-bars span,.recorder-action,.recorder-mode-option{transition:none}.recorder-action:active:not(:disabled){transform:none}}

@@ -6,9 +6,10 @@ use crossbeam_channel::{Sender,Receiver,bounded,TrySendError};
 use tokio::sync::Notify;
 
 #[derive(Debug,Clone)]
-pub struct DbSnapshot {pub revision:u64,pub onboarding:OnboardingProgress,pub preferences:Preferences,pub provider_config:ProviderConfig,pub modes:Vec<ModeRecord>,pub dictionary:DictionarySnapshot,pub usage:DailyUsage,pub temporary_result:Option<HistoryDetail>}
+pub struct DbSnapshot {pub revision:u64,pub onboarding:OnboardingProgress,pub personalization:PersonalizationConfig,pub preferences:Preferences,pub provider_config:ProviderConfig,pub modes:Vec<ModeRecord>,pub dictionary:DictionarySnapshot,pub usage:DailyUsage,pub temporary_result:Option<HistoryDetail>}
 #[derive(Debug,Clone,Serialize)]
 pub enum DbCommand {
+ GetPersonalization,SavePersonalization{config:PersonalizationConfig,expected_version:u64},RecordPersonalizationEvent{event:PersonalizationEvent},GetPersonalizationEvents{since:Option<String>},SetPersonalizationFeedback{task_id:String,feedback:PersonalizationFeedback},
  ReadSnapshot{date:String},Onboarding,SaveOnboarding{progress:OnboardingProgress,expected_version:u64},Preferences,ProviderConfig,ListModes,Dictionary,SaveDictionary{draft:DictionaryDraft,expected_version:u64},ImportDictionary{terms:Vec<String>,expected_version:u64},DeleteDictionary{entry_id:String,expected_version:u64},ModeSnapshot{id:String,revision:Option<u64>},
  SavePreferences{next:Preferences,expected_version:u64},SaveProviderConfig{config:ProviderConfig,expected_version:u64},SaveMode{draft:ModeDraft},DeleteMode{id:String,expected_revision:u64},SetDefaultMode{id:String,expected_version:u64},
  GetResult{session_id:String},GetSource{source_id:String},GetOutput{revision_id:String},HistoryList{query:String,cursor:u64,limit:u64},UsageToday{date:String},UsageTotal,UsageEvent{session_id:String},
@@ -18,7 +19,7 @@ pub enum DbCommand {
  #[cfg(test)] TestQueryCount{sql:String},
 }
 #[derive(Debug,Clone)]
-pub enum DbValue {Snapshot(DbSnapshot),Onboarding(OnboardingProgress),Preferences(Preferences),ProviderConfig(ProviderConfig),Modes(Vec<ModeRecord>),Dictionary(DictionarySnapshot),Correction(CorrectionReceipt),Mode(ModeRecord),ModeSnapshot(ModeSnapshot),Detail(HistoryDetail),Source(SourceRevision),Output(OutputRevision),HistoryPage(HistoryPage),Usage(DailyUsage),UsageTotal(UsageTotals),UsageEvent(Option<UsageEvent>),Delivery(DeliveryAttempt),Unit,#[cfg(test)] Count(u64)}
+pub enum DbValue {Snapshot(DbSnapshot),Personalization(PersonalizationConfig),PersonalizationEvents(Vec<PersonalizationEvent>),Onboarding(OnboardingProgress),Preferences(Preferences),ProviderConfig(ProviderConfig),Modes(Vec<ModeRecord>),Dictionary(DictionarySnapshot),Correction(CorrectionReceipt),Mode(ModeRecord),ModeSnapshot(ModeSnapshot),Detail(HistoryDetail),Source(SourceRevision),Output(OutputRevision),HistoryPage(HistoryPage),Usage(DailyUsage),UsageTotal(UsageTotals),UsageEvent(Option<UsageEvent>),Delivery(DeliveryAttempt),Unit,#[cfg(test)] Count(u64)}
 #[derive(Debug,Clone,Copy,PartialEq,Eq)]
 pub enum DbPriority {Normal,Critical}
 #[derive(Debug,Clone)]
@@ -38,8 +39,8 @@ impl DbTicket {
  pub fn wait_blocking(&self)->StoreResult<DbValue> {let mut result=self.outcome.result.lock().unwrap_or_else(|p|p.into_inner());while result.is_none(){result=self.outcome.cv.wait(result).unwrap_or_else(|p|p.into_inner());}result.as_ref().unwrap().clone()}
  pub fn is_complete(&self)->bool {self.outcome.result.lock().unwrap_or_else(|p|p.into_inner()).is_some()}
 }
-struct Job {command:DbCommand,guard:Option<Arc<CommitGuard>>,outcome:Arc<Outcome>,bytes:usize,cleanup_key:Option<String>}
-struct Shared {snapshot:Mutex<Option<DbSnapshot>>,cache_error:Mutex<Option<StoreError>>,admission:Mutex<bool>,outstanding:AtomicUsize,bytes:AtomicUsize,owner_released:AtomicBool,stopping:AtomicBool,shutdown:Arc<Outcome>,cleanup:Mutex<Option<(String,Arc<Outcome>)>>}
+struct Job {command:DbCommand,guard:Option<Arc<CommitGuard>>,outcome:Arc<Outcome>,bytes:usize,cleanup_key:Option<String>,statistics_event:bool}
+struct Shared {snapshot:Mutex<Option<DbSnapshot>>,cache_error:Mutex<Option<StoreError>>,admission:Mutex<bool>,outstanding:AtomicUsize,bytes:AtomicUsize,owner_released:AtomicBool,stopping:AtomicBool,shutdown:Arc<Outcome>,cleanup:Mutex<Option<(String,Arc<Outcome>)>>,statistics_incomplete:AtomicBool}
 pub struct DbClient {wake:Sender<()>,normal:Sender<Job>,critical:Sender<Job>,cleanup:Sender<Job>,shared:Arc<Shared>,options:DbOptions}
 impl Clone for DbClient {fn clone(&self)->Self {Self{wake:self.wake.clone(),normal:self.normal.clone(),critical:self.critical.clone(),cleanup:self.cleanup.clone(),shared:self.shared.clone(),options:self.options.clone()}}}
 impl DbClient {
@@ -50,7 +51,7 @@ impl DbClient {
  fn start(path:Option<PathBuf>,options:DbOptions)->StoreResult<Self> {
   if options.normal_capacity==0||options.critical_capacity==0||options.byte_budget==0||options.idle_refresh.is_zero(){return Err(StoreError::Invalid("DB worker bounds must be positive".into()));}
   let (wake,wrx)=bounded(1);let (normal,nrx)=bounded(options.normal_capacity);let (critical,crx)=bounded(options.critical_capacity);let (cleanup,rrx)=bounded(1);let (boot,brecv)=bounded(1);
-  let shared=Arc::new(Shared{snapshot:Mutex::new(None),cache_error:Mutex::new(None),admission:Mutex::new(true),outstanding:AtomicUsize::new(0),bytes:AtomicUsize::new(0),owner_released:AtomicBool::new(false),stopping:AtomicBool::new(false),shutdown:Arc::new(Outcome::default()),cleanup:Mutex::new(None)});
+  let shared=Arc::new(Shared{snapshot:Mutex::new(None),cache_error:Mutex::new(None),admission:Mutex::new(true),outstanding:AtomicUsize::new(0),bytes:AtomicUsize::new(0),owner_released:AtomicBool::new(false),stopping:AtomicBool::new(false),shutdown:Arc::new(Outcome::default()),cleanup:Mutex::new(None),statistics_incomplete:AtomicBool::new(false)});
   let state=shared.clone();let opts=options.clone();
   std::thread::Builder::new().name("speakmode-db".into()).spawn(move||worker(path,opts,state,nrx,crx,rrx,wrx,boot)).map_err(|e|StoreError::Database(format!("cannot start DB owner: {e}")))?;
   brecv.recv().map_err(|_|StoreError::WorkerStopped)??;
@@ -61,9 +62,16 @@ impl DbClient {
  pub fn outstanding(&self)->usize {self.shared.outstanding.load(Ordering::SeqCst)}
  pub fn queued_bytes(&self)->usize {self.shared.bytes.load(Ordering::SeqCst)}
  pub fn owner_released(&self)->bool {self.shared.owner_released.load(Ordering::SeqCst)}
+ pub fn statistics_incomplete(&self)->bool {self.shared.statistics_incomplete.load(Ordering::SeqCst)}
  pub fn request_shutdown(&self) {*self.shared.admission.lock().unwrap_or_else(|p|p.into_inner())=false;self.shared.stopping.store(true,Ordering::SeqCst);let _=self.wake.try_send(());}
  pub async fn shutdown(&self)->StoreResult<()> {self.request_shutdown();DbTicket{outcome:self.shared.shutdown.clone()}.wait().await.map(|_|())}
  pub fn submit(&self,command:DbCommand,guard:Option<Arc<CommitGuard>>,priority:DbPriority)->StoreResult<DbTicket> {
+  let statistics_event=matches!(command,DbCommand::RecordPersonalizationEvent{..});
+  let result=self.enqueue(command,guard,priority,statistics_event);
+  if statistics_event&&result.is_err(){self.shared.statistics_incomplete.store(true,Ordering::SeqCst);}
+  result
+ }
+ fn enqueue(&self,command:DbCommand,guard:Option<Arc<CommitGuard>>,priority:DbPriority,statistics_event:bool)->StoreResult<DbTicket> {
   if matches!(command,DbCommand::Shutdown){self.request_shutdown();return Ok(DbTicket{outcome:self.shared.shutdown.clone()});}
   let bytes=command.payload_bytes()?;
   let admission=self.shared.admission.lock().map_err(|_|StoreError::WorkerStopped)?;
@@ -80,19 +88,19 @@ impl DbClient {
   let reserved_bytes=if cleanup_key.is_some(){0}else{bytes};let outcome=Arc::new(Outcome::default());let ticket=DbTicket{outcome:outcome.clone()};
   self.shared.bytes.fetch_add(reserved_bytes,Ordering::SeqCst);self.shared.outstanding.fetch_add(1,Ordering::SeqCst);
   if let Some(key)=&cleanup_key {*cleanup_state=Some((key.clone(),outcome.clone()));}
-  let job=Job{command,guard,outcome,bytes:reserved_bytes,cleanup_key:cleanup_key.clone()};
+  let job=Job{command,guard,outcome,bytes:reserved_bytes,cleanup_key:cleanup_key.clone(),statistics_event};
   let sender=if cleanup_key.is_some(){&self.cleanup}else if priority==DbPriority::Critical{&self.critical}else{&self.normal};
   match sender.try_send(job) {Ok(())=>Ok(ticket),Err(error)=>{self.shared.bytes.fetch_sub(reserved_bytes,Ordering::SeqCst);self.shared.outstanding.fetch_sub(1,Ordering::SeqCst);if cleanup_key.is_some(){*cleanup_state=None;}Err(match error{TrySendError::Full(_)=>StoreError::Busy,TrySendError::Disconnected(_)=>StoreError::WorkerStopped})}}
  }
 }
 impl DbCommand {
  fn payload_bytes(&self)->StoreResult<usize>{struct Count(usize);impl std::io::Write for Count{fn write(&mut self,b:&[u8])->std::io::Result<usize>{self.0=self.0.saturating_add(b.len());Ok(b.len())}fn flush(&mut self)->std::io::Result<()>{Ok(())}}let mut count=Count(0);serde_json::to_writer(&mut count,self)?;Ok(count.0)}
- fn writes(&self)->bool {#[cfg(test)] if matches!(self,Self::TestQueryCount{..}){return false;} !matches!(self,Self::ReadSnapshot{..}|Self::Onboarding|Self::Preferences|Self::ProviderConfig|Self::ListModes|Self::Dictionary|Self::ModeSnapshot{..}|Self::GetResult{..}|Self::GetSource{..}|Self::GetOutput{..}|Self::HistoryList{..}|Self::UsageToday{..}|Self::UsageTotal|Self::UsageEvent{..}|Self::DeliveryAttempt{..})}
+ fn writes(&self)->bool {#[cfg(test)] if matches!(self,Self::TestQueryCount{..}){return false;} !matches!(self,Self::GetPersonalization|Self::GetPersonalizationEvents{..}|Self::ReadSnapshot{..}|Self::Onboarding|Self::Preferences|Self::ProviderConfig|Self::ListModes|Self::Dictionary|Self::ModeSnapshot{..}|Self::GetResult{..}|Self::GetSource{..}|Self::GetOutput{..}|Self::HistoryList{..}|Self::UsageToday{..}|Self::UsageTotal|Self::UsageEvent{..}|Self::DeliveryAttempt{..})}
 }
 // Implementation is kept below the DTOs so engine callers can migrate independently.
 
 fn today()->String {chrono::Local::now().format("%Y-%m-%d").to_string()}
-fn build_snapshot(store:&Store,date:&str,revision:u64)->StoreResult<DbSnapshot>{store.read_consistent(|store|Ok(DbSnapshot{revision,onboarding:store.onboarding()?,preferences:store.preferences()?,provider_config:store.provider_config()?,modes:store.list_modes()?,dictionary:store.dictionary()?,usage:store.usage_today(date)?,temporary_result:store.latest_temporary_result()?}))}
+fn build_snapshot(store:&Store,date:&str,revision:u64)->StoreResult<DbSnapshot>{store.read_consistent(|store|Ok(DbSnapshot{revision,onboarding:store.onboarding()?,personalization:store.personalization()?,preferences:store.preferences()?,provider_config:store.provider_config()?,modes:store.list_modes()?,dictionary:store.dictionary()?,usage:store.usage_today(date)?,temporary_result:store.latest_temporary_result()?}))}
 fn refresh(store:&Store,shared:&Shared,date:&str)->StoreResult<DbSnapshot>{
  let revision=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_ref().map_or(1,|s|s.revision.saturating_add(1));
  match build_snapshot(store,date,revision){Ok(snapshot)=>{*shared.snapshot.lock().unwrap_or_else(|p|p.into_inner())=Some(snapshot.clone());*shared.cache_error.lock().unwrap_or_else(|p|p.into_inner())=None;Ok(snapshot)},Err(error)=>{*shared.cache_error.lock().unwrap_or_else(|p|p.into_inner())=Some(error.clone());Err(error)}}
@@ -120,6 +128,7 @@ fn execute(store:&mut Store,command:DbCommand,guard:Option<Arc<CommitGuard>>)->S
 fn execute_inner(store:&mut Store,command:DbCommand)->StoreResult<DbValue>{
  use DbCommand as C;use DbValue as V;
  match command{
+  C::GetPersonalization=>Ok(V::Personalization(store.personalization()?)),C::SavePersonalization{config,expected_version}=>Ok(V::Personalization(store.save_personalization(config,expected_version)?)),C::GetPersonalizationEvents{since}=>Ok(V::PersonalizationEvents(store.personalization_events(since.as_deref())?)),C::RecordPersonalizationEvent{event}=>{store.record_personalization_event(event)?;Ok(V::Unit)},C::SetPersonalizationFeedback{task_id,feedback}=>{store.set_personalization_feedback(&task_id,feedback)?;Ok(V::Unit)},
   C::Onboarding=>Ok(V::Onboarding(store.onboarding()?)),C::SaveOnboarding{progress,expected_version}=>Ok(V::Onboarding(store.save_onboarding(progress,expected_version)?)),
   C::Preferences=>Ok(V::Preferences(store.preferences()?)),C::ProviderConfig=>Ok(V::ProviderConfig(store.provider_config()?)),C::ListModes=>Ok(V::Modes(store.list_modes()?)),C::Dictionary=>Ok(V::Dictionary(store.dictionary()?)),C::SaveDictionary{draft,expected_version}=>Ok(V::Dictionary(store.save_dictionary_entry(draft,expected_version)?)),C::ImportDictionary{terms,expected_version}=>Ok(V::Dictionary(store.import_dictionary(terms,expected_version)?)),C::DeleteDictionary{entry_id,expected_version}=>Ok(V::Dictionary(store.delete_dictionary_entry(&entry_id,expected_version)?)),C::ModeSnapshot{id,revision}=>Ok(V::ModeSnapshot(store.mode_snapshot(&id,revision)?)),
   C::SavePreferences{next,expected_version}=>Ok(V::Preferences(store.save_preferences(next,expected_version)?)),C::SaveProviderConfig{config,expected_version}=>Ok(V::ProviderConfig(store.save_provider_config(config,expected_version)?)),C::SaveMode{draft}=>Ok(V::Mode(store.save_mode(draft)?)),C::DeleteMode{id,expected_revision}=>{store.delete_mode(&id,expected_revision)?;Ok(V::Unit)},C::SetDefaultMode{id,expected_version}=>Ok(V::Preferences(store.set_default_mode(&id,expected_version)?)),
@@ -135,16 +144,19 @@ fn execute_inner(store:&mut Store,command:DbCommand)->StoreResult<DbValue>{
 // Queries that assemble multiple tables execute in a consistent read transaction.
 fn execute_read(store:&Store,command:DbCommand)->StoreResult<DbValue>{store.read_consistent(|s|{
  use DbCommand as C;use DbValue as V;match command{
+ C::GetPersonalization=>Ok(V::Personalization(s.personalization()?)),C::GetPersonalizationEvents{since}=>Ok(V::PersonalizationEvents(s.personalization_events(since.as_deref())?)),
  C::Onboarding=>Ok(V::Onboarding(s.onboarding()?)),C::Preferences=>Ok(V::Preferences(s.preferences()?)),C::ProviderConfig=>Ok(V::ProviderConfig(s.provider_config()?)),C::ListModes=>Ok(V::Modes(s.list_modes()?)),C::Dictionary=>Ok(V::Dictionary(s.dictionary()?)),C::ModeSnapshot{id,revision}=>Ok(V::ModeSnapshot(s.mode_snapshot(&id,revision)?)),C::GetResult{session_id}=>Ok(V::Detail(s.get_result(&session_id)?)),C::GetSource{source_id}=>Ok(V::Source(s.get_source(&source_id)?)),C::GetOutput{revision_id}=>Ok(V::Output(s.get_output(&revision_id)?)),C::HistoryList{query,cursor,limit}=>Ok(V::HistoryPage(s.history_list(&query,cursor,limit)?)),C::UsageToday{date}=>Ok(V::Usage(s.usage_today(&date)?)),C::UsageTotal=>Ok(V::UsageTotal(s.usage_totals()?)),C::UsageEvent{session_id}=>Ok(V::UsageEvent(s.usage_event(&session_id)?)),C::DeliveryAttempt{attempt_id}=>Ok(V::Delivery(s.delivery_attempt(&attempt_id)?)),
  #[cfg(test)] C::TestQueryCount{sql}=>Ok(V::Count(s.test_connection().query_row(&sql,[],|r|r.get(0))?)),_=>Err(StoreError::Invalid("write reached read dispatcher".into()))}
 })}
 fn finish_job(shared:&Shared,job:Job,result:StoreResult<DbValue>){
+ if job.statistics_event&&result.is_err(){shared.statistics_incomplete.store(true,Ordering::SeqCst);}
  shared.bytes.fetch_sub(job.bytes,Ordering::SeqCst);shared.outstanding.fetch_sub(1,Ordering::SeqCst);
  if job.cleanup_key.is_some(){*shared.cleanup.lock().unwrap_or_else(|p|p.into_inner())=None;}
  job.outcome.complete(result);
 }
 fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Receiver<Job>,critical:Receiver<Job>,cleanup:Receiver<Job>,wake:Receiver<()>,boot:Sender<StoreResult<()>>){
- let opened=(||{let mut store=if let Some(path)=path{Store::open(path)?}else{Store::in_memory()?};store.apply_app_upgrades()?;store.recover_after_restart()?;refresh(&store,&shared,&today())?;Ok::<_,StoreError>(store)})();
+ let opened=(||{let mut store=if let Some(path)=path{Store::open(path)?}else{Store::in_memory()?};store.apply_app_upgrades()?;store.recover_after_restart()?;refresh(&store,&shared,&today())?;
+  shared.statistics_incomplete.store(store.begin_statistics_run()?,Ordering::SeqCst);Ok::<_,StoreError>(store)})();
  let mut store=match opened{Ok(store)=>{let _=boot.send(Ok(()));store},Err(error)=>{let _=boot.send(Err(error.clone()));shared.owner_released.store(true,Ordering::SeqCst);shared.shutdown.complete(Err(error));return;}};
  let mut critical_streak=0;let mut fatal=None;
  loop{
@@ -170,6 +182,9 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
   };
   if let Some(error)=fatal.clone(){finish_job(&shared,job,Err(error));continue;}
   let writes=job.command.writes();
+  // Event rows do not change the configuration/result snapshot. Avoid a full
+  // preferences/history/usage read after every optional telemetry write.
+  let refresh_snapshot=writes&&!matches!(job.command,DbCommand::RecordPersonalizationEvent{..}|DbCommand::SetPersonalizationFeedback{..});
   let command=std::mem::replace(&mut job.command,DbCommand::Preferences);
   let clears_temporary=matches!(command,DbCommand::ClearTemporary);
   // The actor owns the accepted command until its actual completion; receiver drop
@@ -186,12 +201,14 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
     // Publish the committed vocabulary even if an unrelated full-cache read fails.
     // Deleted terms cannot survive in the session-start cache after a successful delete.
     if let Ok(DbValue::Dictionary(dictionary))=&result {if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){snapshot.dictionary=dictionary.clone();snapshot.revision=snapshot.revision.saturating_add(1);}}
+    // A committed disable/delete is visible to the next task even if another cache query fails.
+    if let Ok(DbValue::Personalization(config))=&result {if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){snapshot.personalization=config.clone();snapshot.temporary_result=None;snapshot.revision=snapshot.revision.saturating_add(1);}}
     // Never keep removed/replaced MemoryOnly bodies merely because an unrelated
     // preferences/Mode query prevents a complete cache refresh. Old counters remain
     // explicitly stale under cache_error; they are never replaced by invented zeroes.
     let replaces_temporary=matches!(&result,Ok(DbValue::Detail(detail)) if detail.session.seed.storage_policy==StoragePolicy::MemoryOnly&&detail.output.is_some());
     if clears_temporary||replaces_temporary{if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){if snapshot.temporary_result.take().is_some(){snapshot.revision=snapshot.revision.saturating_add(1);}}}
-    let _=refresh(&store,&shared,&today());
+    if refresh_snapshot {let _=refresh(&store,&shared,&today());}
    }result
   }));
   let result=match result{Ok(result)=>result,Err(_)=>Err(StoreError::Unhealthy("DB owner panicked while executing accepted request".into()))};
@@ -200,7 +217,8 @@ fn worker(path:Option<PathBuf>,options:DbOptions,shared:Arc<Shared>,normal:Recei
  }
  store.clear_temporary_results();
  if let Some(snapshot)=shared.snapshot.lock().unwrap_or_else(|p|p.into_inner()).as_mut(){snapshot.temporary_result=None;}
- let health=fatal.or_else(||store.health_error());
+ let mut health=fatal.or_else(||store.health_error());
+ if health.is_none(){if let Err(error)=store.finish_statistics_run(shared.statistics_incomplete.load(Ordering::SeqCst)){health=Some(error);}}
  drop(store); // The connection and all MemoryOnly bodies are gone BEFORE the owner ACK.
  shared.owner_released.store(true,Ordering::SeqCst);
  shared.shutdown.complete(health.map_or(Ok(DbValue::Unit),Err));

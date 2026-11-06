@@ -38,7 +38,7 @@ pub(super) fn visible(window: &WebviewWindow, state: &DesktopState, show: bool) 
     let mut recorder = state.recorder.lock().map_err(|_| window_error("lock"))?;
     close_menu(window, &mut recorder, false)?;
     if show {
-        place(window, 336.0, 66.0, true)?;
+        place(window, 298.0, 68.0, true)?;
         unsafe { let _: () = msg_send![object(window)?, orderFrontRegardless]; }
     } else { window.hide().map_err(window_error)?; }
     recorder.visible = show;
@@ -55,7 +55,7 @@ pub(super) fn close_stale_mode(window: &WebviewWindow, state: &DesktopState, sna
         recorder.tray_request.as_ref().is_none_or(|request| mode_request_is_current(snapshot, state.exit.load(Ordering::Acquire), request)));
     if recorder.menu_open && !current {
         close_menu(window, &mut recorder, true)?;
-        if recorder.visible { place(window, 336.0, 66.0, false)?; }
+        if recorder.visible { place(window, 298.0, 68.0, false)?; }
     }
     Ok(())
 }

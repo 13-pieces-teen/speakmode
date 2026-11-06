@@ -6,6 +6,16 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 const NATIVE_EDIT_RUNTIME_ID: i32 = 0x534d_4e41;
+#[path="delivery_wechat.rs"]
+mod wechat;
+pub use wechat::InputActivity;
+#[cfg(test)]
+#[path="delivery_wechat_tests.rs"]
+mod wechat_tests;
+#[cfg(all(test, windows))]
+#[allow(dead_code)]
+#[path="vendor/handy-keys/src/platform/windows/activity.rs"]
+mod activity_contract_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +29,9 @@ pub struct TargetSnapshot {
     /// target text is stored here, logged, or forwarded to cloud requests.
     pub selection: Option<(usize, usize)>,
     pub process_created_at: u64,
+    /// Automatic window-level route; no field/caret proof implied.
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub compatibility: Option<InputActivity>,
 }
 
 /// A cheap synchronous stop-intent identity, before an asynchronous UIA worker
@@ -82,15 +95,34 @@ impl DeliveryPermit {
 pub fn capture_target() -> Result<TargetSnapshot> { native::capture_bounded() }
 pub fn capture_foreground_anchor() -> Result<ForegroundAnchor> { native::capture_anchor() }
 pub fn capture_target_for_anchor(anchor: &ForegroundAnchor) -> Result<TargetSnapshot> { native::capture_bounded_for_anchor(*anchor) }
+pub fn capture_compatibility_activity() -> Option<InputActivity> { native::capture_activity().ok() }
+pub fn capture_target_for_anchor_with_activity(anchor:&ForegroundAnchor, activity:Option<InputActivity>) -> Result<TargetSnapshot> {
+    native::capture_bounded_with_compatibility(*anchor,activity)
+}
+/// Metadata-only inspection of the exact automatic fallback implementation.
+/// Unlike precise editor capture, it never calls Value or TextPattern.GetText.
+pub fn inspect_wechat_window(anchor:&ForegroundAnchor,activity:InputActivity)->Result<TargetSnapshot> {
+    native::inspect_wechat_window(*anchor,activity)
+}
 /// Best-effort context from the already frozen editable control. This never
 /// changes focus/selection, reads a clipboard, or obtains a page/window title.
 pub fn capture_input_context(target: &TargetSnapshot) -> Result<crate::core::writing_context::InputContext> {
+    if target.compatibility.is_some() { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
     native::capture_input_context(target.clone()).map(crate::core::writing_context::InputContext::bounded)
 }
 pub fn validate_target(snapshot: &TargetSnapshot) -> Result<()> {
     // Validation may inspect only the frozen host. Never read a newly focused
     // application's UIA prefix and discover the identity mismatch afterwards.
-    let current = capture_target_for_anchor(&validation_anchor(snapshot))?;
+    if snapshot.compatibility.is_some() && !wechat::valid_shape(snapshot) {
+        return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported));
+    }
+    let current = match snapshot.compatibility {
+        // Keep the route selected at stop. A provider may expose TextPattern
+        // later; that must not turn the same writable field into a different
+        // snapshot shape during validation.
+        Some(activity)=>native::recapture_keyboard_target(validation_anchor(snapshot),activity)?,
+        None=>capture_target_for_anchor(&validation_anchor(snapshot))?,
+    };
     compare_targets(snapshot, &current)
 }
 fn validation_anchor(snapshot: &TargetSnapshot) -> ForegroundAnchor {
@@ -109,7 +141,12 @@ fn compare_capture_identity(expected: &ForegroundAnchor, current: &ForegroundAnc
     Ok(())
 }
 fn compare_targets(before: &TargetSnapshot, now: &TargetSnapshot) -> Result<()> {
-    if before.selection.is_none() || before.runtime_id.is_empty() { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+    if before.compatibility.is_some() {
+        if !wechat::valid_shape(before) || !wechat::valid_shape(now) { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+    } else if before.selection.is_none() || before.runtime_id.is_empty() { return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)); }
+    if before.compatibility.is_some() && before.compatibility != now.compatibility {
+        return Err(target_failure(TargetCaptureFailure::InputActivityChanged));
+    }
     if before != now { return Err(target_failure(TargetCaptureFailure::StopFocusChanged)); }
     Ok(())
 }
@@ -122,6 +159,16 @@ fn compare_anchor(anchor: &ForegroundAnchor, target: &TargetSnapshot) -> Result<
     Ok(())
 }
 fn target_failure(reason: TargetCaptureFailure) -> PlatformError { PlatformError::TargetCapture(reason) }
+/// Persist only fixed reason labels. Losing a UIA capability, an interaction,
+/// a timeout and a real focus change must not all be reported as focus changes.
+pub(crate) fn validation_failure_reason(target:&TargetSnapshot,error:&PlatformError)->&'static str {
+    match error {
+        PlatformError::TargetHigherIntegrity=>"targetHigherIntegrity",
+        PlatformError::TargetCapture(reason) if *reason!=TargetCaptureFailure::StopFocusChanged=>reason.delivery_reason(),
+        PlatformError::Timeout(_)=>"targetInspectionTimeout",
+        _=>if target.compatibility.is_some(){"compatibilityTargetChanged"}else{"targetChangedBeforeDelivery"},
+    }
+}
 fn require_anchor_process(process_id: u32) -> Result<()> {
     if process_id == 0 { return Err(target_failure(TargetCaptureFailure::StopAnchorUnavailable)); }
     Ok(())
@@ -182,7 +229,7 @@ fn dispatch_claimed(ops: &impl NativeOperations, permit: &DeliveryPermit, target
         let code = if !gate() || permit.stage.load(Ordering::SeqCst) != 1 { "cancelledBeforeInjection" } else { "modifiersNotReleased" };
         return DispatchReceipt::skipped(code, "cancelled or held modifiers did not release within 350ms", false);
     }
-    if let Err(error) = ops.validate(target) { return DispatchReceipt::skipped("targetChangedBeforeDelivery", error.to_string(), false); }
+    if let Err(error) = ops.validate(target) { return DispatchReceipt::skipped(validation_failure_reason(target,&error), error.to_string(), false); }
     if !gate() || permit.stage.load(Ordering::SeqCst) != 1 { return DispatchReceipt::skipped("cancelledBeforeInjection", "cancelled before clipboard", false); }
     let changed = match ops.copy(text) {
         Ok(changed) => changed,
@@ -194,7 +241,7 @@ fn dispatch_claimed(ops: &impl NativeOperations, permit: &DeliveryPermit, target
         let code = if !gate() || permit.stage.load(Ordering::SeqCst) != 1 { "cancelledBeforeInjection" } else { "modifiersNotReleased" };
         return DispatchReceipt::skipped(code, "cancelled or held modifiers did not release after clipboard", changed);
     }
-    if let Err(error) = ops.validate(target) { return DispatchReceipt::skipped("targetChangedBeforeDelivery", error.to_string(), changed); }
+    if let Err(error) = ops.validate(target) { return DispatchReceipt::skipped(validation_failure_reason(target,&error), error.to_string(), changed); }
     if !gate() || !ops.modifiers_released() || !permit.begin_injection() {
         let code = if !gate() || permit.stage.load(Ordering::SeqCst) != 1 { "cancelledBeforeInjection" } else { "modifiersNotReleased" };
         return DispatchReceipt::skipped(code, "cancelled/target gate invalid before native injection", changed);
@@ -202,7 +249,7 @@ fn dispatch_claimed(ops: &impl NativeOperations, permit: &DeliveryPermit, target
     let count = ops.chord();
     DispatchReceipt { outcome: if count == 0 { DispatchOutcome::Failed } else { DispatchOutcome::Unconfirmed },
         clipboard_changed: changed, input_events: count,
-        reason_code: Some(if count == 4 { "inputDispatchedUnconfirmed" } else if count == 0 { "nativeDispatchFailed" } else { "partialInputUnconfirmed" }.into()),
+        reason_code: Some(if count == 4 { if target.compatibility.is_some(){"keyboardFocusInputDispatchedUnconfirmed"}else{"inputDispatchedUnconfirmed"} } else if count == 0 { "nativeDispatchFailed" } else { "partialInputUnconfirmed" }.into()),
         reason: Some(if count == 4 { "input dispatched; target insertion has not been read back" } else { "input dispatch incomplete; no automatic retry" }.into()) }
 }
 
@@ -320,10 +367,12 @@ mod native {
     use windows::Win32::System::Threading::{OpenProcess, GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::Security::{GetTokenInformation, GetSidSubAuthority, GetSidSubAuthorityCount, TokenIntegrityLevel, TOKEN_MANDATORY_LABEL, TOKEN_QUERY};
     use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, IUIAutomationValuePattern,
-        UIA_EditControlTypeId, UIA_DocumentControlTypeId, UIA_GroupControlTypeId, UIA_IsReadOnlyAttributeId,
+        UIA_EditControlTypeId, UIA_DocumentControlTypeId, UIA_GroupControlTypeId, UIA_CustomControlTypeId, UIA_WindowControlTypeId, UIA_IsReadOnlyAttributeId,
+        UIA_IsTextPatternAvailablePropertyId, UIA_IsValuePatternAvailablePropertyId,
         UIA_TextPatternId, UIA_ValuePatternId, TextPatternRangeEndpoint_Start, TextPatternRangeEndpoint_End, TextUnit_Character};
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, IsWindowEnabled};
+        GetKeyboardLayout, MapVirtualKeyExW, MAPVK_VK_TO_VSC_EX, KEYEVENTF_SCANCODE, KEYEVENTF_EXTENDEDKEY,
+        VIRTUAL_KEY, VK_LCONTROL, VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN, IsWindowEnabled};
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, GetGUIThreadInfo, GUITHREADINFO,
         CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
         GetClassNameW, GetWindowLongPtrW, GWL_STYLE, GetAncestor, GA_ROOT,
@@ -337,6 +386,7 @@ mod native {
     impl Drop for ArrayGuard { fn drop(&mut self) { unsafe { let _ = SafeArrayDestroy(self.0); } } }
     struct HandleGuard(HANDLE);
     impl Drop for HandleGuard { fn drop(&mut self) { unsafe { let _ = CloseHandle(self.0); } } }
+    include!("delivery_wechat_native.rs");
     unsafe fn integrity_level(process: HANDLE) -> Result<u32> {
         let mut token = HANDLE::default();
         unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token).map_err(fail)?; }
@@ -402,14 +452,27 @@ mod native {
     }
 
     pub fn capture_bounded() -> Result<TargetSnapshot> {
-        capture_bounded_inner(None)
+        capture_bounded_inner(None,None)
     }
     pub fn capture_bounded_for_anchor(anchor: ForegroundAnchor) -> Result<TargetSnapshot> {
-        capture_bounded_inner(Some(anchor))
+        capture_bounded_inner(Some(anchor),None)
     }
-    fn capture_bounded_inner(anchor: Option<ForegroundAnchor>) -> Result<TargetSnapshot> {
+    pub fn capture_bounded_with_compatibility(anchor:ForegroundAnchor,activity:Option<InputActivity>)->Result<TargetSnapshot> {
+        capture_bounded_inner(Some(anchor),activity)
+    }
+    pub fn inspect_wechat_window(anchor:ForegroundAnchor,activity:InputActivity)->Result<TargetSnapshot> {
+        let(tx,rx)=sync_channel(1);
+        submit_target_inspection(InspectionRequest::Wechat(anchor,activity,tx))?;
+        receive_inspection(rx,Duration::from_secs(1))
+    }
+    pub fn recapture_keyboard_target(anchor:ForegroundAnchor,activity:InputActivity)->Result<TargetSnapshot> {
+        let(tx,rx)=sync_channel(1);
+        submit_target_inspection(InspectionRequest::Keyboard(anchor,activity,tx))?;
+        receive_inspection(rx,Duration::from_secs(1))
+    }
+    fn capture_bounded_inner(anchor: Option<ForegroundAnchor>,compatibility:Option<InputActivity>) -> Result<TargetSnapshot> {
         let (tx, rx) = sync_channel(1);
-        submit_target_inspection(InspectionRequest::Target(anchor, tx))?;
+        submit_target_inspection(InspectionRequest::Target(anchor, compatibility, tx))?;
         receive_inspection(rx, Duration::from_secs(1))
     }
     pub fn capture_input_context(target: TargetSnapshot) -> Result<crate::core::writing_context::InputContext> {
@@ -420,7 +483,9 @@ mod native {
     }
     type Context = crate::core::writing_context::InputContext;
     enum InspectionRequest {
-        Target(Option<ForegroundAnchor>, SyncSender<Result<TargetSnapshot>>),
+        Target(Option<ForegroundAnchor>, Option<InputActivity>, SyncSender<Result<TargetSnapshot>>),
+        Wechat(ForegroundAnchor,InputActivity,SyncSender<Result<TargetSnapshot>>),
+        Keyboard(ForegroundAnchor,InputActivity,SyncSender<Result<TargetSnapshot>>),
         Context(TargetSnapshot, Instant, SyncSender<Result<Context>>),
         #[cfg(test)]
         Probe { entered: SyncSender<()>, release: Option<std::sync::mpsc::Receiver<()>>, reply: SyncSender<Result<()>> },
@@ -445,10 +510,20 @@ mod native {
                 while let Ok(request) = receiver.recv() {
                     let lease = InspectionLease(&worker_busy);
                     match request {
-                        InspectionRequest::Target(anchor, reply) => {
-                            let result = capture_with_anchor(anchor);
+                        InspectionRequest::Target(anchor, compatibility, reply) => {
+                            let result = capture_with_anchor(anchor,compatibility);
                             drop(lease);
                             let _ = reply.send(result);
+                        }
+                        InspectionRequest::Wechat(anchor,activity,reply) => {
+                            let result=capture_compatibility_window(anchor,activity);
+                            drop(lease);
+                            let _=reply.send(result);
+                        }
+                        InspectionRequest::Keyboard(anchor,activity,reply) => {
+                            let result=capture_keyboard_target(anchor,activity,false);
+                            drop(lease);
+                            let _=reply.send(result);
                         }
                         InspectionRequest::Context(target, deadline, reply) => {
                             let result = context_from_target(&target, deadline);
@@ -546,11 +621,15 @@ mod native {
                 focused_hwnd: gui.hwndFocus.0 as usize, selection })
         }
     }
-    fn capture_with_anchor(anchor: Option<ForegroundAnchor>) -> Result<TargetSnapshot> {
+    fn capture_with_anchor(anchor: Option<ForegroundAnchor>,compatibility:Option<InputActivity>) -> Result<TargetSnapshot> {
         if let Some(expected) = anchor {
             if capture_anchor()? != expected { return Err(target_failure(TargetCaptureFailure::StopFocusChanged)); }
         }
-        let target = capture(anchor)?;
+        let target = match capture(anchor) {
+            Err(PlatformError::TargetCapture(TargetCaptureFailure::TargetCapabilityUnsupported))
+                if anchor.is_some() && compatibility.is_some() => capture_keyboard_target(anchor.unwrap(),compatibility.unwrap(),false)?,
+            result => result?,
+        };
         if let Some(expected) = anchor {
             compare_anchor(&expected, &target)?;
             if capture_anchor()? != expected { return Err(target_failure(TargetCaptureFailure::StopFocusChanged)); }
@@ -611,7 +690,7 @@ mod native {
                     return Err(target_failure(TargetCaptureFailure::StopFocusChanged));
                 }
                 return Ok(TargetSnapshot { hwnd: hwnd.0 as usize, process_id, focused_hwnd: gui.hwndFocus.0 as usize,
-                    runtime_id, selection: Some(selection), process_created_at: created });
+                    runtime_id, selection: Some(selection), process_created_at: created, compatibility:None });
             }
             let automation: IUIAutomation = CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER).map_err(fail)?;
             if let Ok(options) = automation.cast::<IUIAutomation2>() {
@@ -624,7 +703,15 @@ mod native {
                 return Err(target_failure(TargetCaptureFailure::TargetNotEditable));
             }
             let control_type = focused.CurrentControlType().map_err(fail)?;
-            if control_type != UIA_EditControlTypeId && control_type != UIA_DocumentControlTypeId && control_type != UIA_GroupControlTypeId { return Err(target_failure(TargetCaptureFailure::TargetNotEditable)); }
+            if control_type == UIA_CustomControlTypeId {
+                // Custom is a presentation type, not a read-only verdict. The
+                // keyboard route separately requires explicit writable state,
+                // keyboard focus and stable runtime identity.
+                return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported));
+            }
+            if control_type != UIA_EditControlTypeId && control_type != UIA_DocumentControlTypeId && control_type != UIA_GroupControlTypeId {
+                return Err(target_failure(if control_type==UIA_WindowControlTypeId {TargetCaptureFailure::TargetCapabilityUnsupported} else {TargetCaptureFailure::TargetNotEditable}));
+            }
             if control_type == UIA_GroupControlTypeId && !focused.CurrentIsKeyboardFocusable().map_err(fail)?.as_bool() {
                 return Err(target_failure(TargetCaptureFailure::TargetNotEditable));
             }
@@ -678,7 +765,7 @@ mod native {
             }
             let target = TargetSnapshot { hwnd: hwnd.0 as usize, process_id, focused_hwnd: gui.hwndFocus.0 as usize,
                 runtime_id, selection: Some((start, start + selected.len())),
-                process_created_at: created };
+                process_created_at: created, compatibility:None };
             Ok(target)
         }
     }
@@ -694,6 +781,7 @@ mod native {
         check_context_deadline(deadline)
     }
     fn context_from_target(target: &TargetSnapshot, deadline: Instant) -> Result<Context> {
+        if target.compatibility.is_some() {return Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported));}
         validate_context_anchor(target, deadline)?;
         if target.runtime_id.first() == Some(&NATIVE_EDIT_RUNTIME_ID) {
             let context = unsafe { native_edit_context(target, deadline)? };
@@ -881,16 +969,51 @@ mod native {
     }
     pub fn paste_chord() -> u32 {
         unsafe {
-            let input = |vk: u16, up: bool| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(vk), dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() }, dwExtraInfo: 0x534D_5041, ..Default::default() } } };
-            let events = [input(VK_CONTROL.0, false), input(0x56, false), input(0x56, true), input(VK_CONTROL.0, true)];
+            // Some editors inspect the native scan code (including WebView
+            // KeyboardEvent.code). Resolve logical Ctrl+V in the target thread's
+            // layout instead of emitting four events with scanCode == 0.
+            let layout=GetKeyboardLayout(GetWindowThreadProcessId(GetForegroundWindow(),None));
+            let control=MapVirtualKeyExW(u32::from(VK_LCONTROL.0),MAPVK_VK_TO_VSC_EX,layout);
+            let paste=MapVirtualKeyExW(0x56,MAPVK_VK_TO_VSC_EX,layout);
+            let events=paste_inputs(control,paste);
             let count = SendInput(&events, size_of::<INPUT>() as i32);
             if count != 0 && count != 4 {
                 // Release only keys introduced by this chord. Never repeat V-down.
-                let cleanup = [input(0x56, true), input(VK_CONTROL.0, true)];
+                let cleanup = [events[2],events[3]];
                 let _ = SendInput(&cleanup, size_of::<INPUT>() as i32);
             }
             count
+        }
+    }
+    fn paste_inputs(control:u32,paste:u32)->[INPUT;4] {
+        let input=|vk:u16,scan:u32,up:bool| {
+            // A missing layout mapping uses logical keys, never an arbitrary
+            // physical V position or a second paste strategy.
+            let mapped=scan&0xff!=0;
+            let mut flags=if up{KEYEVENTF_KEYUP}else{Default::default()};
+            if mapped {flags|=KEYEVENTF_SCANCODE;if scan&0xff00==0xe000{flags|=KEYEVENTF_EXTENDEDKEY;}}
+            INPUT{r#type:INPUT_KEYBOARD,Anonymous:INPUT_0{ki:KEYBDINPUT{
+                wVk:VIRTUAL_KEY(if mapped{0}else{vk}),wScan:if mapped{(scan&0xff) as u16}else{0},
+                dwFlags:flags,dwExtraInfo:0x534D_5041,..Default::default()}}}
+        };
+        [input(VK_LCONTROL.0,control,false),input(0x56,paste,false),input(0x56,paste,true),input(VK_LCONTROL.0,control,true)]
+    }
+    #[test]
+    fn paste_events_have_target_layout_scan_codes_and_exactly_one_v_down() {
+        for (control,paste) in [(0x1d,0x2f),(0x1d,0x34),(0xe01d,0x2f),(0,0)] {
+            let events=paste_inputs(control,paste);
+            let keys=events.map(|event|unsafe{event.Anonymous.ki});
+            assert_eq!(keys[0].wScan,control as u16&0xff);
+            assert_eq!(keys[1].wScan,paste as u16&0xff);
+            assert_eq!(keys[2].wScan,keys[1].wScan);
+            assert_eq!(keys[3].wScan,keys[0].wScan);
+            for (index,key) in keys.iter().enumerate() {
+                assert_eq!(key.dwFlags.contains(KEYEVENTF_KEYUP),index>=2);
+                assert_eq!(key.dwFlags.contains(KEYEVENTF_SCANCODE),control!=0);
+                assert_eq!(key.dwExtraInfo,0x534D_5041);
+            }
+            assert_eq!(keys[0].dwFlags.contains(KEYEVENTF_EXTENDEDKEY),control==0xe01d);
+            if control==0 {assert_eq!(keys[0].wVk,VK_LCONTROL);assert_eq!(keys[1].wVk,VIRTUAL_KEY(0x56));}
         }
     }
     pub fn copy_text(text: &str) -> std::result::Result<bool, ClipboardError> {
@@ -931,6 +1054,10 @@ mod native {
     pub fn capture_bounded() -> Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
     pub fn capture_anchor() -> Result<ForegroundAnchor> { Err(target_failure(TargetCaptureFailure::StopAnchorUnavailable)) }
     pub fn capture_bounded_for_anchor(_: ForegroundAnchor) -> Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
+    pub fn capture_activity() -> Result<InputActivity> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
+    pub fn capture_bounded_with_compatibility(_:ForegroundAnchor,_:Option<InputActivity>)->Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
+    pub fn inspect_wechat_window(_:ForegroundAnchor,_:InputActivity)->Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
+    pub fn recapture_keyboard_target(_:ForegroundAnchor,_:InputActivity)->Result<TargetSnapshot> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
     pub fn capture_input_context(_: TargetSnapshot) -> Result<crate::core::writing_context::InputContext> { Err(target_failure(TargetCaptureFailure::TargetCapabilityUnsupported)) }
     pub fn modifiers_released() -> bool { false }
     pub fn paste_chord() -> u32 { 0 }
@@ -1006,7 +1133,7 @@ mod tests {
     #[test] fn blocked_optional_context_does_not_occupy_required_target_gate() {
         native::assert_context_worker_isolation();
     }
-    fn snapshot() -> TargetSnapshot { TargetSnapshot { hwnd: 10, process_id: 20, focused_hwnd: 30, runtime_id: vec![1,2,3], selection: Some((4,4)), process_created_at: 50 } }
+    fn snapshot() -> TargetSnapshot { TargetSnapshot { hwnd: 10, process_id: 20, focused_hwnd: 30, runtime_id: vec![1,2,3], selection: Some((4,4)), process_created_at: 50, compatibility:None } }
     #[test] fn rejects_different_field_in_same_window_and_changed_caret() {
         let before = snapshot(); let mut now = before.clone(); now.runtime_id.push(4);
         assert!(compare_targets(&before, &now).is_err()); now = before.clone(); now.selection = Some((5,5));

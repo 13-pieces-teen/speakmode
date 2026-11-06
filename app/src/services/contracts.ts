@@ -2,7 +2,7 @@ import type { OnboardingLesson, OnboardingState } from '../onboarding/types';
 import { defaultAppWriting, type AppWritingPreferences, type AppWritingScene } from '../appWriting';
 export type BaseMode = 'auto' | 'light' | 'structure';
 export type RewriteFallbackReason = 'timeout' | 'serviceUnavailable' | 'invalidOutput' | 'meaningRisk';
-export interface NativePreferences { version:number; shortcut:string; microphoneId:string|null; language:'auto'|'zh'|'en'; defaultModeId:string; deliveryMode:'direct'|'preview'; softVoiceEnabled:boolean; appWriting:AppWritingPreferences; keepHistory:boolean; launchAtLogin:boolean }
+export interface NativePreferences { version:number; shortcut:string; microphoneId:string|null; language:'auto'|'zh'|'en'; defaultModeId:string; deliveryMode:'direct'|'preview'; softVoiceEnabled:boolean; recorderCaptionsEnabled:boolean; appWriting:AppWritingPreferences; keepHistory:boolean; launchAtLogin:boolean }
 export interface ModeRecord { id:string; name:string; baseMode:BaseMode; rules:string; revision:number; builtin:boolean }
 export interface ModeSnapshot { modeId:string; name:string; baseMode:BaseMode; rules:string; revision:number }
 export interface SourceItem { id:string; providerItemId:string; captureOrder:number; text:string; final:boolean; startMs:number|null; endMs:number|null }
@@ -10,7 +10,7 @@ export interface SourceRevision { id:string; sessionId:string; asrAttemptId:stri
 export interface OutputBlock { id:string; text:string; sourceRefs:string[] }
 export interface SourceCorrection { start:number; end:number; expectedText:string; replacement:string }
 export interface ConfirmedContext { sourceRevisionId:string; language:'asSpoken'|'english'; corrections:SourceCorrection[] }
-export interface WritingReceipt { scene:AppWritingScene; language:'asSpoken'|'english'; contextUsed:boolean; contractVersion:string }
+export interface WritingReceipt { scene:AppWritingScene; language:'asSpoken'|'english'; contextUsed:boolean; contractVersion:string; personalization?:import('./personalization').PersonalizationReference|null; referenceCleared?:boolean }
 export interface OutputRevision { writingReceipt?:WritingReceipt; confirmedContext?:ConfirmedContext; rewriteFallback?:RewriteFallbackReason; id:string; sessionId:string; parentRevisionId:string|null; baseRevisionId:string|null; sourceRevisionId:string; modeSnapshot:ModeSnapshot; resolvedMode:BaseMode; blocks:OutputBlock[]; kind:'initial'|'useSource'|'adopt'|'edit'|'restore'|'undo'; creationReason:'normalInitial'|'retry'|'useSource'|'history'|'preview'; createdAt:string }
 export type CandidateReviewIssue='valuesChanged'|'meaningChanged'|'literalsChanged'|'tenseChanged'|'confirmedTextChanged'|'reviewRejected'|'reviewUnavailable';
 /** Ephemeral history draft, never an automatic delivery authorization. */
@@ -33,7 +33,8 @@ export interface DictionarySnapshot { version:number; entries:DictionaryEntry[] 
 export interface CaptionItem { id:string; text:string; revision:number; final:boolean; captureOrder:number }
 export interface LiveSession { onboardingLesson?:OnboardingLesson; writingLanguage?:'asSpoken'|'english'; inputContextStatus?:'pending'|'available'|'unavailable'|'disabled'; writingScene?:AppWritingScene; rewriteFallback?:RewriteFallbackReason; id?:string; sessionId?:string; generation:number; state:string; modeSnapshot?:ModeSnapshot; modeId?:string; level?:number; levelReceivedAt?:number; partial?:string; transcript?:string; items?:SourceItem[]; captions?:CaptionItem[]; captureReady?:boolean; providerReady?:boolean; captionRenderToken?:string|null; error?:string; message?:string; result?:HistoryDetail; deliveryState?:string;deliveryFailureReason?:string|null;recoverableContentId?:string|null;pendingCommitId?:string|null;commitStage?:string|null;workerReleased?:boolean;asrAttemptId?:string|null;sourceRevisionId?:string|null;canRetryAsr?:boolean;canRetryRewrite?:boolean;canRetrySave?:boolean;retryKind?:'asr'|'rewrite'|'save'|null;errorCode?:string|null;canUseSource?:boolean;canCopyRecovery?:boolean;recordingLimitRemainingMs?:number|null }
 export interface RetainedRecovery { session:LiveSession; expiresAt:string }
-export interface NativeSnapshot { onboarding?:OnboardingState; sequence:number; preferences?:NativePreferences; modes?:ModeRecord[]; dictionary?:DictionarySnapshot; usage?:DailyUsage; provider?:ProviderStatus; devices?:AudioDevice[]; session?:LiveSession|null; recovery?:RetainedRecovery|null; temporaryResult?:HistoryDetail|null; capabilities?:Record<string,boolean> }
+export interface MainResultRequest {requestId:string;sessionId:string;generation:number;target:'result'|'recovery'}
+export interface NativeSnapshot { mainResultRequest?:MainResultRequest|null; recorderCaptionsEnabled?:boolean; onboarding?:OnboardingState; sequence:number; preferences?:NativePreferences; modes?:ModeRecord[]; dictionary?:DictionarySnapshot; usage?:DailyUsage; provider?:ProviderStatus; devices?:AudioDevice[]; session?:LiveSession|null; recovery?:RetainedRecovery|null; temporaryResult?:HistoryDetail|null; capabilities?:Record<string,boolean> }
 export type DesktopErrorScope = 'application' | 'session' | 'transport';
 export interface DesktopError { scope:DesktopErrorScope; message:string; sessionId?:string; generation?:number; operation?:string }
 export interface RecorderModeRequest { sequence:number; sessionId:string; generation:number }
@@ -41,7 +42,7 @@ export interface AppEvent { sequence:number; kind:string; payload:unknown; sessi
 export interface RestorePatch { blockId:string; start:number; end:number; sourceSelections:{itemId:string;start:number;end:number}[] }
 export interface CorrectionPatch { blockId:string; start:number; end:number; expectedText:string; replacement:string }
 export interface CorrectionReceipt { detail:HistoryDetail; dictionary:DictionarySnapshot|null; dictionaryStatus:'added'|'existing'|'notRequested' }
-export const initialPreferences:NativePreferences={version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',softVoiceEnabled:false,appWriting:defaultAppWriting,keepHistory:true,launchAtLogin:false};
+export const initialPreferences:NativePreferences={version:1,shortcut:'alt_right',microphoneId:null,language:'auto',defaultModeId:'auto',deliveryMode:'direct',softVoiceEnabled:false,recorderCaptionsEnabled:false,appWriting:defaultAppWriting,keepHistory:true,launchAtLogin:false};
 export const initialProvider:ProviderStatus={configured:false,config:{version:1,provider:'aliyun',rewriteProvider:'aliyun',rewriteEndpoint:null,region:null,workspace:null,asrModel:'qwen3-asr-flash-realtime',rewriteModel:'qwen3.8-flash',adapterVersion:'qwen-realtime-v1'}};
 
 

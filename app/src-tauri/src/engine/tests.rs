@@ -20,6 +20,10 @@ mod app_writing_tests;
 mod rewrite_deadline_tests;
 #[path="recorder_copy_tests.rs"]
 mod recorder_copy_tests;
+#[path="recorder_controls_tests.rs"]
+mod recorder_controls_tests;
+#[path="personalization_tests.rs"]
+mod personalization_tests;
 #[path="typeless_import_tests.rs"]
 mod typeless_import_tests;
 
@@ -67,15 +71,15 @@ pub(super) fn hub() -> Arc<AppHub> {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
             onboarding:OnboardingRuntime::default(),
-            guards: Default::default(), sequence: 0, active: None, recovery: None,
-            candidate: None, preview: None, preview_sources:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
+            guards: Default::default(), sequence: 0, main_result_request:None, active: None, recovery: None,
+            candidate: None, preview: None, preview_sources:Default::default(),personalization_workers:Default::default(),personalization_revocations:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, asr_key_configured:false, rewrite_key_configured:false, requests: Default::default(),
             request_order: Default::default(),settings_pending:None,
         }),
         db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
         subscribers: Mutex::new(HashMap::new()), publication: Mutex::new(()),
         data_dir: test_data_directory(),
-        hooks: Mutex::new(None), native_actions: Mutex::new(None), recorder_control: Mutex::new(None), stop_target_control: Mutex::new(None), native_io: Mutex::new(()),
+        hooks: Mutex::new(None), native_actions: Mutex::new(None), recorder_dismiss_control: Mutex::new(None), recorder_control: Mutex::new(None), stop_target_control: Mutex::new(None), native_io: Mutex::new(()),
         lifecycle_epoch: std::sync::atomic::AtomicU64::new(0), capture_available: AtomicBool::new(true),quitting:AtomicBool::new(false),shortcut_capture_available:AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),
     })
 }
@@ -87,6 +91,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
     let mode = hub.db.mode_snapshot("auto", None).unwrap();
     let mut i=hub.inner.lock().unwrap();i.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),7)));
     i.active = Some(ActiveSession {
+        personalization:hub.db.snapshot().personalization,personalization_commit:None,
         onboarding_lesson:None,
         diagnostic_trace:None,caption_render_token:None,
         id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
@@ -96,7 +101,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,
         processing_worker_released: true,db_pending:0,cancel_pending:false,
         source: None, output: None, pending: None, cache: None, cache_complete: false,
-        cache_created: None, target: None, target_application:None, writing_scene:None, input_context_frozen:false,input_context:None,input_context_status:InputContextStatus::Disabled, target_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
+        cache_created: None, target: None, target_application:None, writing_scene:None, input_context_frozen:false,input_context:None,input_context_status:InputContextStatus::Disabled, target_capture_pending:false,input_context_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
         original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,
         reason: CreationReason::NormalInitial, asr_attempt_id: Some(format!("attempt-{id}")),
@@ -880,7 +885,7 @@ fn candidate(hub: &AppHub, id: &str, run: &str) -> CancellationToken {
     generated.kind = RevisionKind::Adopt; generated.creation_reason = CreationReason::History;
     generated.blocks[0].text = "候选：会议未确认前，不要订机票；先保留行程。".into();
     let token = CancellationToken::new();
-    hub.inner.lock().unwrap().candidate = Some(CandidateSlot { key: id.into(), run: run.into(), cancel: token.clone(),
+    hub.inner.lock().unwrap().candidate = Some(CandidateSlot { personalization:None,key: id.into(), run: run.into(), cancel: token.clone(),
         base: format!("output-{id}"), result: Some(HistoryCandidate{revision:generated,review_issues:vec![]}),adopting:None }); token
 }
 
@@ -1248,7 +1253,7 @@ fn source_only_candidate(h:&AppHub,id:&str,run:&str){
     let mut value=output(h,id);value.id=run.into();value.mode_snapshot=h.db.mode_snapshot("light",None).unwrap();
     value.resolved_mode=BaseMode::Light;value.kind=RevisionKind::Adopt;value.creation_reason=CreationReason::History;
     value.base_revision_id=None;value.parent_revision_id=None;
-    h.inner.lock().unwrap().candidate=Some(CandidateSlot{key:id.into(),run:run.into(),base:String::new(),cancel:CancellationToken::new(),result:Some(HistoryCandidate{revision:value,review_issues:vec![]}),adopting:None});
+    h.inner.lock().unwrap().candidate=Some(CandidateSlot{personalization:None,key:id.into(),run:run.into(),base:String::new(),cancel:CancellationToken::new(),result:Some(HistoryCandidate{revision:value,review_issues:vec![]}),adopting:None});
 }
 fn first_adopt_payload(id:&str,run:&str)->Value{json!({"sessionId":id,"expectedCurrentRevisionId":"","candidateId":run,"requestId":Uuid::new_v4().to_string()})}
 
@@ -1472,7 +1477,7 @@ async fn committed_first_adoption_receipt_after_delete_keeps_usage_without_reviv
 }
 
 fn delivery_target_fixture()->platform::delivery::TargetSnapshot {
-    platform::delivery::TargetSnapshot{hwnd:123,process_id:456,focused_hwnd:123,runtime_id:vec![1,2],selection:Some((0,0)),process_created_at:789}
+    platform::delivery::TargetSnapshot{hwnd:123,process_id:456,focused_hwnd:123,runtime_id:vec![1,2],selection:Some((0,0)),process_created_at:789,compatibility:None}
 }
 fn delivery_anchor_fixture()->platform::delivery::ForegroundAnchor {
     let target=delivery_target_fixture();platform::delivery::ForegroundAnchor{hwnd:target.hwnd,process_id:target.process_id,
@@ -1490,6 +1495,27 @@ fn current_delivery(h:&AppHub)->DeliveryAttempt{let id=h.inner.lock().unwrap().a
 fn delivery_native_calls(h:&AppHub)->Arc<Mutex<Vec<(String,bool)>>> {
     let calls=Arc::new(Mutex::new(Vec::new()));let sink=calls.clone();
     h.set_native_actions(Arc::new(move|name,value|{sink.lock().unwrap().push((name.into(),value));Ok(())}));calls
+}
+
+#[tokio::test]
+async fn source_fallback_keeps_notice_visible_after_one_paste_without_retrying() {
+    for fallback in [None,Some(RewriteFallbackReason::MeaningRisk),Some(RewriteFallbackReason::Timeout)] {
+        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
+        let mut revision=output(&h,"s");revision.rewrite_fallback=fallback;
+        if fallback.is_some(){let raw=rewrite_fallback::source_fallback(&source("s"));revision.blocks=raw.blocks;revision.resolved_mode=raw.resolved_mode;}
+        h.commit_output("s",7,revision).unwrap();enable_fixture_delivery(&h);
+        let calls=delivery_native_calls(&h);
+        let copies=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let chords=Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        fake_delivery(h.clone(),copies.clone(),chords.clone()).await.unwrap();
+        assert_eq!(current_delivery(&h).state,DeliveryState::Unconfirmed);
+        assert_eq!(view(&h).rewrite_fallback,fallback);
+        assert_eq!(calls.lock().unwrap().last(),Some(&("recording".into(),fallback.is_some())));
+        h.initial_delivery_with("s",7,|_|panic!("notice cannot authorize recapture"),|_,_,_,_|panic!("notice cannot authorize another paste"));
+        assert_eq!(copies.load(Ordering::SeqCst),1);assert_eq!(chords.load(Ordering::SeqCst),1);
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+        assert!(view(&h).worker_released);
+    }
 }
 
 #[test]
@@ -1566,6 +1592,28 @@ async fn delivery_stop_permission_failure_preserves_reason_and_once_only_skip(){
         assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some("targetHigherIntegrity"));
         assert_eq!(h.db.query_count("SELECT COUNT(*) FROM usage_events").unwrap(),1);assert!(view(&h).can_copy_recovery);
         h.initial_delivery_with("s",7,|_|panic!("terminal skip must not inspect again"),|_,_,_,_|panic!("terminal skip must not dispatch again"));
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
+    }
+}
+
+#[test]
+fn delivery_validation_keeps_the_actual_failure_in_the_durable_receipt() {
+    use platform::{PlatformError,TargetCaptureFailure};
+    for (failure,expected) in [
+        (TargetCaptureFailure::InputActivityChanged,"inputActivityChanged"),
+        (TargetCaptureFailure::InputActivityUnavailable,"inputActivityUnavailable"),
+        (TargetCaptureFailure::TargetCapabilityUnsupported,"targetCapabilityUnsupported"),
+        (TargetCaptureFailure::TargetNotEditable,"targetNotEditable"),
+        (TargetCaptureFailure::TargetInspectionTimeout,"targetInspectionTimeout"),
+    ] {
+        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);ready(&h,"s");
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.prefs.delivery_mode=DeliveryMode::Direct;
+            s.delivery_worker_released=false;s.target=Some(delivery_target_fixture());}
+        h.initial_delivery_with_validation("s",7,|_|Err(PlatformError::TargetCapture(failure)),|_,_,_,_|panic!("rejected target cannot dispatch"));
+        assert_eq!(current_delivery(&h).reason.as_deref(),Some(expected));
+        assert_eq!(view(&h).delivery_failure_reason.as_deref(),Some(expected));
+        assert_eq!(current_delivery(&h).state,DeliveryState::Skipped);assert!(view(&h).can_copy_recovery);
+        h.initial_delivery_with_validation("s",7,|_|panic!("terminal receipt cannot recapture"),|_,_,_,_|panic!("terminal receipt cannot retry"));
         assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);
     }
 }

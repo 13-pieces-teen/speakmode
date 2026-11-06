@@ -35,17 +35,51 @@ fn admission_error(error: CloudError) -> CloudError {
     } else { error }
 }
 
+fn wire_has_personalization(body: &Value) -> bool {
+    body["messages"].as_array().is_some_and(|messages| messages.iter().any(|message| {
+        message["role"].as_str() == Some("user") && message["content"].as_str()
+            .and_then(|content| serde_json::from_str::<Value>(content).ok())
+            .is_some_and(|data| data.get("personalization").is_some_and(Value::is_object))
+    }))
+}
+
 pub(super) async fn request_content(client: &Client, config: &ProviderConfig, secret: &str,
     endpoint: &str, body: &Value, cancel: &CancellationToken, deadline: Instant) -> Result<String, CloudError> {
+    request_content_with_execution(client,config,secret,endpoint,body,cancel,
+        &RewriteExecution::until(deadline),RequestStage::Generation).await
+}
+
+/// Transport-only entry point for callers that maintain their own timing trace.
+/// It participates in dispatch tracking but does not add request timing events.
+pub(super) async fn request_content_with_execution(client: &Client, config: &ProviderConfig, secret: &str,
+    endpoint: &str, body: &Value, cancel: &CancellationToken, execution: &RewriteExecution,
+    stage: RequestStage) -> Result<String, CloudError> {
+    let deadline = execution.deadline;
     checkpoint(cancel, deadline)?;
     let body = super::chat_request::for_provider(config, body)?;
+    // Unobserved/disabled-profile requests keep their existing transport cost;
+    // parsing the JSON data envelope is needed only for dispatch evidence.
+    let personalization = execution.has_dispatch_observer() && wire_has_personalization(&body);
     // The caller supplies its existing no-redirect client and allowlisted endpoint.
     let mut request = client.post(endpoint).timeout(deadline.saturating_duration_since(Instant::now()))
         .bearer_auth(secret).json(&body);
     if let Some(workspace) = config.workspace.as_deref().filter(|value| config.rewrite_provider == "aliyun" && !value.is_empty()) {
         request = request.header("X-DashScope-WorkSpace", workspace);
     }
-    let mut response = request.send().await.map_err(transport_error)?;
+    // Validate the URL, headers and serialization before recording any dispatch.
+    // Building a request or starting a timing span is not a send attempt.
+    let request = request.build().map_err(transport_error)?;
+    let send = async {
+        checkpoint(cancel, deadline)?;
+        execution.dispatch_started(stage, personalization);
+        client.execute(request).await.map_err(transport_error)
+    };
+    let mut response = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(cancelled()),
+        _ = tokio::time::sleep_until(deadline) => return Err(timed_out()),
+        response = send => response?,
+    };
     checkpoint(cancel, deadline)?;
     if !response.status().is_success() {
         let code = match response.status().as_u16() { 401 | 403 => "authentication_failed", 429 => "rate_limited", _ => "rewrite_service_error" };
@@ -78,7 +112,7 @@ pub(super) async fn request_observed(client: &Client, config: &ProviderConfig, s
     stage: RequestStage) -> Result<String, CloudError> {
     execution.checkpoint(cancel)?;
     let mut guard = execution.start(stage, cancel);
-    let result = request_content(client,config,secret,endpoint,body,cancel,execution.deadline).await;
+    let result = request_content_with_execution(client,config,secret,endpoint,body,cancel,execution,stage).await;
     guard.finish(&result);
     result
 }

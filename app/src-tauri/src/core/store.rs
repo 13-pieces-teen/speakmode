@@ -1,5 +1,6 @@
 use super::types::*;
 use super::OnboardingProgress;
+use super::personalization::*;
 use super::{CommitGuard,commit_guard::CommitKind};
 use std::sync::{Arc,Mutex};
 use std::ops::Deref;
@@ -116,6 +117,33 @@ PRAGMA user_version=3;
 "#;
 
 include!("onboarding_store.rs");
+include!("personalization_store.rs");
+
+const MIGRATION_V4: &str = r#"
+CREATE TABLE personalization_config (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL CHECK(version>0), data TEXT NOT NULL);
+CREATE TABLE personalization_events (task_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL);
+CREATE INDEX personalization_event_time ON personalization_events(created_at);
+CREATE TABLE personalization_deleted_profiles (profile_id TEXT PRIMARY KEY);
+CREATE TABLE personalization_references (output_id TEXT PRIMARY KEY REFERENCES outputs(id) ON DELETE CASCADE, profile_id TEXT, data TEXT NOT NULL);
+CREATE INDEX personalization_reference_profile ON personalization_references(profile_id);
+PRAGMA user_version=4;
+"#;
+
+// Version barrier: older applications deny unknown event fields. Leave legacy
+// JSON untouched so its absent dispatch marker continues to mean unknown.
+const MIGRATION_V5: &str = "PRAGMA user_version=5;";
+
+// A background event can be lost on process termination. Persist the run
+// boundary so a restart cannot silently turn missing events into a full count.
+const MIGRATION_V6: &str = r#"
+CREATE TABLE IF NOT EXISTS personalization_statistics_health (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ incomplete INTEGER NOT NULL CHECK(incomplete IN (0,1)),
+ running INTEGER NOT NULL CHECK(running IN (0,1))
+);
+INSERT OR IGNORE INTO personalization_statistics_health VALUES(1,0,0);
+PRAGMA user_version=6;
+"#;
 
 #[derive(Clone)]
 struct MemorySession {
@@ -142,7 +170,7 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 3 { return Err(invalid("database schema is newer than this application")); }
+        if version > 6 { return Err(invalid("database schema is newer than this application")); }
         if version == 0 {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V1)?;
@@ -159,6 +187,22 @@ impl Store {
             let tx = CheckedTransaction::new(&mut connection,health.clone())?;
             tx.execute_batch(MIGRATION_V3)?;
             tx.execute("INSERT INTO onboarding(singleton,version,data) VALUES(1,1,?1)", [json(&OnboardingProgress::new_install(version == 0))?])?;
+            tx.commit()?;
+        }
+        if version < 4 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V4)?;
+            tx.execute("INSERT INTO personalization_config(singleton,version,data) VALUES(1,1,?1)", [json(&PersonalizationConfig::default())?])?;
+            tx.commit()?;
+        }
+        if version < 5 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V5)?;
+            tx.commit()?;
+        }
+        if version < 6 {
+            let tx = CheckedTransaction::new(&mut connection,health.clone())?;
+            tx.execute_batch(MIGRATION_V6)?;
             tx.commit()?;
         }
         Ok(Self { connection, memory_sessions: HashMap::new(), latest_memory_ready: None,commit_guard:None,health })
@@ -418,6 +462,7 @@ impl Store {
     /// Only adopt_candidate may opt into the first historical candidate path.
     /// A new historical Mode never changes the immutable capture Mode snapshot.
     fn commit_first_ready(&mut self, output: OutputRevision, history_candidate:bool) -> StoreResult<HistoryDetail> {
+        self.ensure_personalization_live(&output)?;
         self.ensure_not_tombstoned(&output.session_id)?;
         let detail=self.get_result(&output.session_id)?;
         if let Some(current)=&detail.output {
@@ -475,7 +520,9 @@ impl Store {
     pub fn get_output(&self, revision_id: &str) -> StoreResult<OutputRevision> {
         for memory in self.memory_sessions.values() { if let Some(output)=memory.outputs.get(revision_id) { return Ok(output.clone()); } }
         let data:Option<String>=self.connection.query_row("SELECT data FROM outputs WHERE id=?1",[revision_id],|r|r.get(0)).optional()?;
-        decode(data.ok_or(StoreError::NotFound)?)
+        let mut output=decode(data.ok_or(StoreError::NotFound)?)?;
+        self.restore_personalization_reference(&mut output)?;
+        Ok(output)
     }
     pub fn get_result(&self, session_id: &str) -> StoreResult<HistoryDetail> {
         if let Some(memory)=self.memory_sessions.get(session_id) {
@@ -620,6 +667,7 @@ impl Store {
         self.commit_revision_with_dictionary(session_id,expected,output,clear_undo,None)
     }
     fn commit_revision_with_dictionary(&mut self, session_id:&str, expected:&str, mut output:OutputRevision, clear_undo:bool, dictionary:Option<(&DictionarySnapshot,u64,bool)>) -> StoreResult<HistoryDetail> {
+        self.ensure_personalization_live(&output)?;
         let detail=self.get_result(session_id)?;
         self.current_for_edit(session_id,expected)?;
         if output.session_id!=session_id || output.source_revision_id!=detail.session.current_source_id { return Err(invalid("revision source/session mismatch")); }
@@ -697,11 +745,35 @@ impl Store {
         tx.commit_guarded(guard.as_deref(),CommitKind::Cleanup,||{})?;Ok(result)
     }
 
+    /// Called by the owning DB worker before it accepts any new jobs. A plain
+    /// Store::open/read must never terminate work belonging to a live owner.
     pub fn recover_after_restart(&mut self) -> StoreResult<()> {
         let tx=CheckedTransaction::new(&mut self.connection,self.health.clone())?;
         tx.execute("UPDATE sessions SET status='interrupted' WHERE status='checkpointed'",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unconfirmed',reason='interruptedBeforeReceipt' WHERE state='prepared'",[])?;
         tx.execute("UPDATE delivery_attempts SET state='unconfirmed',reason='interrupted' WHERE state='dispatched'",[])?;
+        let pending={
+            let mut statement=tx.prepare("SELECT task_id,data FROM personalization_events")?;
+            let rows=statement.query_map([],|row|Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (task_id,data) in pending {
+            // Invalid statistics remain visible as read errors; they must not
+            // prevent ordinary session recovery or be silently rewritten.
+            let Ok(mut event)=serde_json::from_str::<PersonalizationEvent>(&data) else{continue;};
+            if event.task_id!=task_id || event.validate().is_err() || event.status!=PersonalizationEventStatus::Started {continue;}
+            // The old process cannot complete these jobs. Use the existing
+            // failure state, not success or a fabricated user cancellation.
+            // Preserve recorded duration: downtime is not processing latency.
+            event.status=PersonalizationEventStatus::Failed;
+            // A process can stop after network dispatch but before its terminal
+            // receipt is durable. Pending selection is not proof of no send.
+            if event.personalized&&event.reference_dispatch==Some(ReferenceDispatch::NotStarted) {
+                event.reference_dispatch=Some(ReferenceDispatch::Unknown);
+            }
+            let changed=tx.execute("UPDATE personalization_events SET data=?1 WHERE task_id=?2 AND data=?3",params![json(&event)?,task_id,data])?;
+            if changed!=1{return Err(StoreError::Conflict{current:"personalization_recovery_changed".into()});}
+        }
         tx.commit()?;
         Ok(())
     }
@@ -775,6 +847,7 @@ pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreRe
     valid_id(&output.id)?;
     if let Some(receipt)=&output.writing_receipt {
         if receipt.contract_version.len()>80 || receipt.contract_version.is_empty() || output.rewrite_fallback.is_some() {return Err(invalid("invalid writing receipt"));}
+        if let Some(snapshot)=&receipt.personalization {snapshot.validate().map_err(invalid)?;if snapshot.scene!=receipt.scene {return Err(invalid("personalization_receipt_scene"));}}
     }
     if let Some(context)=&output.confirmed_context {
         context.reference_text(source).map_err(invalid)?;
@@ -804,7 +877,22 @@ fn usage_for(seed:&SessionSeed,source:&SourceRevision) -> UsageEvent {
     UsageEvent {session_id:seed.id.clone(),source_char_count:source_character_count(&source.text()),capture_duration_ms:seed.capture_duration_ms,ended_at:seed.ended_at.clone(),end_local_date:seed.end_local_date.clone(),time_zone:seed.time_zone.clone()}
 }
 fn insert_output(tx:&Transaction<'_>,output:&OutputRevision) -> StoreResult<()> {
-    tx.execute("INSERT INTO outputs(id,session_id,source_id,data) VALUES(?1,?2,?3,?4)",params![output.id,output.session_id,output.source_revision_id,json(output)?])?;
+    let reference=output.writing_receipt.as_ref().and_then(|receipt|receipt.personalization.as_ref());
+    if let Some(snapshot)=reference {
+        snapshot.validate().map_err(invalid)?;
+        if let Some(profile_id)=&snapshot.profile_id {
+            let removed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM personalization_deleted_profiles WHERE profile_id=?1)",[profile_id],|row|row.get(0))?;
+            if removed&&!snapshot.reference_cleared {return Err(StoreError::Cancelled);}
+        }
+    }
+    let mut stored=output.clone();
+    if let Some(snapshot)=stored.writing_receipt.as_mut().and_then(|receipt|receipt.personalization.as_mut()) {
+        let was_cleared=snapshot.reference_cleared;snapshot.clear_reference();snapshot.reference_cleared=was_cleared;
+    }
+    tx.execute("INSERT INTO outputs(id,session_id,source_id,data) VALUES(?1,?2,?3,?4)",params![output.id,output.session_id,output.source_revision_id,json(&stored)?])?;
+    if let Some(snapshot)=reference.filter(|snapshot|!snapshot.reference_cleared) {
+        tx.execute("INSERT INTO personalization_references(output_id,profile_id,data) VALUES(?1,?2,?3)",params![output.id,snapshot.profile_id,json(snapshot)?])?;
+    }
     Ok(())
 }
 fn insert_usage(tx:&Transaction<'_>,usage:&UsageEvent) -> StoreResult<()> {

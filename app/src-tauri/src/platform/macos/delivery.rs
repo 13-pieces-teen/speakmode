@@ -118,6 +118,14 @@ pub fn capture_bounded() -> Result<TargetSnapshot> { capture_bounded_for_anchor(
 pub fn capture_bounded_for_anchor(anchor: ForegroundAnchor) -> Result<TargetSnapshot> {
     bounded(false, move || inspect(anchor))
 }
+// macOS delivery requires the frozen AX control and selection. The shared
+// engine can supply optional Windows activity metadata through this interface.
+pub fn capture_bounded_with_compatibility(anchor: ForegroundAnchor, _: Option<InputActivity>) -> Result<TargetSnapshot> {
+    capture_bounded_for_anchor(anchor)
+}
+pub fn capture_activity() -> Result<InputActivity> { Err(unsupported()) }
+pub fn inspect_wechat_window(_: ForegroundAnchor, _: InputActivity) -> Result<TargetSnapshot> { Err(unsupported()) }
+pub fn recapture_keyboard_target(_: ForegroundAnchor, _: InputActivity) -> Result<TargetSnapshot> { Err(unsupported()) }
 fn inspect(anchor: ForegroundAnchor) -> Result<TargetSnapshot> {
     require_external_target_process(anchor.process_id, std::process::id())?;
     if !unsafe { AXIsProcessTrusted() } || unsafe { IsSecureEventInputEnabled() } { return Err(target_failure(TargetCaptureFailure::TargetNotEditable)); }
@@ -129,7 +137,7 @@ fn inspect(anchor: ForegroundAnchor) -> Result<TargetSnapshot> {
     let element_token = token(element)?;
     let runtime_id = vec![MAC_TARGET, token(window)?, element_token];
     compare_application(&anchor)?;
-    let target = TargetSnapshot { hwnd: anchor.hwnd, process_id: anchor.process_id, process_created_at: anchor.process_created_at, focused_hwnd: element_token as usize, runtime_id, selection };
+    let target = TargetSnapshot { hwnd: anchor.hwnd, process_id: anchor.process_id, process_created_at: anchor.process_created_at, focused_hwnd: element_token as usize, runtime_id, selection, compatibility: None };
     compare_anchor(&anchor, &target)?;
     Ok(target)
 }
