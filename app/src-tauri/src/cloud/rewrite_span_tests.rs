@@ -205,7 +205,7 @@ fn coarse_span_block_still_allows_partial_restore_and_undo_without_changing_othe
         session_id: source.session_id.clone(), parent_revision_id: None, base_revision_id: None,
         source_revision_id: source.id.clone(), mode_snapshot: mode, resolved_mode: result.resolved_mode,
         blocks: result.blocks, kind: RevisionKind::Initial, creation_reason: CreationReason::NormalInitial,
-        created_at: source.created_at.clone(), rewrite_fallback: None }).unwrap().output.unwrap();
+        created_at: source.created_at.clone(), rewrite_fallback: None, rewrite_recovery: None }).unwrap().output.unwrap();
     let mut edited_blocks = initial.blocks.clone();
     edited_blocks[0].text = edited_blocks[0].text.replace("先不要发邀请", "先发邀请");
     let edited = store.edit_output(&source.session_id, &initial.id, edited_blocks, "edited").unwrap().output.unwrap();

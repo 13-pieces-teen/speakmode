@@ -17,6 +17,57 @@ fn context_recovers_known_terms_without_changing_letters_or_acronym_meaning() {
         ("说明文字讨论 A，呃，D H D，不要补充诊断。","说明文字讨论 ADHD，不要补充诊断。"),
     ] {assert_eq!(normalize(input,false),expected,"{input}");}
 }
+
+#[test]
+fn app_spelling_in_application_context_passes_generation_and_admission() {
+    for input in [
+        "用户可以在我们的这个 A P P 里启动录音。",
+        "请安装这个 A P P。",
+        "Open the A P P to start recording.",
+    ] {
+        let expected = input.replace("A P P", "APP");
+        let source = source(input);
+        let mode = mode();
+        let request = super::super::minimum::prepare(&ProviderConfig::default(), &mode,
+            &source, &DictionarySnapshot::default(), true).unwrap();
+        let content = serde_json::json!({"resolvedMode":"light","text":expected}).to_string();
+        let draft = super::super::minimum::parse(&content, &mode, &source, &request).unwrap();
+
+        assert_eq!(normalize(input, false), expected);
+        assert_eq!(draft.blocks[0].text, expected);
+        assert!(super::super::review_admission(&source, &draft).is_ok());
+        for changed in ["AP", "APPP", "API"] {
+            let changed_draft = RewriteResult { resolved_mode: BaseMode::Light,
+                blocks: vec![block(&expected.replace("APP", changed))] };
+            assert!(super::super::review_admission(&source, &changed_draft).is_err());
+        }
+    }
+}
+
+#[test]
+fn app_spelling_keeps_explicit_letter_and_literal_boundaries() {
+    for input in [
+        "应用开发课的三个独立字母 A P P，每个字母分别读。",
+        "启动时显示 A、P、P，请分别保留。",
+        "请原样引用“A P P”，再启动应用。",
+        "启动命令是 `A P P`。",
+        "The app teaches spelling: the letters are A P P.",
+        "启动 A P P。我不确定拼写。",
+        "A P P",
+        "启动 A P P P。",
+    ] {
+        assert_eq!(normalize(input, false), input);
+        let draft = RewriteResult { resolved_mode: BaseMode::Light,
+            blocks: vec![block(&input.replace("A P P", "APP").replace("A、P、P", "APP"))] };
+        assert!(super::super::review_admission(&source(input), &draft).is_err(), "{input}");
+    }
+    let input = "启动 A P P，再分别写字母 A、P、P。";
+    let expected = "启动 APP，再分别写字母 A、P、P。";
+    assert_eq!(normalize(input, false), expected);
+    assert!(validate(&source(input), &[block(expected)]).is_ok());
+    assert!(validate(&source(input), &[block("启动 APP，再分别写字母 APP。")]).is_err());
+}
+
 #[test]
 fn unrelated_sentences_do_not_share_letter_preservation_instructions() {
     for input in ["我在看 A D H D 的研究。四个选项分别是 A、B、C、D，请分别保留。",

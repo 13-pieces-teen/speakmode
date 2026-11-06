@@ -94,7 +94,7 @@ impl AppHub {
                     return Err(ApiError::new("practice_required", "onboarding", "请先完成口述并取得可查看的结果"));
                 }
                 let output=detail.output.as_ref().unwrap();
-                if (output.rewrite_fallback.is_some() || output.kind==RevisionKind::UseSource)
+                if (output.rewrite_fallback.is_some() || output.rewrite_recovery.is_some() || output.kind==RevisionKind::UseSource)
                     && payload.get("acceptedFallbackRevisionId").and_then(Value::as_str)!=Some(output.id.as_str()) {
                     return Err(ApiError::new("source_confirmation_required","onboarding","整理尚未完成，请重试整理，或核对并确认当前识别原文后继续"));
                 }

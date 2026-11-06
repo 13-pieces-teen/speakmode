@@ -52,7 +52,7 @@ fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
 pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration }
 impl Reply {
     pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO } }
-    fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
+    pub(crate) fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
     pub(crate) fn after(mut self, millis: u64) -> Self { self.delay = Duration::from_millis(millis); self }
 }
 pub(crate) struct Server { pub(crate) endpoint: String, requests: Arc<Mutex<Vec<Value>>>, arrived: Arc<Notify>, task: JoinHandle<()> }
@@ -120,6 +120,50 @@ async fn test_run(server:&Server,input:&str,wait:Duration)->Outcome{
     let(config,mode,source)=fixture(input);
     execute(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,wait).await
 }
+
+#[tokio::test]
+async fn reviewed_checkpoint_is_single_use_and_bound_to_source_and_mode() {
+    for mismatch in ["none", "source", "mode"] {
+        let input = "预算3500元，先不要发送。";
+        let server = Server::new(vec![Reply::draft(input), Reply::new(ACCEPT)]).await;
+        let (config, mut mode, mut source) = fixture(input);
+        let execution = RewriteExecution::for_duration(Duration::from_secs(3));
+        let result = execute_until(&client(), &config, "synthetic-secret", &mode, &source,
+            &DictionarySnapshot::default(), CancellationToken::new(), &server.endpoint, execution.clone(), None).await;
+        assert!(result.result.is_ok());
+        match mismatch {
+            "source" => source.generation += 1,
+            "mode" => mode.revision += 1,
+            _ => {},
+        }
+        assert_eq!(execution.take_reviewed(&source, &mode).is_some(), mismatch == "none");
+        assert!(execution.take_reviewed(&source, &mode).is_none());
+    }
+}
+
+#[tokio::test]
+async fn production_app_spelling_reaches_full_review_without_a_correction() {
+    let input = "用户可以在我们的这个 A P P 里启动录音。";
+    let expected = "用户可以在我们的这个 APP 里启动录音。";
+    let server = Server::new(vec![Reply::draft(expected), Reply::new(ACCEPT)]).await;
+    let (config, mode, source) = fixture(input);
+    let original = source.clone();
+    let result = super::super::rewrite_with_client_optional_context(&client(), &config,
+        "synthetic-secret", &mode, &source, &DictionarySnapshot::default(),
+        CancellationToken::new(), &server.endpoint,
+        RewriteExecution::for_duration(Duration::from_secs(4)), None).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, expected);
+    assert_eq!(source, original);
+    assert_eq!(server.count(), 2);
+    for request in server.requests.lock().unwrap().iter() {
+        let data: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(data["sourceText"], input);
+        assert_eq!(data["notationHints"]["acronyms"][0], json!({"spoken":"A P P","written":"APP"}));
+        assert_eq!(data["notationHints"]["separateLetterGroups"], json!([]));
+    }
+}
+
 #[tokio::test]
 async fn ordered_review_runs_through_real_http_without_bypassing_review(){
     let input="请先检查麦克风，暂时不要发布。";

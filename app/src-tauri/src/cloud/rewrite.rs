@@ -19,6 +19,9 @@ mod provider_tests;
 #[serde(rename_all = "camelCase")]
 pub struct RewriteResult { pub resolved_mode: BaseMode, pub blocks: Vec<OutputBlock> }
 
+#[path="rewrite_basic_cleanup.rs"]
+pub(crate) mod basic_cleanup;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ModelOutput { resolved_mode: BaseMode, blocks: Vec<ModelBlock> }

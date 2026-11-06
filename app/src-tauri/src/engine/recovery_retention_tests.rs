@@ -220,7 +220,7 @@ async fn locking_after_a_later_ready_result_releases_both_audio_slots_without_er
     let source=source_fixture(&id,generation);
     let output={let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();
         let output=OutputRevision{writing_receipt:None, confirmed_context:None, id:"ready-output".into(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,
-            source_revision_id:source.id.clone(),mode_snapshot:s.mode.clone(),resolved_mode:BaseMode::Light,rewrite_fallback:None,
+            source_revision_id:source.id.clone(),mode_snapshot:s.mode.clone(),resolved_mode:BaseMode::Light,rewrite_fallback:None, rewrite_recovery:None,
             blocks:vec![OutputBlock{id:"ready-block".into(),text:"不要删除测试文件。".into(),source_refs:vec!["source-item".into()]}],
             kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:now()};
         s.source=Some(source.clone());s.output=Some(output.clone());s.phase=SessionPhase::Ready;output};

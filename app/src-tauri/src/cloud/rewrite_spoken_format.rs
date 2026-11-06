@@ -5,8 +5,8 @@ use crate::core::{SourceRevision,OutputBlock};
 use serde_json::{Value,json};
 use std::collections::{HashMap,HashSet};
 
-pub(super) const VERSION:&str="spoken-format-v2";
-const ACRONYMS:&[&str]=&["ADHD","LLM","RAG","API","GPU","CPU","NLP","ASR","SDK","SQL","HTTP","HTTPS","URL","JSON","HTML","CSS","CIKM","ADMA","DCG","AI","UI","UX"];
+pub(super) const VERSION:&str="spoken-format-v3";
+const ACRONYMS:&[&str]=&["ADHD","LLM","RAG","API","APP","GPU","CPU","NLP","ASR","SDK","SQL","HTTP","HTTPS","URL","JSON","HTML","CSS","CIKM","ADMA","DCG","AI","UI","UX"];
 const POLICY:&str=r#"Spoken notation: use Arabic digits for unambiguous calendar years and dates. Chinese prose uses 2026年10月23日; English prose uses 2026-10-23 for a complete explicit date. Missing year/month/day stays missing. Never resolve tomorrow/weekdays from the current date, choose an interpretation of 3/4, fix an invalid recorded date, or borrow a year from another event. Literal quotes, code, addresses, identifiers and explicit verbatim wording retain their original spelling.
 Spelled Latin letters can be an acronym or individual units. Join only the same letters in the same order when the local prose clearly refers to one known term, e.g. A D H D -> ADHD, L L M -> LLM, R A G -> RAG. Do not expand an acronym, infer a condition/diagnosis, guess an unfamiliar name, remove repeated letters or join across unrelated words. Explicit separate letters, spelling lessons, choices, variables and uncertain letter groups stay separate. An ideographic comma (、) inside a group of individual letters explicitly enumerates separate units, regardless of nearby profession, acronym, or negated acronym context; preserve every letter in order, including repetitions. A separator between distinct spelled known terms (L L M、R A G) still permits each term to normalize independently. Source-bound separateLetterGroups identify protected occurrences; another occurrence of the same acronym never authorizes merging a list. An article a and pronoun I are not automatically AI. Chinese/English hesitation may separate an otherwise clear acronym; meaningful Chinese is never a separator to delete. Generic degrees or 度 retain an unspecified scale; only explicit Celsius/Fahrenheit in the source permits ℃/℉ notation, and profession or context never supplies a scale. Apply the same policy during generation, review and repair. Equivalent notation is not changed meaning; a changed value or merged letter list is changed meaning."#;
 
@@ -78,7 +78,13 @@ fn term_context(text:&str,start:usize,end:usize,letters:&str)->bool {
     let entity=["了解","讨论","研究","评估","资料","相关","使用","模型","系统","技术","关于","学习","感兴趣","筛查","访谈","报告","提到","介绍","开发","来自","称为","叫做",
         "缩写","简称","about","discuss","using","use ","with ","worked","research","study","studies","learning","comparing","evaluation","screening","agents","agent","model","system","topic","acronym","abbreviation"]
         .iter().any(|cue|prose.contains(cue));
-    if !entity {return false;}
+    // App actions identify this common term without authorizing arbitrary
+    // letter groups near those verbs. Explicit spelling/literal checks above
+    // still apply to each occurrence, including the repeated P.
+    let application = letters == "APP" && ["启动", "打开", "安装", "下载", "卸载", "应用", "软件",
+        "open ", "launch ", "install ", "download ", "application", "software"]
+        .iter().any(|cue|prose.contains(cue));
+    if !entity && !application {return false;}
     // Two-letter words are much more easily ordinary articles/pronouns. Keep
     // lowercase a/i unless followed by an explicit technical noun.
     if letters=="AI" && text[start..end].chars().any(|c|c=='a'||c=='i') {

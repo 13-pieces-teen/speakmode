@@ -9,7 +9,7 @@ fn source(session:&str) -> SourceRevision {
     SourceRevision{id:format!("source-{session}"),session_id:session.into(),asr_attempt_id:format!("attempt-{session}"),generation:7,provider:"aliyun".into(),model:"candidate-model".into(),adapter_version:"test-protocol-v1".into(),complete:true,items:vec![SourceItem{id:format!("item-{session}-1"),provider_item_id:"provider-1".into(),capture_order:1,text:"如果会议未确认，不要订机票。Hello 12 🙂".into(),is_final:true,start_ms:Some(0),end_ms:Some(7000)},SourceItem{id:format!("item-{session}-2"),provider_item_id:"provider-2".into(),capture_order:2,text:"先保留行程。".into(),is_final:true,start_ms:Some(7000),end_ms:Some(12000)}],created_at:"2026-10-04T10:00:12+08:00".into()}
 }
 fn output(session:&str) -> OutputRevision {
-    OutputRevision{writing_receipt:None, confirmed_context:None, id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
+    OutputRevision{writing_receipt:None, confirmed_context:None, id:format!("output-{session}"),session_id:session.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:format!("source-{session}"),mode_snapshot:seed(session,StoragePolicy::History).mode_snapshot,resolved_mode:BaseMode::Light,rewrite_fallback:None, rewrite_recovery:None,blocks:vec![OutputBlock{id:"block-1".into(),text:"会议未确认前，不要订机票。Hello 12 🙂".into(),source_refs:vec![format!("item-{session}-1")]},OutputBlock{id:"block-2".into(),text:"先保留行程。".into(),source_refs:vec![format!("item-{session}-2")]}],kind:RevisionKind::Initial,creation_reason:CreationReason::NormalInitial,created_at:"2026-10-04T10:00:13+08:00".into()}
 }
 fn ready(store:&mut Store,session:&str,policy:StoragePolicy) -> HistoryDetail {
     store.checkpoint_source(seed(session,policy),source(session)).unwrap();
@@ -198,6 +198,41 @@ fn unchanged_fallback_can_be_edited_and_undone_without_losing_its_source_identit
     let restored=store.undo_output("fallback",&edited.id,"later-again").unwrap().output.unwrap();
     assert_eq!(restored.rewrite_fallback,Some(RewriteFallbackReason::Timeout));assert_eq!(restored.text(),src.text());
     assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);
+}
+
+#[test]
+fn recovered_output_persists_edits_and_undo_with_complete_source_references() {
+    let mut store = Store::open(path()).unwrap();
+    let mut frozen = seed("recovered", StoragePolicy::History);
+    frozen.mode_snapshot = store.mode_snapshot("structure", None).unwrap();
+    let src = source("recovered");
+    store.checkpoint_source(frozen.clone(), src.clone()).unwrap();
+    let mut result = output("recovered");
+    result.mode_snapshot = frozen.mode_snapshot;
+    result.rewrite_recovery = Some(RewriteRecovery {
+        kind: RewriteRecoveryKind::BasicCleanup, cause: RewriteFallbackReason::Timeout,
+    });
+    let mut conflicting = result.clone();
+    conflicting.rewrite_fallback = Some(RewriteFallbackReason::Timeout);
+    assert!(store.commit_ready(conflicting).is_err());
+    let mut incomplete = result.clone();
+    incomplete.blocks.pop();
+    assert!(store.commit_ready(incomplete).is_err());
+    let initial = store.commit_ready(result).unwrap().output.unwrap();
+    assert_eq!(store.history_list("", 0, 20).unwrap().items[0].rewrite_recovery, initial.rewrite_recovery);
+    let mut blocks = initial.blocks.clone();
+    blocks[0].text = "用户编辑后的整理稿".into();
+    let edited = store.edit_output("recovered", &initial.id, blocks, "later").unwrap().output.unwrap();
+    assert!(edited.rewrite_recovery.is_none());
+    let restored = store.undo_output("recovered", &edited.id, "later-again").unwrap().output.unwrap();
+    assert_eq!(restored.rewrite_recovery, initial.rewrite_recovery);
+    assert_eq!(restored.blocks, initial.blocks);
+    let old = serde_json::to_value(output("old-record")).unwrap();
+    assert!(old.get("rewriteRecovery").is_none());
+    assert!(serde_json::from_value::<OutputRevision>(old.clone()).unwrap().rewrite_recovery.is_none());
+    let mut unknown = old;
+    unknown["rewriteRecovery"] = serde_json::json!({"kind":"unknown","cause":"timeout"});
+    assert!(serde_json::from_value::<OutputRevision>(unknown).is_err());
 }
 
 fn term_patch()->CorrectionPatch {CorrectionPatch{block_id:"block-1".into(),start:0,end:2,expected_text:"会议".into(),replacement:"SpeakMode".into()}}

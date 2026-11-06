@@ -32,7 +32,7 @@ async fn paired_deadline_regression(chars:usize,budget_secs:u64) {
         let saved=h.db.get_result("s").unwrap().output.unwrap();
         let snapshot=h.diagnostics.snapshot().unwrap();let trace=&snapshot.traces[0];let rewrite=trace.rewrite.as_ref().unwrap();
         assert_eq!(rewrite.configured_budget_ms,budget_secs*1000);
-        assert_eq!(saved.text(),text);assert!(saved.rewrite_fallback.is_some());
+        assert_eq!(saved.text(),text);assert!(saved.rewrite_recovery.is_some());
         assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
         assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().cancel.is_cancelled());
         let expected=if legacy_clock && budget_secs<20 {3}else{2};
@@ -40,7 +40,7 @@ async fn paired_deadline_regression(chars:usize,budget_secs:u64) {
         assert_eq!(rewrite.requests.len(),expected);
         assert!(rewrite.requests.iter().all(|r|r.end_ms.is_some()&&r.duration_ms.is_some()&&r.outcome.is_some()));
         if legacy_clock && budget_secs<20 {
-            assert_eq!(saved.rewrite_fallback,Some(RewriteFallbackReason::Timeout));
+            assert_eq!(saved.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
             // The mismatched legacy inner clock cannot see the outer cutoff:
             // its dropped in-flight request is truthfully "interrupted".
             assert_eq!(rewrite.requests.last().unwrap().outcome,Some(RequestOutcome::Interrupted));

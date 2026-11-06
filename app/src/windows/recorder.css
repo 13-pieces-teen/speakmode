@@ -18,6 +18,7 @@ html[data-surface=recorder],html[data-surface=recorder] body,html[data-surface=r
 .recorder-action-slot{width:32px;height:32px;display:grid;place-items:center}
 .recorder-recovery{margin-top:8px;padding:12px 14px;border:1px solid #eadfcf;border-radius:12px;background:#fffcf7;color:#6c5940;font-size:12px;line-height:19px;box-shadow:0 3px 10px #2343680b}
 .recorder-recovery p{margin:0;max-height:96px;overflow:auto;overflow-wrap:anywhere}
+.recorder-toolbar[data-state=settled]~.recorder-recovery{border-color:#d8e3ef;background:#f6f8fc;color:#3b526a}
 .recorder-recovery .recorder-copy-notice{margin-top:6px;color:#365b47}
 .recorder-recovery-actions{display:flex;justify-content:flex-end;align-items:center;gap:14px;margin-top:10px}
 .recorder-action{flex:none;width:32px;height:32px;display:grid;place-items:center;padding:0;border:1px solid transparent;border-radius:10px;background:transparent;color:#b7c3d3;cursor:pointer;transition:transform 100ms cubic-bezier(.2,.8,.2,1)}.recorder-action svg{width:16px;height:16px}.recorder-action:hover:not(:disabled){background:#ffffff12;color:#fff}.recorder-finish{background:#f4f7fc;border-color:#ffffff80;color:#293a53;box-shadow:0 1px 3px #0d162326}.recorder-finish:hover:not(:disabled){background:#dce9fc;color:#202d40}.recorder-action:active:not(:disabled){transform:scale(.95)}.recorder-action:disabled{background:transparent;border-color:transparent;color:#728199;cursor:default;box-shadow:none}.recorder-action:focus-visible{outline:2px solid #abcaff;outline-offset:2px}

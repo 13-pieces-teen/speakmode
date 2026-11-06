@@ -13,6 +13,8 @@ mod onboarding_tests;
 mod preview_tests;
 #[path="rewrite_fallback_tests.rs"]
 mod rewrite_fallback_tests;
+#[path="rewrite_recovery_tests.rs"]
+mod rewrite_recovery_tests;
 
 #[path="app_writing_tests.rs"]
 mod app_writing_tests;
@@ -127,7 +129,7 @@ fn output(hub: &AppHub, id: &str) -> OutputRevision {
         writing_receipt:None, confirmed_context:None, id: format!("output-{id}"), session_id: id.into(), parent_revision_id: None, base_revision_id: None,
         source_revision_id: format!("source-{id}"),
         mode_snapshot: hub.inner.lock().unwrap().active.as_ref().unwrap().mode.clone(),
-        resolved_mode: BaseMode::Structure, rewrite_fallback: None,
+        resolved_mode: BaseMode::Structure, rewrite_fallback: None, rewrite_recovery:None,
         blocks: vec![OutputBlock { id: "block-0".into(), text: "会议未确认前，不要订机票；先保留行程。".into(),
             source_refs: vec![format!("item-{id}-0"), format!("item-{id}-1")] }],
         kind: RevisionKind::Initial, creation_reason: CreationReason::NormalInitial,
@@ -448,7 +450,7 @@ async fn parsed_missing_time_qualifier_delivers_complete_source_instead_of_rejec
     {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
     finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
     assert_eq!(view(&h).state,SessionPhase::Ready);
-    assert_eq!(view(&h).rewrite_fallback,Some(RewriteFallbackReason::MeaningRisk));
+    assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::MeaningRisk));
     assert!(view(&h).error.is_none());
     let output=h.db.get_result("s").unwrap().output.unwrap();assert_eq!(output.text(),range_rewrite_source().text());
     assert_eq!(output.blocks[0].source_refs,["item-s-0","item-s-1"]);
@@ -462,7 +464,7 @@ async fn parsed_missing_time_qualifier_delivers_complete_source_instead_of_rejec
 async fn parsed_range_gap_uses_complete_source_and_counts_one_completed_dictation() {
     let h=hub();range_rewrite_checkpoint(&h);
     finish_parsed_fixture(&h,range_rewrite_content(true,false)).await;
-    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_fallback,Some(RewriteFallbackReason::InvalidOutput));
+    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::InvalidOutput));
     assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),range_rewrite_source().text());assert_eq!(usage_count(&h),1);
 }
 
