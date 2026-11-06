@@ -36,6 +36,8 @@ export function recorderPresentation(session:LiveSession|null,captionsEnabled=fa
   const delivery=deliveryFeedback(session);
   if(['prepared','dispatched'].includes(session.deliveryState??'')||session.workerReleased!==true)
    return {...view,state:'processing',label:'正在完成',message:session.error??'',showCaptions:false};
+  if(session.rewriteRecovery&&!delivery?.warning&&!session.error)return {...view,state:'settled',
+   label:delivery?.title??'整理结果已保留',message:delivery?.message??'',close:'dismiss',showResult:true,primary:'openResult'};
   if(delivery?.warning||session.error||session.rewriteFallback){
    const canCopy=delivery?.canCopyOutput||!!session.error||!delivery;
    return {...view,state:'attention',label:session.error?'结果需要核对':delivery?.title??'识别原文已保留',

@@ -1,7 +1,7 @@
-//! Delivery policy for the optional rewrite, independent from audio/ASR completion.
+//! Recovery policy for completing editing after a cloud failure.
 use super::*;
 
-/// Bound optional cleanup before delivering a complete short dictation. The short-text
+/// Bound cloud editing before selecting the best available complete result. The short-text
 /// budget is an engineering margin over synthetic measurements, not a long-text or
 /// weak-network latency guarantee. Explicit retries keep the existing cloud ceiling.
 #[derive(Clone, Copy)]
@@ -22,7 +22,9 @@ impl RewriteWaitPolicy {
 }
 
 pub(super) fn fallback_reason(error: &CloudError) -> Option<RewriteFallbackReason> {
-    if error.stage != "rewrite" { return None; }
+    if matches!(error.code.as_str(),"cancelled"|"source_incomplete"|"invalid_source") || error.code.starts_with("stale_") {return None;}
+    if matches!(error.stage.as_str(),"credentials"|"configuration") {return Some(RewriteFallbackReason::ServiceUnavailable);}
+    if !matches!(error.stage.as_str(),"rewrite"|"semantic_review") { return None; }
     Some(match error.code.as_str() {
         "rewrite_timeout" => RewriteFallbackReason::Timeout,
         "rewrite_network" | "network_setup" | "rewrite_service_error" | "authentication_failed" | "rate_limited" => RewriteFallbackReason::ServiceUnavailable,
@@ -30,11 +32,11 @@ pub(super) fn fallback_reason(error: &CloudError) -> Option<RewriteFallbackReaso
         "rewrite_meaning_risk" | "rewrite_admission_rejected" | "rewrite_semantic_rejected" | "rewrite_literal_changed"
         | "protected_terms_missing" | "protected_terms_new_latin" | "protected_terms_marker_unknown" | "protected_terms_marker_invalid"
         | "protected_terms_limit" | "protected_terms_empty" | "protected_terms_nonce_invalid" | "protected_terms_nonce_collision" => RewriteFallbackReason::MeaningRisk,
-        // Cancellation and invalid/incomplete sources must never become deliverable text.
-        _ => return None,
+        _ => RewriteFallbackReason::InvalidOutput,
     })
 }
 
+#[cfg(test)]
 pub(super) fn source_fallback(source: &SourceRevision) -> rewrite::RewriteResult {
     rewrite::RewriteResult {
         resolved_mode: BaseMode::Light,

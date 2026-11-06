@@ -135,6 +135,10 @@ pub struct SemanticReview {
 
 impl SemanticReview {
     pub fn accepted(&self) -> bool { self.decision == Decision::Accept }
+    pub(super) fn fidelity_passed(&self) -> bool {
+        [self.checks.coverage, self.checks.facts, self.checks.scope, self.checks.intent]
+            .iter().all(|status| *status == Status::Pass)
+    }
 }
 
 fn error(code: &str, message: &str) -> CloudError { CloudError::new(code, "semantic_review", message) }

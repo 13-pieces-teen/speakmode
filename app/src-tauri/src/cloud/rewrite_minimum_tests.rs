@@ -52,7 +52,7 @@ fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
 pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration }
 impl Reply {
     pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO } }
-    fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
+    pub(crate) fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
     pub(crate) fn after(mut self, millis: u64) -> Self { self.delay = Duration::from_millis(millis); self }
 }
 pub(crate) struct Server { pub(crate) endpoint: String, requests: Arc<Mutex<Vec<Value>>>, arrived: Arc<Notify>, task: JoinHandle<()> }
@@ -119,6 +119,26 @@ fn assert_correction_not_review(server:&Server) {
 async fn test_run(server:&Server,input:&str,wait:Duration)->Outcome{
     let(config,mode,source)=fixture(input);
     execute(&client(),&config,"synthetic-secret",&mode,&source,&DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,wait).await
+}
+
+#[tokio::test]
+async fn reviewed_checkpoint_is_single_use_and_bound_to_source_and_mode() {
+    for mismatch in ["none", "source", "mode"] {
+        let input = "预算3500元，先不要发送。";
+        let server = Server::new(vec![Reply::draft(input), Reply::new(ACCEPT)]).await;
+        let (config, mut mode, mut source) = fixture(input);
+        let execution = RewriteExecution::for_duration(Duration::from_secs(3));
+        let result = execute_until(&client(), &config, "synthetic-secret", &mode, &source,
+            &DictionarySnapshot::default(), CancellationToken::new(), &server.endpoint, execution.clone(), None).await;
+        assert!(result.result.is_ok());
+        match mismatch {
+            "source" => source.generation += 1,
+            "mode" => mode.revision += 1,
+            _ => {},
+        }
+        assert_eq!(execution.take_reviewed(&source, &mode).is_some(), mismatch == "none");
+        assert!(execution.take_reviewed(&source, &mode).is_none());
+    }
 }
 
 #[tokio::test]

@@ -106,6 +106,7 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
         // recorded reviewer wire contract from this exact prepared request.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
+        execution.retain_reviewed(source, mode, &draft, &review, &cancel);
         if review.accepted() && local_repair::residue_hint(source,&draft).is_none(){return Ok(draft);}
         if deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejected());}
         let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{
@@ -142,6 +143,7 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
         // Final review records its own request-derived wire contract as well.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(&cancel,deadline)?;
+        execution.retain_reviewed(source, mode, &repaired, &review, &cancel);
         if !review.accepted() || local_repair::residue_hint(source,&repaired).is_some(){return Err(rejected());}
         Ok(repaired)
     };
@@ -200,6 +202,7 @@ async fn correct_and_review(client:&reqwest::Client,config:&ProviderConfig,secre
         let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&corrected).map_err(safe_error)?;
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(cancel,execution.deadline)?;
+        execution.retain_reviewed(source, mode, &corrected, &review, cancel);
         if !review.accepted() || local_repair::residue_hint(source,&corrected).is_some(){return Err(rejected());}
         Ok(corrected)
     }.await;

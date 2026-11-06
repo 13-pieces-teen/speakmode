@@ -150,7 +150,7 @@ fn source(id: &str) -> SourceRevision {
 fn output(id: &str) -> OutputRevision {
     OutputRevision { writing_receipt:None, confirmed_context:None, id: format!("output-{id}"), session_id: id.into(),
         parent_revision_id: None, base_revision_id: None, source_revision_id: format!("source-{id}"),
-        mode_snapshot: seed(id, StoragePolicy::History).mode_snapshot, resolved_mode: BaseMode::Light, rewrite_fallback: None,
+        mode_snapshot: seed(id, StoragePolicy::History).mode_snapshot, resolved_mode: BaseMode::Light, rewrite_fallback: None, rewrite_recovery:None,
         blocks: vec![
             OutputBlock { id: "block-1".into(), text: "会议未确认前，不要订机票。Hello 12 🙂".into(),
                 source_refs: vec![format!("item-{id}-1")] },

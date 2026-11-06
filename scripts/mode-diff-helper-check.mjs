@@ -9,7 +9,7 @@ await mkdir(out,{recursive:true});
 const source=await readFile(root+'/app/src/model.ts','utf8');
 const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace("from 'diff'",`from '${pathToFileURL(root+'/app/node_modules/diff/libesm/index.js').href}'`);
 const path=out+'/model.mjs';await writeFile(path,compiled);
-const {characterDiff}=await import(pathToFileURL(path));
+const {characterDiff,fromDetail,fromSummary,modeLabel}=await import(pathToFileURL(path));
 const tests=[];
 function check(name,run){try{run();tests.push({name,status:'PASS'});}catch(error){tests.push({name,status:'FAIL',error:String(error)});}}
 function preserved(a,b,result){assert.equal(result.source.map(x=>x.text).join(''),a);assert.equal(result.current.map(x=>x.text).join(''),b);}
@@ -19,5 +19,21 @@ check('Combining characters, emoji and line breaks are not normalized',()=>{cons
 check('Large asymmetric input clearly downgrades without losing either text',()=>{const a='大'.repeat(9000),b='短句';const r=characterDiff(a,b);assert.equal(r.granularity,'whole');preserved(a,b,r);});
 check('Product-bound fallback exposes its granularity',()=>{const a='甲'.repeat(510),b='甲'.repeat(509)+'乙';const r=characterDiff(a,b);assert.equal(r.granularity,'whole');preserved(a,b,r);});
 check('Empty-side comparison preserves complete addition/deletion',()=>{for(const [a,b] of [['','新文本'],['旧文本','']]){const r=characterDiff(a,b);assert.equal(r.granularity,'whole');preserved(a,b,r);}});
+check('Recovered history shows the edited result and identifies basic cleanup',()=>{
+ const mode={modeId:'auto',name:'自动',baseMode:'auto',rules:'',revision:1};
+ const session={id:'s',modeSnapshot:mode,endedAt:'2026-11-06T10:00:00+08:00',endLocalDate:'2026-11-06',captureDurationMs:1000};
+ for(const kind of ['basicCleanup','reviewedDraft']){
+  const rewriteRecovery={kind,cause:'timeout'};
+  const output={id:'r',modeSnapshot:mode,resolvedMode:'light',blocks:[{text:'整理稿。'}],kind:'initial',rewriteRecovery};
+  const record=fromDetail({session,source:{id:'src',items:[{text:'嗯，原稿。'}]},output,canUndo:false});
+  assert.equal(record.sourceState,kind==='basicCleanup'?'basic':'model');
+  assert.deepEqual(record.current,['整理稿。']);assert.deepEqual(record.source,['嗯，原稿。']);
+  if(kind==='basicCleanup'){
+   assert.equal(modeLabel(record),'基础整理');
+   const summary=fromSummary({sessionId:'s',...session,modeId:'auto',currentRevisionId:'r',rewriteRecovery});
+   assert.equal(summary.sourceState,'basic');assert.equal(modeLabel(summary),'基础整理');
+  }
+ }
+});
 await writeFile(out+'/receipt.json',JSON.stringify({scope:'Display helper only; no semantic correctness claim',sourceSha256:createHash('sha256').update(source).digest('hex'),tests},null,2));
 console.log(JSON.stringify(tests,null,2));if(tests.some(t=>t.status!=='PASS'))process.exitCode=1;

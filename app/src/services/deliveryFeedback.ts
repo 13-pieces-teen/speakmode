@@ -29,12 +29,15 @@ const failureMessages:Record<string,string>={
 /** Ready means a saved output, not proof that another application received it. */
 export function deliveryFeedback(session:LiveSession|null):DeliveryFeedback|null {
  if(!session||session.state.toLowerCase()!=='ready')return null;
- const fallback=session.rewriteFallback?'已使用识别稿。':'';
+ const recovery=session.rewriteRecovery?.kind==='basicCleanup'?'已完成基础整理。':session.rewriteRecovery?'已保留通过含义检查的整理稿。':'';
+ const fallback=session.rewriteFallback?'已使用识别稿。':recovery;
  switch(session.deliveryState){
   case 'prepared':case 'dispatched':
    return {title:'正在发送成稿',message:fallback+'正在发送到输入位置…',warning:false,canCopyOutput:false,canViewOutput:false};
   case 'unconfirmed':
    if(session.deliveryFailureReason==='partialInputUnconfirmed')return {title:'自动输入未完整',message:fallback+'请先核对输入框中的内容，需要时可复制成稿。',warning:true,canCopyOutput:true,canViewOutput:true};
+   if(session.rewriteRecovery)return {title:session.rewriteRecovery.kind==='basicCleanup'?'已完成基础整理':'整理结果已保留',
+    message:recovery+'已尝试输入，请核对输入框中的内容。',warning:false,canCopyOutput:true,canViewOutput:true};
    if(session.rewriteFallback)return {title:'整理未完成',message:'本次未完成整理，已尝试输入识别原文。请核对输入框中的内容，可查看记录后重新整理。',warning:true,canCopyOutput:true,canViewOutput:true};
    return {title:'输入已派发',message:fallback+'请核对目标中的文本，应用不会自动重复输入。',warning:false,canCopyOutput:false,canViewOutput:true};
   case 'confirmed':return null;

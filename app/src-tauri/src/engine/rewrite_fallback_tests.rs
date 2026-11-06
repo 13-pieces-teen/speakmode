@@ -55,7 +55,7 @@ async fn production_short_rewrite_budget_falls_back_at_five_seconds_without_seco
     assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().cancel.is_cancelled());
     assert_eq!(calls.load(Ordering::SeqCst),1);assert_eq!(completed.load(Ordering::SeqCst),0);
     let saved=h.db.get_result("s").unwrap().output.unwrap();
-    assert_eq!(saved.rewrite_fallback,Some(RewriteFallbackReason::Timeout));assert_eq!(saved.text(),source("s").text());
+    assert_eq!(saved.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));assert_eq!(saved.text(),source("s").text());
     assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
     tokio::time::resume();
     wait_until(||h.inner.lock().unwrap().active.as_ref().unwrap().delivery_worker_released).await;
@@ -72,7 +72,35 @@ async fn fail_rewrite(h:&Arc<AppHub>,code:&'static str) {
 }
 
 #[tokio::test]
-async fn rewrite_failures_deliver_source_exactly_once_and_never_open_main() {
+async fn every_recoverable_rewrite_failure_runs_local_cleanup_with_complete_source_coverage() {
+    for (code, stage) in [
+        ("rewrite_network", "rewrite"), ("rewrite_timeout", "rewrite"),
+        ("rewrite_literal_changed", "rewrite"), ("rewrite_semantic_rejected", "rewrite"),
+        ("invalid_response", "rewrite"), ("future_provider_error", "rewrite"),
+        ("key_required", "credentials"), ("invalid_endpoint", "configuration"),
+    ] {
+        let h = hub();
+        install(&h, "s", SessionPhase::FinalizingAsr, true);
+        let mut frozen = source("s");
+        frozen.items[0].text = "嗯，呃，我我觉得预算3500元，先不要发送。".into();
+        frozen.items[1].text = "呃，用户可以在 A P P 里启动录音。".into();
+        h.checkpoint("s", 7, frozen.clone()).unwrap();
+        h.finish_rewrite_with_policy("s".into(), 7, move |_,_,_,_,_| async move {
+            Err(CloudError::new(code, stage, "synthetic failure"))
+        }, RewriteWaitPolicy::default(), |_,_,_| {}).await;
+        let detail = h.db.get_result("s").unwrap();
+        let output = detail.output.unwrap();
+        assert_eq!(output.text(), "我觉得预算3500元，先不要发送。\n用户可以在 APP 里启动录音。", "{code}");
+        assert_eq!(output.rewrite_recovery.unwrap().kind, RewriteRecoveryKind::BasicCleanup);
+        assert!(output.rewrite_fallback.is_none());
+        assert_eq!(output.blocks[0].source_refs, vec!["item-s-0", "item-s-1"]);
+        assert_eq!(detail.source, frozen);
+        assert_eq!(view(&h).state, SessionPhase::Ready);
+    }
+}
+
+#[tokio::test]
+async fn rewrite_failures_deliver_recovered_text_exactly_once_and_never_open_main() {
     for(code,reason)in [
         ("rewrite_timeout",RewriteFallbackReason::Timeout),("rewrite_network",RewriteFallbackReason::ServiceUnavailable),
         ("invalid_output",RewriteFallbackReason::InvalidOutput),("invalid_response",RewriteFallbackReason::InvalidOutput),
@@ -84,8 +112,8 @@ async fn rewrite_failures_deliver_source_exactly_once_and_never_open_main() {
         let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);checkpoint(&h,"s");enable_fixture_delivery(&h);
         let calls=delivery_native_calls(&h);fail_rewrite(&h,code).await;
         let saved=h.db.get_result("s").unwrap();let output=saved.output.unwrap();
-        assert_eq!(saved.source,source("s"));assert_eq!(output.text(),saved.source.text());assert_eq!(output.rewrite_fallback,Some(reason));
-        assert_eq!(output.creation_reason,CreationReason::NormalInitial);assert_eq!(view(&h).rewrite_fallback,Some(reason));
+        assert_eq!(saved.source,source("s"));assert_eq!(output.text(),saved.source.text());assert_eq!(output.rewrite_recovery.map(|recovery|recovery.cause),Some(reason));
+        assert_eq!(output.creation_reason,CreationReason::NormalInitial);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(reason));
         let diagnostics=h.diagnostics.snapshot().unwrap();let trace=&diagnostics.traces[0];
         let rewrite=trace.rewrite.as_ref().unwrap();
         assert_eq!(rewrite.error_code,Some(code));assert_eq!(rewrite.fallback_reason,Some(reason));
@@ -112,7 +140,7 @@ async fn rewrite_deadline_drops_late_candidate_and_cancels_only_its_child() {
     },RewriteWaitPolicy{deadline:Duration::from_millis(10)},|hub,_,_|hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
     assert!(captured.lock().unwrap().as_ref().unwrap().is_cancelled());
     assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().cancel.is_cancelled());
-    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_fallback,Some(RewriteFallbackReason::Timeout));
+    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
     assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
     assert_eq!(RewriteWaitPolicy::default().deadline,Duration::from_secs(20));
 }
@@ -129,7 +157,7 @@ async fn synchronous_validation_finishing_after_deadline_cannot_commit_its_candi
         draft.blocks[0].text="late synthetic candidate".into();Ok(draft)
     },RewriteWaitPolicy{deadline:Duration::from_millis(5)},|hub,_,_|hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
     let saved=h.db.get_result("s").unwrap().output.unwrap();
-    assert_eq!(saved.rewrite_fallback,Some(RewriteFallbackReason::Timeout));
+    assert_eq!(saved.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
     assert_eq!(saved.text(),source("s").text());
     assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
     assert!(captured.lock().unwrap().as_ref().unwrap().is_cancelled());
@@ -179,7 +207,7 @@ async fn fallback_save_failure_preserves_retryable_output_without_delivery() {
     assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
     fault(&h,"DROP TRIGGER fail_usage;");let mut payload=identity("s");payload["pendingCommitId"]=json!(view(&h).pending_commit_id.unwrap());
     h.retry_save(&payload).await.unwrap();
-    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_fallback,Some(RewriteFallbackReason::Timeout));
+    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
     assert_eq!(h.db.get_result("s").unwrap().output.unwrap().creation_reason,CreationReason::Retry);
     assert_eq!(usage_count(&h),1);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
 }
@@ -204,6 +232,6 @@ async fn fallback_persists_across_database_reopen_and_has_no_success_validation_
     let trace=h.diagnostics.snapshot().unwrap();assert!(!trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteValidated));
     assert!(trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteFallbackSelected));
     h.shutdown_ready().await.unwrap();let reopened=Store::open(&path).unwrap();
-    let output=reopened.get_result("s").unwrap().output.unwrap();assert_eq!(output.rewrite_fallback,Some(RewriteFallbackReason::Timeout));
+    let output=reopened.get_result("s").unwrap().output.unwrap();assert_eq!(output.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
     assert_eq!(output.text(),source("s").text());assert_eq!(reopened.usage_today("2026-10-04").unwrap().count,1);
 }

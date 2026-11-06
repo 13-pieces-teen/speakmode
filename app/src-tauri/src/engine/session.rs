@@ -105,6 +105,8 @@ pub struct LiveSession {
     #[serde(skip_serializing_if="Option::is_none")]
     pub rewrite_fallback:Option<RewriteFallbackReason>,
     #[serde(skip_serializing_if="Option::is_none")]
+    pub rewrite_recovery:Option<RewriteRecovery>,
+    #[serde(skip_serializing_if="Option::is_none")]
     pub writing_scene:Option<AppWritingScene>,
     pub input_context_status:InputContextStatus,
     pub writing_language:DraftLanguage,
@@ -188,7 +190,7 @@ impl ActiveSession {
         let can_retry_save=released&&problem&&self.pending.is_some();
         let can_retry_asr=released&&problem&&self.pending.is_none()&&self.source.is_none()&&self.cache_complete&&self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())&&self.cache_created.is_some_and(|t|t.elapsed()<AUDIO_CACHE_RETENTION);
         let can_retry_rewrite=released&&problem&&self.source.is_some()&&self.pending.is_none();
-        LiveSession{onboarding_lesson:self.onboarding_lesson,writing_language:self.prefs.app_writing.output_language,input_context_status:self.input_context_status,writing_scene:self.writing_scene,rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
+        LiveSession{onboarding_lesson:self.onboarding_lesson,writing_language:self.prefs.app_writing.output_language,input_context_status:self.input_context_status,writing_scene:self.writing_scene,rewrite_fallback:self.output.as_ref().and_then(|output|output.rewrite_fallback),rewrite_recovery:self.output.as_ref().and_then(|output|output.rewrite_recovery),captions:self.captions.clone(),capture_ready:self.first_samples,provider_ready:self.provider_ready,caption_render_token:self.caption_render_token.clone(),id:self.id.clone(),session_id:self.id.clone(),generation:self.generation,state:self.phase,mode_snapshot:self.mode.clone(),level:self.level,partial:self.captions.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join(" "),error:self.error.as_ref().map(|e|e.message.clone()),delivery_state:self.delivery.as_ref().map(|d|d.state).or_else(||self.delivery_failure_reason.as_ref().map(|_|DeliveryState::Failed)),delivery_failure_reason:self.delivery.as_ref().and_then(|d|d.reason.clone()).or_else(||self.delivery_failure_reason.clone()),recoverable_content_id:(!self.captions.is_empty()||self.source.is_some()).then(||self.id.clone()),pending_commit_id:self.pending.as_ref().map(|(id,_)|id.clone()),commit_stage:self.pending.as_ref().map(|(_,p)|match p{PendingCommit::Source(_,_)=>"sourceCheckpoint",PendingCommit::Ready(_)=>"ready"}.into()),worker_released:released,asr_attempt_id:self.asr_attempt_id.clone(),can_retry_asr,can_retry_rewrite,can_use_source:can_retry_rewrite,can_copy_recovery:!self.captions.is_empty()||self.source.is_some(),source_revision_id:self.source.as_ref().map(|s|s.id.clone()),can_retry_save,retry_kind:if can_retry_save{Some("save".into())}else if can_retry_asr{Some("asr".into())}else if can_retry_rewrite{Some("rewrite".into())}else{None},error_code:self.error.as_ref().map(|e|e.code.clone()),recording_limit_remaining_ms:self.recording_limit_remaining_ms,cancel_pending:self.cancel_pending}
     }
     pub(crate) fn adopt_first_history_result(&mut self,detail:&HistoryDetail) {
         if self.id!=detail.session.seed.id||self.generation!=detail.session.seed.generation||self.source.as_ref().is_none_or(|s|s.id!=detail.source.id){return;}
@@ -779,13 +781,13 @@ impl AppHub {
         }
         // Freeze the scene before generation. A late target inspection may still
         // authorize delivery, but cannot change this draft's presentation policy.
-        let (config,mode,source,cancel,reason,writing_context)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
+        let (config,mode,source,cancel,reason,writing_context,dictionary)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
             let source=s.source.clone().unwrap();let frozen=app_writing::freeze(s);
             s.writing_scene=frozen.as_ref().map(|context|context.scene);
             s.input_context_status=if !s.prefs.app_writing.input_context_enabled {InputContextStatus::Disabled}
                 else if frozen.as_ref().is_some_and(|context|context.input.is_some()){InputContextStatus::Available}else{InputContextStatus::Unavailable};
             s.input_context=None;s.input_context_frozen=true;
-            (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen)};
+            (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen,s.dictionary.clone())};
         self.publish_session();
         self.diagnostics.rewrite_started(trace.as_ref(),rewrite::production_protocol_version_with_context(&config,&mode,writing_context.as_ref()),policy.deadline.as_millis().min(u64::MAX as u128) as u64);
         let profile_event_id=if reason==CreationReason::Retry{format!("{}:retry:{}",id,Uuid::new_v4())}else{id.clone()};
@@ -800,6 +802,7 @@ impl AppHub {
             if let Some(hub)=observer_hub.upgrade(){hub.diagnostics.rewrite_request(observer_trace.as_ref(),event);}
         });
         let execution=profile_dispatch.observe(execution,writing_context.as_ref());
+        let recovery_execution=execution.clone();
         let generated=tokio::select! {
             biased;
             _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
@@ -821,7 +824,7 @@ impl AppHub {
             rewrite_cancel.cancel();
             Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))
         } else { generated };
-        let (generated,rewrite_fallback)=match generated {
+        let (generated,rewrite_recovery)=match generated {
             Ok(value)=>{
                 self.diagnostics.mark(trace.as_ref(),Stage::RewriteValidated);
                 self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Validated,None,None);
@@ -842,15 +845,20 @@ impl AppHub {
                 }
                 self.diagnostics.mark(trace.as_ref(),Stage::RewriteFallbackSelected);
                 self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Fallback,fallback,Some(&error.code));
-                (rewrite_fallback::source_fallback(&source),fallback)
+                let (draft,kind)=match recovery_execution.take_reviewed(&source,&mode) {
+                    Some(draft)=>(draft,RewriteRecoveryKind::ReviewedDraft),
+                    None=>(rewrite::basic_cleanup::generate(&source,&dictionary),RewriteRecoveryKind::BasicCleanup),
+                };
+                (draft,Some(RewriteRecovery{kind,cause:fallback.expect("eligible recovery reason")}))
             },
         };
-        if rewrite_fallback.is_some(){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
-        let status=if rewrite_fallback.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
+        let basic_cleanup=rewrite_recovery.is_some_and(|recovery|recovery.kind==RewriteRecoveryKind::BasicCleanup);
+        if basic_cleanup{let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
+        let status=if rewrite_recovery.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
         self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64));
         if !self.valid_active(&id,generation){return;}
-        let receipt=writing_context.as_ref().filter(|_|rewrite_fallback.is_none()).map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
-        let output=OutputRevision{writing_receipt:receipt, confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
+        let receipt=writing_context.as_ref().filter(|_|!basic_cleanup).map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
+        let output=OutputRevision{writing_receipt:receipt, confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback:None,rewrite_recovery,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}
         self.publish_session();self.changed();deliver(self,&id,generation);
     }

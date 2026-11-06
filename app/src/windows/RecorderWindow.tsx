@@ -24,7 +24,7 @@ export function RecorderWindow(){
  const localMessage=localError?.identity===identity?localError.message:'';
  const presentationError=localMessage||desktop.error||resizeError||session?.error||'';
  const attention=view.state==='attention'||!!presentationError;
- const details=attention||view.showCaptions||session?.recordingLimitRemainingMs!=null;
+ const details=attention||view.showResult||view.showCaptions||session?.recordingLimitRemainingMs!=null;
  useEffect(()=>{document.documentElement.dataset.surface='recorder';return()=>{delete document.documentElement.dataset.surface;};},[]);
  useEffect(()=>{setLocalError(null);setBusyIdentity(null);setCopiedIdentity(null);},[identity]);
  async function act(name:string,payload:Record<string,unknown>={}){
@@ -43,7 +43,7 @@ export function RecorderWindow(){
  const reportCaptionRender=useCallback((token:string,asrAttemptId:string|null)=>{
   void desktop.command('session.captionRendered',{sessionId:session?.sessionId??session?.id,expectedGeneration:session?.generation,asrAttemptId,token}).catch(()=>{});
  },[desktop.command,session?.sessionId,session?.id,session?.generation]);
- const actionLabel=view.primary==='copyRecovery'?'复制已有文字':view.primary==='copyOutput'?'复制文字':'查看恢复';
+ const actionLabel=view.primary==='copyRecovery'?'复制已有文字':view.primary==='copyOutput'?'复制文字':session?.state.toLowerCase()==='ready'?'查看结果':'查看恢复';
  return <main className="recorder-surface"><section ref={assembly} className="recorder-assembly" data-mode-open={menuOpen} data-details={details} aria-label="录音浮层">
   {!desktop.available&&<p className="recorder-environment" role="status">请在桌面应用中打开，浏览器不会录音或生成字幕。</p>}
   <div className="recorder-toolbar" data-state={attention?'attention':view.state} role="group" aria-label="口述控制">
@@ -59,8 +59,8 @@ export function RecorderWindow(){
   </div>
   {view.showCaptions&&<CaptionStrip key={identity} identity={identity} session={session} reportRender={reportCaptionRender}/>}
   {view.canStop&&session?.recordingLimitRemainingMs!=null&&<p className="recorder-limit-warning" role="status">本次录音还可继续 {Math.ceil(session.recordingLimitRemainingMs/1000)} 秒，请结束后另起一段。</p>}
-  {attention&&<div className="recorder-recovery" role={presentationError?'alert':'status'} aria-live="polite">
-   <p>{presentationError||view.message}</p>
+  {(attention||view.showResult)&&<div className="recorder-recovery" role={presentationError?'alert':'status'} aria-live="polite">
+   {(presentationError||view.message)&&<p>{presentationError||view.message}</p>}
    {copied&&<p className="recorder-copy-notice">已复制，可回到输入框粘贴。</p>}
    <div className="recorder-recovery-actions">
     {(view.showResult||presentationError)&&view.primary!=='openResult'&&<Button size="1" variant="ghost" color="gray" disabled={!desktop.available||busy} onClick={()=>void perform('openResult')}>查看结果</Button>}

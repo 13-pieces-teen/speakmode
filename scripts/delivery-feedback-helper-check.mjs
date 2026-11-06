@@ -27,6 +27,21 @@ await test('Raw fallback remains visible as unfinished cleanup even after input 
   assert.match(feedback.message,/尝试输入识别原文/);assert.doesNotMatch(feedback.message,/已成功/);
  }
 });
+await test('Recovered cleanup displays the available edited result and preserves delivery status',()=>{
+ for(const kind of ['reviewedDraft','basicCleanup']){
+  const ready={...session('ready','unconfirmed','inputDispatchedUnconfirmed'),rewriteRecovery:{kind,cause:'timeout'}};
+  const feedback=deliveryFeedback(ready);
+  assert.equal(feedback.warning,false);
+  assert.equal(feedback.canViewOutput,true);
+  assert.doesNotMatch(feedback.message,/识别原文|整理未完成/);
+  const presentation=recorderPresentation(ready);
+  assert.equal(presentation.state,'settled');
+  assert.equal(presentation.primary,'openResult');
+  assert.equal(presentation.showResult,true);
+  const partial=deliveryFeedback({...ready,deliveryFailureReason:'partialInputUnconfirmed'});
+  assert.equal(partial.warning,true);assert.equal(partial.title,'自动输入未完整');
+ }
+});
 await test('Historical receipt fields do not create current delivery feedback during recording or failed ASR',()=>{
  for(const phase of ['starting','recording','finalizingAsr','rewriting','failed','incomplete','cancelled'])assert.equal(deliveryFeedback(session(phase,'skipped','targetUnavailableAtStop')),null);
 });
@@ -277,6 +292,16 @@ await test('Dismiss and current result actions carry identity and never retry in
 await test('Partial input and receipt persistence errors retain a copy action, without automatic re-paste',()=>{
  for(const extra of [{deliveryFailureReason:'partialInputUnconfirmed'},{error:'输入回执未保存'}]){
   const view=recorderPresentation({...session('ready','unconfirmed'),...extra});assert.equal(view.state,'attention');assert.equal(view.primary,'copyOutput');assert.equal(view.close,'dismiss');
+ }
+});
+await test('Recovered results expose one working result action in the actual recorder component',async()=>{
+ for(const kind of ['reviewedDraft','basicCleanup']){
+  const calls=[];
+  setDesktop({available:true,error:'',session:{...session('ready','unconfirmed'),rewriteRecovery:{kind,cause:'timeout'}},command:async(name,payload)=>calls.push({name,payload})});
+  const buttons=nodes(RecorderWindow(),node=>node.type==='button'&&node.props.children==='查看结果');
+  assert.equal(buttons.length,1);
+  buttons[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(calls,[{name:'app.showMain',payload:{sessionId:'synthetic-result',expectedGeneration:1,currentResult:true}}]);
  }
 });
 const receipt={status:tests.every(test=>test.status==='PASS')?'PASS':'FAIL',scope:'Presentation logic and actual recorder/main-window recovery render and handlers with synthetic hooks and command spies. No DOM, native acceptance, automatic paste, microphone, provider, or user data.',sourceSha256:createHash('sha256').update(source).digest('hex'),recorderSourceSha256:createHash('sha256').update(recorderSource).digest('hex'),modesSourceSha256:createHash('sha256').update(modesSource).digest('hex'),sessionRecoverySourceSha256:createHash('sha256').update(recoverySource).digest('hex'),tests};

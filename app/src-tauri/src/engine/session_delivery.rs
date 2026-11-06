@@ -80,7 +80,7 @@ impl AppHub {
         let current=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()&&!s.original_delivery_revoked);
         // A saved/raw fallback is not a polished result. Keep its recovery
         // notice visible even when the one allowed paste was dispatched.
-        if current{let _=self.native_action("recording",output.rewrite_fallback.is_some()||persisted.is_err()||reason=="partialInputUnconfirmed"||matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
+        if current{let _=self.native_action("recording",output.rewrite_fallback.is_some()||output.rewrite_recovery.is_some()||persisted.is_err()||reason=="partialInputUnconfirmed"||matches!(state,DeliveryState::Skipped|DeliveryState::Failed));}
     }
 
     pub fn copy_recoverable(&self,p:&Value)->Result<Value> {

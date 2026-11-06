@@ -215,6 +215,12 @@ pub enum CreationReason { NormalInitial, Retry, UseSource, History, Preview }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RewriteFallbackReason { Timeout, ServiceUnavailable, InvalidOutput, MeaningRisk }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RewriteRecoveryKind { ReviewedDraft, BasicCleanup }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RewriteRecovery { pub kind: RewriteRecoveryKind, pub cause: RewriteFallbackReason }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OutputRevision {
@@ -232,6 +238,8 @@ pub struct OutputRevision {
     pub resolved_mode: BaseMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewrite_fallback: Option<RewriteFallbackReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_recovery: Option<RewriteRecovery>,
     pub blocks: Vec<OutputBlock>,
     pub kind: RevisionKind,
     pub creation_reason: CreationReason,
@@ -239,9 +247,10 @@ pub struct OutputRevision {
 }
 impl OutputRevision {
     pub fn text(&self) -> String { self.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n\n") }
-    /// A deliberate edit is no longer the unchanged source fallback. Retain its selected Mode.
+    /// Manual edits clear automatic recovery metadata and retain their selected Mode.
     pub fn clear_rewrite_fallback(&mut self) {
-        if self.rewrite_fallback.take().is_some() && self.mode_snapshot.base_mode != BaseMode::Auto {
+        let recovered = self.rewrite_recovery.take().is_some();
+        if (self.rewrite_fallback.take().is_some() || recovered) && self.mode_snapshot.base_mode != BaseMode::Auto {
             self.resolved_mode = self.mode_snapshot.base_mode;
         }
     }
@@ -288,6 +297,8 @@ pub struct HistorySummary {
     pub resolved_mode: Option<BaseMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rewrite_fallback: Option<RewriteFallbackReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_recovery: Option<RewriteRecovery>,
     pub current_revision_id: Option<String>,
     pub source_revision_id: String,
     pub status: StoredSessionStatus,

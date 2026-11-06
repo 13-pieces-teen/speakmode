@@ -507,7 +507,7 @@ impl Store {
         if detail.output.is_some() {return Err(StoreError::AlreadyCompleted);}
         let mode=detail.session.seed.mode_snapshot;
         let resolved=if mode.base_mode==BaseMode::Auto {BaseMode::Light} else {mode.base_mode};
-        let output=OutputRevision{writing_receipt:None, confirmed_context:None, id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None,
+        let output=OutputRevision{writing_receipt:None, confirmed_context:None, id:id(),session_id:session_id.into(),parent_revision_id:None,base_revision_id:None,source_revision_id:detail.source.id,mode_snapshot:mode,resolved_mode:resolved,rewrite_fallback:None, rewrite_recovery:None,
             blocks:detail.source.items.into_iter().map(|item|OutputBlock{id:id(),text:item.text,source_refs:vec![item.id]}).collect(),kind:RevisionKind::UseSource,creation_reason:CreationReason::UseSource,created_at:created_at.into()};
         self.commit_ready(output)
     }
@@ -845,8 +845,14 @@ fn validate_source(seed:&SessionSeed,source:&SourceRevision) -> StoreResult<()> 
 }
 pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreResult<()> {
     valid_id(&output.id)?;
+    let basic_cleanup=output.rewrite_recovery.is_some_and(|recovery|recovery.kind==RewriteRecoveryKind::BasicCleanup);
+    if output.rewrite_recovery.is_some() && (output.rewrite_fallback.is_some()
+        || !matches!(output.kind,RevisionKind::Initial|RevisionKind::Undo)) {
+        return Err(invalid("rewrite recovery belongs to an initial result or its undo"));
+    }
+    if basic_cleanup && output.resolved_mode!=BaseMode::Light {return Err(invalid("basic cleanup uses source-order prose"));}
     if let Some(receipt)=&output.writing_receipt {
-        if receipt.contract_version.len()>80 || receipt.contract_version.is_empty() || output.rewrite_fallback.is_some() {return Err(invalid("invalid writing receipt"));}
+        if receipt.contract_version.len()>80 || receipt.contract_version.is_empty() || output.rewrite_fallback.is_some() || basic_cleanup {return Err(invalid("invalid writing receipt"));}
         if let Some(snapshot)=&receipt.personalization {snapshot.validate().map_err(invalid)?;if snapshot.scene!=receipt.scene {return Err(invalid("personalization_receipt_scene"));}}
     }
     if let Some(context)=&output.confirmed_context {
@@ -854,7 +860,7 @@ pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreRe
         if output.rewrite_fallback.is_some() || matches!(output.kind,RevisionKind::Initial|RevisionKind::UseSource) {return Err(invalid("confirmed context belongs only to an explicit history revision"));}
     }
     if !source.complete || output.source_revision_id!=source.id || output.session_id!=source.session_id || output.blocks.is_empty() || output.resolved_mode==BaseMode::Auto {return Err(invalid("output must bind a complete source and resolved base Mode"));}
-    if output.rewrite_fallback.is_none() && output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
+    if output.rewrite_fallback.is_none() && !basic_cleanup && output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
     if output.rewrite_fallback.is_some() && (output.resolved_mode!=BaseMode::Light || !matches!(output.kind,RevisionKind::Initial|RevisionKind::Undo)) {return Err(invalid("source fallback must be an initial result or an explicit undo"));}
     let final_ids:HashSet<&str>=source.items.iter().filter(|i|i.is_final).map(|i|i.id.as_str()).collect();
     let mut blocks=HashSet::new();
@@ -867,6 +873,10 @@ pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreRe
     }
     if output.rewrite_fallback.is_some() {
         if output.blocks.len()!=1 || output.blocks[0].text!=source.text() || output.blocks[0].source_refs!=source.items.iter().map(|item|item.id.clone()).collect::<Vec<_>>() {return Err(invalid("rewrite fallback must preserve the complete source and its ordered references"));}
+    }
+    if output.rewrite_recovery.is_some() && source.items.iter()
+        .any(|item|!output.blocks.iter().any(|block|block.source_refs.contains(&item.id))) {
+        return Err(invalid("rewrite recovery must cover every source item"));
     }
     if output.kind==RevisionKind::UseSource {
         if output.blocks.len()!=source.items.len() || output.blocks.iter().zip(&source.items).any(|(block,item)|block.text!=item.text||block.source_refs!=[item.id.clone()]) {return Err(invalid("useSource must adopt unchanged items in capture order"));}
@@ -909,5 +919,5 @@ fn summary(detail:&HistoryDetail) -> HistorySummary {
     let title=text.lines().find(|line|!line.trim().is_empty()).unwrap_or("").chars().take(40).collect();
     let preview=text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
     let mode=detail.output.as_ref().map(|o|&o.mode_snapshot).unwrap_or(&detail.session.seed.mode_snapshot);
-    HistorySummary {session_id:detail.session.seed.id.clone(),title,preview,ended_at:detail.session.seed.ended_at.clone(),end_local_date:detail.session.seed.end_local_date.clone(),mode_id:mode.mode_id.clone(),mode_name:mode.name.clone(),resolved_mode:detail.output.as_ref().map(|o|o.resolved_mode),rewrite_fallback:detail.output.as_ref().and_then(|o|o.rewrite_fallback),current_revision_id:detail.session.current_output_id.clone(),source_revision_id:detail.session.current_source_id.clone(),status:detail.session.status,source_char_count:source_character_count(&detail.source.text()),capture_duration_ms:detail.session.seed.capture_duration_ms}
+    HistorySummary {session_id:detail.session.seed.id.clone(),title,preview,ended_at:detail.session.seed.ended_at.clone(),end_local_date:detail.session.seed.end_local_date.clone(),mode_id:mode.mode_id.clone(),mode_name:mode.name.clone(),resolved_mode:detail.output.as_ref().map(|o|o.resolved_mode),rewrite_fallback:detail.output.as_ref().and_then(|o|o.rewrite_fallback),rewrite_recovery:detail.output.as_ref().and_then(|o|o.rewrite_recovery),current_revision_id:detail.session.current_output_id.clone(),source_revision_id:detail.session.current_source_id.clone(),status:detail.session.status,source_char_count:source_character_count(&detail.source.text()),capture_duration_ms:detail.session.seed.capture_duration_ms}
 }
