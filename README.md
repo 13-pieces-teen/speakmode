@@ -12,6 +12,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/13-pieces-teen/speakmode/releases/latest/download/SpeakMode-windows-x64-setup.exe"><strong>下载 Windows x64 安装包</strong></a> ·
+  <a href="https://github.com/13-pieces-teen/speakmode/releases/latest">最新版本与更新说明</a><br />
   <a href="#demo">流程演示</a> ·
   <a href="#features">核心优势</a> ·
   <a href="#screenshots">界面一览</a> ·
@@ -113,7 +115,9 @@
 
 ## 开始使用
 
-当前提供 **Windows x64 源码**，需要自备云服务 API Key。首次使用可跟随应用内引导，完成服务配置、快捷键测试与口述练习。
+从 [GitHub Releases 下载最新 Windows x64 安装包](https://github.com/13-pieces-teen/speakmode/releases/latest/download/SpeakMode-windows-x64-setup.exe)，安装后即可使用，无需配置开发环境。需要自备云服务 API Key；首次使用可跟随应用内引导，完成服务配置、快捷键测试与口述练习。
+
+安装包目前未做 Windows 代码签名，系统可能显示发布者未知或 SmartScreen 提示。首次安装需要联网准备 WebView2 Runtime。升级时重新下载最新版安装包；当前没有应用内自动更新。各版本的更新说明、验证范围与 SHA256 校验文件见 [Release 页面](https://github.com/13-pieces-teen/speakmode/releases/latest)。
 
 ### 运行桌面应用
 
@@ -152,6 +156,7 @@ SpeakMode 持续开发中。识别与整理结果仍需按任务核对，实际�
 | --- | --- |
 | [开发指南](docs/development.md) | 运行、检查、测试、打包与代码导航 |
 | [构建与缓存管理](docs/build-cache.md) | Windows 构建入口、共享缓存与磁盘预算 |
+| [Release 发布流程](docs/releases.md) | 版本标签、自动构建与安装包下载 |
 | [首次使用引导](docs/desktop-onboarding.md) | 服务准备、快捷键测试与口述练习 |
 | [验证记录](docs/validation.md) | 各项验证的范围与证据 |
 | [第三方材料](docs/third-party/README.md) | 第三方代码、资源和许可说明 |

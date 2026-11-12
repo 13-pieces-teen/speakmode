@@ -1,0 +1,76 @@
+name: Release Windows installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    # Manual retries must also select a version tag, never a moving branch.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/app/src-tauri/target
+      CARGO_INCREMENTAL: '0'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate release version
+        run: |
+          $config = Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REF_NAME -cne "v$($config.version)" -or $config.version -notmatch '^\d+\.\d+\.\d+$') {
+            throw 'Release tag must match the stable desktop version in tauri.conf.json.'
+          }
+          $cargo = Get-Content app/src-tauri/Cargo.toml -Raw
+          if ($cargo -notmatch ('(?m)^version = "' + [regex]::Escape($config.version) + '"')) {
+            throw 'Cargo and Tauri desktop versions must match.'
+          }
+          "SPEAKMODE_VERSION=$($config.version)" >> $env:GITHUB_ENV
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+      - name: Test desktop library
+        run: ./scripts/build-desktop.ps1 -Task Test
+      - name: Build NSIS installer
+        run: ./scripts/build-desktop.ps1 -Task Package
+      - name: Prepare downloads
+        run: |
+          ./scripts/prepare-release-assets.ps1 -Installer "app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/SpeakMode_${env:SPEAKMODE_VERSION}_x64-setup.exe" -OutputDirectory release-assets -SourceCommit $env:GITHUB_SHA
+      - name: Retain build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpeakMode-${{ env.SPEAKMODE_VERSION }}-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Create a draft first so failed uploads never become the latest download.
+          gh release create $env:GITHUB_REF_NAME --verify-tag --draft --title "SpeakMode $env:SPEAKMODE_VERSION" --notes-file release-assets/RELEASE-NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release already exists or could not be created. Inspect it before retrying.' }
+          gh release upload $env:GITHUB_REF_NAME release-assets/*.exe release-assets/SHA256SUMS.txt release-assets/build-info.json
+          if ($LASTEXITCODE -ne 0) { throw 'Upload failed; release remains a draft.' }
+          gh release edit $env:GITHUB_REF_NAME --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the draft release.' }
