@@ -121,9 +121,9 @@ async fn short_dictionary_normalization_is_frozen_before_review_and_excludes_quo
 fn longer_english_prose_remains_editable_and_unicode_budget_boundaries_are_explicit() {
     let (_,_,mut source)=fixture(&"I would like to explain the current flow. ".repeat(30));
     assert!(!uses_guarded_long(&source));
-    source.items[0].text="字".repeat(400);assert!(!uses_guarded_long(&source));assert_eq!(super::super::initial_wait_ms(&source),5000);
-    source.items[0].text.push('字');assert!(uses_guarded_long(&source));assert_eq!(super::super::initial_wait_ms(&source),8000);
-    source.items[0].text="字".repeat(801);assert_eq!(super::super::initial_wait_ms(&source),20000);
+    source.items[0].text="字".repeat(400);assert!(!uses_guarded_long(&source));assert_eq!(super::super::initial_wait_ms(&source),20000);
+    source.items[0].text.push('字');assert!(uses_guarded_long(&source));assert_eq!(super::super::initial_wait_ms(&source),20000);
+    source.items[0].text="字".repeat(801);assert_eq!(super::super::initial_wait_ms(&source),30000);
 }
 fn client() -> Client { Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().build().unwrap() }
 async fn execute(server: &Server, source: &str, timeout: Duration) -> Result<RewriteResult, CloudError> {

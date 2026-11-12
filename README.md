@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/status.svg" alt="当前桌面源码 v0.2.38 · Windows x64 · 自备 API Key · Tauri 2、Rust 与 React" width="594" />
+  <img src="docs/assets/readme/status.svg" alt="当前桌面源码 v0.2.39 · Windows x64 · 自备 API Key · Tauri 2、Rust 与 React" width="594" />
 </p>
 
 <p align="center">
@@ -67,7 +67,7 @@
 - **个人词典**：手工维护、批量添加、纠词记忆，也可导入本机已缓存的 Typeless 词表。
 - **可选个性化**：设置职业背景、通用表达习惯与场合覆盖，用同一段原文对照试写。
 - **紧凑录音浮条**：显示录音与处理状态；实时字幕可在设置中开启。
-- **保留可用结果**：有完整识别稿时，整理异常可保留已复核草稿或执行本地基础整理，并标明结果来源；无法自动输入时可复制成稿。
+- **保留可用结果**：整理异常先尝试兜底自动整理；只有完整整理通过后才保存成稿并尝试输入。仍未完成时保留识别稿供重试。
 
 <a id="screenshots"></a>
 

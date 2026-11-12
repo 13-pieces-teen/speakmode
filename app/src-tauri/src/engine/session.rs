@@ -765,7 +765,7 @@ impl AppHub {
         generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken,rewrite::execution::RewriteExecution,Option<WritingContext>)->F,
         policy:impl Into<Option<RewriteWaitPolicy>>,deliver:impl FnOnce(&Arc<Self>,&str,u64))
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
-        // Existing tests exercise the final local safety net. Recovery-route
+        // Existing tests exercise failed finalization. Recovery-route
         // regressions use the same coordinator with a real loopback transport.
         self.finish_rewrite_with_recovery_policy(id,generation,generate,|_,_,_,_,_,_|async {
             Err(CloudError::new("rewrite_network","rewrite","synthetic recovery unavailable"))
@@ -779,10 +779,7 @@ impl AppHub {
               R:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
         let policy={let i=self.inner.lock().unwrap();let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
-            // A practice is a preview with no host insertion. Let generation and
-            // full review use the normal 20s ceiling instead of the 5s quick paste budget.
-            policy.into().unwrap_or_else(||if s.onboarding_lesson.is_some(){RewriteWaitPolicy::default()}
-                else{RewriteWaitPolicy::for_source(s.reason,s.source.as_ref().expect("checkpoint before rewrite"))})};
+            policy.into().unwrap_or_else(||RewriteWaitPolicy::for_source(s.reason,s.source.as_ref().expect("checkpoint before rewrite")))};
         let rewrite_deadline=tokio::time::Instant::now()+policy.deadline;
         // ASR finalization overlaps stop-time capture. Give it a bounded grace
         // inside the existing total rewrite deadline, never an extra budget.
@@ -797,13 +794,13 @@ impl AppHub {
         }
         // Freeze the scene before generation. A late target inspection may still
         // authorize delivery, but cannot change this draft's presentation policy.
-        let (config,mode,source,cancel,reason,mut writing_context,dictionary)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
+        let (config,mode,source,cancel,reason,mut writing_context)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
             let source=s.source.clone().unwrap();let frozen=app_writing::freeze(s);
             s.writing_scene=frozen.as_ref().map(|context|context.scene);
             s.input_context_status=if !s.prefs.app_writing.input_context_enabled {InputContextStatus::Disabled}
                 else if frozen.as_ref().is_some_and(|context|context.input.is_some()){InputContextStatus::Available}else{InputContextStatus::Unavailable};
             s.input_context=None;s.input_context_frozen=true;
-            (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen,s.dictionary.clone())};
+            (s.config.clone(),s.mode.clone(),source,s.cancel.clone(),s.reason,frozen)};
         self.publish_session();
         self.diagnostics.rewrite_started(trace.as_ref(),rewrite::production_protocol_version_with_context(&config,&mode,writing_context.as_ref()),policy.deadline.as_millis().min(u64::MAX as u128) as u64);
         let profile_event_id=if reason==CreationReason::Retry{format!("{}:retry:{}",id,Uuid::new_v4())}else{id.clone()};
@@ -848,10 +845,11 @@ impl AppHub {
             },
             Err(error)=>{
                 let fallback=rewrite_fallback::fallback_reason(&error);
-                let eligible=reason==CreationReason::NormalInitial && fallback.is_some() && rewrite::validate_source(&source).is_ok()
+                let eligible=matches!(reason,CreationReason::NormalInitial|CreationReason::Retry) && fallback.is_some() && rewrite::validate_source(&source).is_ok()
                     && source.session_id==id && source.generation==generation
                     && self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation
-                        && s.phase==SessionPhase::Rewriting && s.pending.is_none() && s.db_pending==0 && !s.original_delivery_revoked
+                        && s.phase==SessionPhase::Rewriting && s.pending.is_none() && s.db_pending==0
+                        && (reason==CreationReason::Retry || !s.original_delivery_revoked)
                         && s.source.as_ref().is_some_and(|saved|saved==&source));
                 if !eligible {
                     self.diagnostics.rewrite_finished(trace.as_ref(),if error.code=="cancelled" {RewriteOutcome::Cancelled} else {RewriteOutcome::Failed},None,Some(&error.code));
@@ -868,7 +866,7 @@ impl AppHub {
                 let wait=rewrite_fallback::automatic_wait(&source);
                 let deadline=tokio::time::Instant::now()+wait;
                 let execution=recovery_execution.recovery(deadline);
-                let retained_execution=execution.clone();
+
                 let recovery_cancel=cancel.child_token();
                 self.diagnostics.automatic_recovery_started(trace.as_ref(),wait.as_millis() as u64);
                 let recovered=tokio::select! {
@@ -887,32 +885,32 @@ impl AppHub {
                     self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,profile_started.elapsed().as_millis() as u64));
                     return;
                 }
-                self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Fallback,fallback,Some(&error.code));
                 let (draft,kind)=match recovered {
                     Ok(draft)=>{
+                        self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Fallback,fallback,Some(&error.code));
                         writing_context=Some(recovery_context);
                         self.diagnostics.mark(trace.as_ref(),Stage::RewriteValidated);
                         (draft,RewriteRecoveryKind::AutomaticRewrite)
                     },
-                    Err(_)=>match retained_execution.take_reviewed(&source,&recovery_mode)
-                        .filter(|draft|mode.base_mode==BaseMode::Auto||mode.base_mode==draft.resolved_mode) {
-                        Some(draft)=>{writing_context=Some(recovery_context);(draft,RewriteRecoveryKind::ReviewedDraft)},
-                        None=>match recovery_execution.take_reviewed(&source,&mode) {
-                            Some(draft)=>(draft,RewriteRecoveryKind::ReviewedDraft),
-                            None=>(rewrite::basic_cleanup::generate(&source,&dictionary),RewriteRecoveryKind::BasicCleanup),
-                        },
+                    Err(recovery_error)=>{
+                        // A fidelity-only draft or local punctuation cleanup is not a
+                        // finished result. Preserve the checkpoint and require retry;
+                        // never commit usage or authorize delivery for an intermediate.
+                        self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Failed,None,Some(&error.code));
+                        self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Failed,profile_started.elapsed().as_millis() as u64));
+                        let mut failure:ApiError=recovery_error.into();
+                        failure.message="最终整理未完成，识别稿已保留，请重试整理。".into();
+                        self.fail(&id,generation,failure,true);return;
                     },
                 };
                 (draft,Some(RewriteRecovery{kind,cause:fallback.expect("eligible recovery reason")}))
             },
         };
-        let basic_cleanup=rewrite_recovery.is_some_and(|recovery|recovery.kind==RewriteRecoveryKind::BasicCleanup);
-        if let Some(context)=writing_context.as_ref().filter(|_|!basic_cleanup) {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=Some(context.scene);s.input_context_status=if context.input.is_some(){InputContextStatus::Available}else if s.prefs.app_writing.input_context_enabled{InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
-        if basic_cleanup{let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
+        if let Some(context)=writing_context.as_ref() {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=Some(context.scene);s.input_context_status=if context.input.is_some(){InputContextStatus::Available}else if s.prefs.app_writing.input_context_enabled{InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
         let status=if rewrite_recovery.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
         self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64));
         if !self.valid_active(&id,generation){return;}
-        let receipt=writing_context.as_ref().filter(|_|!basic_cleanup).map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
+        let receipt=writing_context.as_ref().map(|context|crate::core::writing_context::WritingReceipt{personalization:context.personalization.clone(),scene:context.scene,language:context.language,context_used:context.input.is_some(),contract_version:rewrite::writing_context::VERSION.into()});
         let output=OutputRevision{writing_receipt:receipt, confirmed_context:None, id:Uuid::new_v4().to_string(),session_id:id.clone(),parent_revision_id:None,base_revision_id:None,source_revision_id:source.id,mode_snapshot:mode,resolved_mode:generated.resolved_mode,rewrite_fallback:None,rewrite_recovery,blocks:generated.blocks,kind:RevisionKind::Initial,creation_reason:reason,created_at:now()};
         if let Err(e)=self.commit_output_async(&id,generation,output).await{self.fail(&id,generation,e,true);return;}
         self.publish_session();self.changed();deliver(self,&id,generation);

@@ -2,23 +2,18 @@
 use super::*;
 use crate::core::writing_context::WritingContext;
 
-/// Bound cloud editing before selecting the best available complete result. The short-text
-/// budget is an engineering margin over synthetic measurements, not a long-text or
-/// weak-network latency guarantee. Explicit retries keep the existing cloud ceiling.
+/// Allow generation, review and polishing to finish before delivering a result.
+/// Length-based budgets are bounded engineering margins, not latency guarantees.
+/// Retry budgets follow the same complete frozen source as initial generation.
 #[derive(Clone, Copy)]
 pub(super) struct RewriteWaitPolicy { pub deadline: Duration }
 impl Default for RewriteWaitPolicy {
     fn default() -> Self { Self { deadline: Duration::from_secs(20) } }
 }
 impl RewriteWaitPolicy {
-    pub fn for_source(reason: CreationReason, source: &SourceRevision) -> Self {
-        // Count the exact frozen body, including item separators, by Unicode scalar
-        // values. UTF-8 byte length would give Chinese dictation a smaller budget.
-        if reason == CreationReason::NormalInitial {
-            Self { deadline: Duration::from_millis(rewrite::initial_wait_ms(source)) }
-        } else {
-            Self::default()
-        }
+    pub fn for_source(_reason: CreationReason, source: &SourceRevision) -> Self {
+        // Count the frozen body and separators by Unicode characters, also on retry.
+        Self { deadline: Duration::from_millis(rewrite::initial_wait_ms(source)) }
     }
 }
 
@@ -48,7 +43,7 @@ pub(super) fn automatic_context(context: Option<&WritingContext>) -> WritingCont
 }
 
 pub(super) fn automatic_wait(source: &SourceRevision) -> Duration {
-    Duration::from_secs(match source.text().chars().count() { 0..=800 => 20, 801..=3000 => 30, _ => 60 })
+    Duration::from_secs(match source.text().chars().count() { 0..=800 => 30, 801..=3000 => 60, _ => 120 })
 }
 
 #[cfg(test)]

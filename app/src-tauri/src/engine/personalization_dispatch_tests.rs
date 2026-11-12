@@ -57,7 +57,7 @@ async fn coordinator_preflight_zero_http_requests_is_selected_but_not_dispatched
     assert_eq!(server.count(),0);
     let stats=command(&h,"personalization.stats",json!({"window":"all"})).await.unwrap();
     assert_eq!(stats["normal"]["selected"],1);assert_eq!(stats["normal"]["personalized"],0);assert_eq!(stats["records"][0]["referenceDispatch"],"notStarted");
-    let detail=h.db.get_result(id).unwrap();assert_eq!(detail.source.text(),text);assert_eq!(detail.output.unwrap().text(),text);
+    let detail=h.db.get_result(id).unwrap();assert_eq!(detail.source.text(),text);assert!(detail.output.is_none());assert_eq!(view(&h).state,SessionPhase::Failed);
 }
 
 #[tokio::test]

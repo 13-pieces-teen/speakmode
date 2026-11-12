@@ -231,6 +231,16 @@ await test('Failed or partial delivery retains explicit copy and history actions
   view[0].props.onClick();assert.deepEqual(opened,['synthetic-result']);
  }
 });
+await test('Failed final rewrite exposes one retry outside collapsed recovery details and sends only the scoped rewrite command',async()=>{
+ const {tree,calls,opened}=renderRecovery({...session('failed'),error:'最终整理未完成',canRetryRewrite:true,workerReleased:true});
+ const retries=nodes(tree,node=>node.type==='button'&&node.props.children==='重试整理');
+ assert.equal(retries.length,1);
+ for(const details of nodes(tree,node=>node.type==='details'))assert.equal(nodes(details,node=>node===retries[0]).length,0);
+ retries[0].props.onClick();await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls.map(call=>call.name),['rewrite.retry','state.snapshot']);
+ assert.equal(calls[0].payload.sessionId,'synthetic-result');assert.equal(calls[0].payload.expectedGeneration,1);
+ assert.deepEqual(opened,[]);
+});
 await test('Main window preserves recording controls and recoverable recognition failures',()=>{
  for(const state of ['starting','recording','finalizingAsr','rewriting','failed','incomplete']){
   const {tree,calls,opened}=renderRecovery({...session(state),error:state==='failed'?'合成识别失败':undefined,canCopyRecovery:true});

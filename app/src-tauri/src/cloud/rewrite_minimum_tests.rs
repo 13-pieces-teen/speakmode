@@ -122,26 +122,6 @@ async fn test_run(server:&Server,input:&str,wait:Duration)->Outcome{
 }
 
 #[tokio::test]
-async fn reviewed_checkpoint_is_single_use_and_bound_to_source_and_mode() {
-    for mismatch in ["none", "source", "mode"] {
-        let input = "预算3500元，先不要发送。";
-        let server = Server::new(vec![Reply::draft(input), Reply::new(ACCEPT)]).await;
-        let (config, mut mode, mut source) = fixture(input);
-        let execution = RewriteExecution::for_duration(Duration::from_secs(3));
-        let result = execute_until(&client(), &config, "synthetic-secret", &mode, &source,
-            &DictionarySnapshot::default(), CancellationToken::new(), &server.endpoint, execution.clone(), None).await;
-        assert!(result.result.is_ok());
-        match mismatch {
-            "source" => source.generation += 1,
-            "mode" => mode.revision += 1,
-            _ => {},
-        }
-        assert_eq!(execution.take_reviewed(&source, &mode).is_some(), mismatch == "none");
-        assert!(execution.take_reviewed(&source, &mode).is_none());
-    }
-}
-
-#[tokio::test]
 async fn production_app_spelling_reaches_full_review_without_a_correction() {
     let input = "用户可以在我们的这个 A P P 里启动录音。";
     let expected = "用户可以在我们的这个 APP 里启动录音。";
