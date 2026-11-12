@@ -28,12 +28,16 @@ await test('Raw fallback remains visible as unfinished cleanup even after input 
  }
 });
 await test('Recovered cleanup displays the available edited result and preserves delivery status',()=>{
- for(const kind of ['reviewedDraft','basicCleanup']){
+ for(const kind of ['automaticRewrite','reviewedDraft','basicCleanup']){
   const ready={...session('ready','unconfirmed','inputDispatchedUnconfirmed'),rewriteRecovery:{kind,cause:'timeout'}};
   const feedback=deliveryFeedback(ready);
   assert.equal(feedback.warning,false);
   assert.equal(feedback.canViewOutput,true);
   assert.doesNotMatch(feedback.message,/识别原文|整理未完成/);
+  if(kind==='automaticRewrite'){
+   assert.equal(feedback.title,'已完成自动整理');
+   assert.match(feedback.message,/兜底自动整理/);
+  }
   const presentation=recorderPresentation(ready);
   assert.equal(presentation.state,'settled');
   assert.equal(presentation.primary,'openResult');

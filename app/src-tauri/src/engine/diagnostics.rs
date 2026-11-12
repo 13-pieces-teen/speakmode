@@ -75,8 +75,16 @@ pub struct RewriteView {
     pub protocol_version: &'static str, pub configured_budget_ms: u64,
     pub outcome: Option<RewriteOutcome>, pub fallback_reason: Option<RewriteFallbackReason>,
     pub error_code: Option<&'static str>, pub duration_ms: Option<f64>,
-    // At most four requests; no request body, transcript, response or key.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub automatic_recovery: Option<AutomaticRecoveryView>,
+    // Bounded primary + recovery requests; no text, response or key.
     pub requests: Vec<RewriteRequestView>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct AutomaticRecoveryView {
+    pub configured_budget_ms: u64, pub validated: bool, pub error_code: Option<&'static str>,
 }
 
 // Only fixed implementation labels enter rewrite metadata. In particular, a
@@ -179,8 +187,18 @@ impl DiagnosticsRecorder {
                 trace.view.marks.push(Mark{stage:Stage::RewriteStarted,offset_ms:elapsed.as_secs_f64()*1000.0});
             }
             trace.view.rewrite=Some(RewriteView{protocol_version,configured_budget_ms,outcome:None,
-                fallback_reason:None,error_code:None,duration_ms:None,requests:Vec::new()});
+                fallback_reason:None,error_code:None,duration_ms:None,automatic_recovery:None,requests:Vec::new()});
         });
+    }
+    pub fn automatic_recovery_started(&self,handle:Option<&TraceHandle>,configured_budget_ms:u64) {
+        self.update(handle,|trace|{if let Some(rewrite)=trace.view.rewrite.as_mut(){
+            rewrite.automatic_recovery=Some(AutomaticRecoveryView{configured_budget_ms,validated:false,error_code:None});
+        }});
+    }
+    pub fn automatic_recovery_finished(&self,handle:Option<&TraceHandle>,code:Option<&str>) {
+        self.update(handle,|trace|{if let Some(recovery)=trace.view.rewrite.as_mut().and_then(|r|r.automatic_recovery.as_mut()){
+            recovery.validated=code.is_none();recovery.error_code=rewrite_error_code(code);
+        }});
     }
     pub(crate) fn rewrite_request(&self,handle:Option<&TraceHandle>,event:RequestEvent) {
         self.update(handle,|trace|{
@@ -188,8 +206,8 @@ impl DiagnosticsRecorder {
             let Some(rewrite)=trace.view.rewrite.as_mut() else {return;};
             // A completion event can recover a dropped start event. A stale or
             // duplicate completion never reopens a request or a different trace.
-            let index=if let Some(index)=rewrite.requests.iter().position(|r|r.stage==event.stage){index}
-                else if rewrite.requests.len()<4 {
+            let index=if let Some(index)=rewrite.requests.iter().position(|r|r.stage==event.stage&&r.start_ms==start){index}
+                else if rewrite.requests.len()<12 {
                     rewrite.requests.push(RewriteRequestView{stage:event.stage,start_ms:start,end_ms:None,duration_ms:None,
                         remaining_budget_ms:event.remaining_budget_ms,outcome:None});rewrite.requests.len()-1
                 } else {return;};

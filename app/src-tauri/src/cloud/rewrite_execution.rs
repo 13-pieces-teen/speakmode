@@ -42,6 +42,11 @@ struct ReviewedDraft { source_hash: String, mode_hash: String, draft: RewriteRes
 impl RewriteExecution {
     pub fn until(deadline: Instant) -> Self { Self { deadline, observer: None, dispatch_observer: None, reviewed: Arc::new(Mutex::new(None)) } }
     pub fn for_duration(wait: Duration) -> Self { Self::until(Instant::now() + wait) }
+    /// A separate recovery attempt shares observers, but never inherits an expired
+    /// clock or a draft reviewed under the original mode/context.
+    pub(crate) fn recovery(&self, deadline: Instant) -> Self {
+        Self { deadline, reviewed: Arc::new(Mutex::new(None)), ..self.clone() }
+    }
     pub fn observed(deadline: Instant, observer: impl Fn(RequestEvent) + Send + Sync + 'static) -> Self {
         Self { observer: Some(Arc::new(observer)), ..Self::until(deadline) }
     }
