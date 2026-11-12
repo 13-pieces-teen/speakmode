@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="594" height="30" viewBox="0 0 594 30" role="img" aria-labelledby="title">
-  <title id="title">v0.2.37 · Windows x64 · Bring your own API key · Tauri 2 / Rust / React</title>
+  <title id="title">v0.2.38 · Windows x64 · Bring your own API key · Tauri 2 / Rust / React</title>
   <g font-family="Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">
     <rect x="0" y="1" width="87" height="28" rx="7" fill="#2B68C9" />
-    <text x="43.5" y="19" fill="#FFFFFF">v0.2.37</text>
+    <text x="43.5" y="19" fill="#FFFFFF">v0.2.38</text>
     <rect x="95" y="1" width="126" height="28" rx="7" fill="#EFF4FC" stroke="#DCE7F5" />
     <text x="158" y="19" fill="#315B91">Windows x64</text>
     <rect x="229" y="1" width="149" height="28" rx="7" fill="#EFF4FC" stroke="#DCE7F5" />

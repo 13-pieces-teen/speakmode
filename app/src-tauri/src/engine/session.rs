@@ -726,8 +726,11 @@ impl AppHub {
         // Reuse the vocabulary frozen when this recording began, not a live
         // dictionary that the user may have changed while speaking.
         let Some(dictionary)=self.recording_rewrite_dictionary(&id,generation)else{return;};
-        self.finish_rewrite_with_context_policy(id,generation,move|config,mode,source,cancel,execution,context|async move{
+        let recovery_dictionary=dictionary.clone();let recovery_secret=secret.clone();
+        self.finish_rewrite_with_recovery_policy(id,generation,move|config,mode,source,cancel,execution,context|async move{
             rewrite::rewrite_with_optional_context(&config,&secret,&mode,&source,&dictionary,cancel,execution,context.as_ref()).await
+        },move|config,mode,source,cancel,execution,context|async move{
+            rewrite::automatic_recovery(&config,&recovery_secret,&mode,&source,&recovery_dictionary,cancel,execution,&context).await
         },None::<RewriteWaitPolicy>,|hub,id,generation| {
             let hub=Arc::clone(hub);let id=id.to_owned();
             tokio::task::spawn_blocking(move||hub.initial_delivery(&id,generation));
@@ -757,10 +760,23 @@ impl AppHub {
         self.finish_rewrite_with_context_policy(id,generation,|config,mode,source,cancel,execution,_context|
             generate(config,mode,source,cancel,execution),policy,deliver).await;
     }
+    #[cfg(test)]
     async fn finish_rewrite_with_context_policy<F>(self:&Arc<Self>,id:String,generation:u64,
         generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken,rewrite::execution::RewriteExecution,Option<WritingContext>)->F,
         policy:impl Into<Option<RewriteWaitPolicy>>,deliver:impl FnOnce(&Arc<Self>,&str,u64))
         where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
+        // Existing tests exercise the final local safety net. Recovery-route
+        // regressions use the same coordinator with a real loopback transport.
+        self.finish_rewrite_with_recovery_policy(id,generation,generate,|_,_,_,_,_,_|async {
+            Err(CloudError::new("rewrite_network","rewrite","synthetic recovery unavailable"))
+        },policy,deliver).await;
+    }
+    async fn finish_rewrite_with_recovery_policy<F,R>(self:&Arc<Self>,id:String,generation:u64,
+        generate:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken,rewrite::execution::RewriteExecution,Option<WritingContext>)->F,
+        recover:impl FnOnce(ProviderConfig,ModeSnapshot,SourceRevision,CancellationToken,rewrite::execution::RewriteExecution,WritingContext)->R,
+        policy:impl Into<Option<RewriteWaitPolicy>>,deliver:impl FnOnce(&Arc<Self>,&str,u64))
+        where F:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>>,
+              R:std::future::Future<Output=std::result::Result<rewrite::RewriteResult,CloudError>> {
         let trace=self.trace(&id,generation);
         let policy={let i=self.inner.lock().unwrap();let Some(s)=i.active.as_ref().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
             // A practice is a preview with no host insertion. Let generation and
@@ -781,7 +797,7 @@ impl AppHub {
         }
         // Freeze the scene before generation. A late target inspection may still
         // authorize delivery, but cannot change this draft's presentation policy.
-        let (config,mode,source,cancel,reason,writing_context,dictionary)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
+        let (config,mode,source,cancel,reason,mut writing_context,dictionary)={let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return;};
             let source=s.source.clone().unwrap();let frozen=app_writing::freeze(s);
             s.writing_scene=frozen.as_ref().map(|context|context.scene);
             s.input_context_status=if !s.prefs.app_writing.input_context_enabled {InputContextStatus::Disabled}
@@ -806,9 +822,9 @@ impl AppHub {
         let generated=tokio::select! {
             biased;
             _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
-            result=tokio::time::timeout_at(rewrite_deadline,generate(config,mode.clone(),source.clone(),rewrite_cancel.clone(),execution,writing_context.clone()))=>match result {
+            result=tokio::time::timeout_at(rewrite_deadline,generate(config.clone(),mode.clone(),source.clone(),rewrite_cancel.clone(),execution,writing_context.clone()))=>match result {
                 Ok(result)=>result,
-                Err(_)=>{rewrite_cancel.cancel();Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))},
+                Err(_)=>{rewrite_cancel.cancel();Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，尝试兜底自动整理"))},
             },
         };
         // A completed parser/transport response cannot revive a cancelled or
@@ -822,7 +838,7 @@ impl AppHub {
         // timer. It must not turn an already expired request into a late paste.
         let generated=if tokio::time::Instant::now()>=rewrite_deadline && !generated.as_ref().err().is_some_and(|error|error.code=="cancelled") {
             rewrite_cancel.cancel();
-            Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，使用完整识别稿"))
+            Err(CloudError::new("rewrite_timeout","rewrite","整理等待已结束，尝试兜底自动整理"))
         } else { generated };
         let (generated,rewrite_recovery)=match generated {
             Ok(value)=>{
@@ -844,15 +860,54 @@ impl AppHub {
                     self.fail(&id,generation,error.into(),true);return;
                 }
                 self.diagnostics.mark(trace.as_ref(),Stage::RewriteFallbackSelected);
+                // Do not publish/paste a basic result while recovery is in flight.
+                // A new child and clock allow recovery after primary timeout.
+                rewrite_cancel.cancel();
+                let recovery_mode=rewrite_fallback::automatic_mode();
+                let recovery_context=rewrite_fallback::automatic_context(writing_context.as_ref());
+                let wait=rewrite_fallback::automatic_wait(&source);
+                let deadline=tokio::time::Instant::now()+wait;
+                let execution=recovery_execution.recovery(deadline);
+                let retained_execution=execution.clone();
+                let recovery_cancel=cancel.child_token();
+                self.diagnostics.automatic_recovery_started(trace.as_ref(),wait.as_millis() as u64);
+                let recovered=tokio::select! {
+                    biased;
+                    _=cancel.cancelled()=>Err(CloudError::new("cancelled","rewrite","已取消整理")),
+                    result=tokio::time::timeout_at(deadline,recover(config,recovery_mode.clone(),source.clone(),recovery_cancel.clone(),execution,recovery_context.clone()))=>
+                        result.unwrap_or_else(|_|Err(CloudError::new("rewrite_timeout","rewrite","自动整理兜底等待已结束"))),
+                };
+                let recovered=if tokio::time::Instant::now()>=deadline && !recovered.as_ref().err().is_some_and(|e|e.code=="cancelled") {
+                    Err(CloudError::new("rewrite_timeout","rewrite","自动整理兜底等待已结束"))
+                }else{recovered};
+                recovery_cancel.cancel();
+                self.diagnostics.automatic_recovery_finished(trace.as_ref(),recovered.as_ref().err().map(|e|e.code.as_str()));
+                if !self.valid_active(&id,generation) || recovered.as_ref().err().is_some_and(|e|e.code=="cancelled") {
+                    self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Cancelled,None,Some("cancelled"));
+                    self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,personalization::PersonalizationEventStatus::Cancelled,profile_started.elapsed().as_millis() as u64));
+                    return;
+                }
                 self.diagnostics.rewrite_finished(trace.as_ref(),RewriteOutcome::Fallback,fallback,Some(&error.code));
-                let (draft,kind)=match recovery_execution.take_reviewed(&source,&mode) {
-                    Some(draft)=>(draft,RewriteRecoveryKind::ReviewedDraft),
-                    None=>(rewrite::basic_cleanup::generate(&source,&dictionary),RewriteRecoveryKind::BasicCleanup),
+                let (draft,kind)=match recovered {
+                    Ok(draft)=>{
+                        writing_context=Some(recovery_context);
+                        self.diagnostics.mark(trace.as_ref(),Stage::RewriteValidated);
+                        (draft,RewriteRecoveryKind::AutomaticRewrite)
+                    },
+                    Err(_)=>match retained_execution.take_reviewed(&source,&recovery_mode)
+                        .filter(|draft|mode.base_mode==BaseMode::Auto||mode.base_mode==draft.resolved_mode) {
+                        Some(draft)=>{writing_context=Some(recovery_context);(draft,RewriteRecoveryKind::ReviewedDraft)},
+                        None=>match recovery_execution.take_reviewed(&source,&mode) {
+                            Some(draft)=>(draft,RewriteRecoveryKind::ReviewedDraft),
+                            None=>(rewrite::basic_cleanup::generate(&source,&dictionary),RewriteRecoveryKind::BasicCleanup),
+                        },
+                    },
                 };
                 (draft,Some(RewriteRecovery{kind,cause:fallback.expect("eligible recovery reason")}))
             },
         };
         let basic_cleanup=rewrite_recovery.is_some_and(|recovery|recovery.kind==RewriteRecoveryKind::BasicCleanup);
+        if let Some(context)=writing_context.as_ref().filter(|_|!basic_cleanup) {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=Some(context.scene);s.input_context_status=if context.input.is_some(){InputContextStatus::Available}else if s.prefs.app_writing.input_context_enabled{InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
         if basic_cleanup{let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.writing_scene=None;s.input_context_status=if s.prefs.app_writing.input_context_enabled {InputContextStatus::Unavailable}else{InputContextStatus::Disabled};}}
         let status=if rewrite_recovery.is_some(){personalization::PersonalizationEventStatus::Fallback}else{personalization::PersonalizationEventStatus::Success};
         self.enqueue_personalization_event(profile_dispatch.finished(&profile_event,status,profile_started.elapsed().as_millis() as u64));

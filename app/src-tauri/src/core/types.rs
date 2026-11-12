@@ -217,7 +217,7 @@ pub enum CreationReason { NormalInitial, Retry, UseSource, History, Preview }
 pub enum RewriteFallbackReason { Timeout, ServiceUnavailable, InvalidOutput, MeaningRisk }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum RewriteRecoveryKind { ReviewedDraft, BasicCleanup }
+pub enum RewriteRecoveryKind { AutomaticRewrite, ReviewedDraft, BasicCleanup }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RewriteRecovery { pub kind: RewriteRecoveryKind, pub cause: RewriteFallbackReason }

@@ -2,7 +2,7 @@ import type { OnboardingLesson, OnboardingState } from '../onboarding/types';
 import { defaultAppWriting, type AppWritingPreferences, type AppWritingScene } from '../appWriting';
 export type BaseMode = 'auto' | 'light' | 'structure';
 export type RewriteFallbackReason = 'timeout' | 'serviceUnavailable' | 'invalidOutput' | 'meaningRisk';
-export interface RewriteRecovery {kind:'reviewedDraft'|'basicCleanup';cause:RewriteFallbackReason}
+export interface RewriteRecovery {kind:'automaticRewrite'|'reviewedDraft'|'basicCleanup';cause:RewriteFallbackReason}
 export interface NativePreferences { version:number; shortcut:string; microphoneId:string|null; language:'auto'|'zh'|'en'; defaultModeId:string; deliveryMode:'direct'|'preview'; softVoiceEnabled:boolean; recorderCaptionsEnabled:boolean; appWriting:AppWritingPreferences; keepHistory:boolean; launchAtLogin:boolean }
 export interface ModeRecord { id:string; name:string; baseMode:BaseMode; rules:string; revision:number; builtin:boolean }
 export interface ModeSnapshot { modeId:string; name:string; baseMode:BaseMode; rules:string; revision:number }

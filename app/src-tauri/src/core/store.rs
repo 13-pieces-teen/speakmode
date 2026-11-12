@@ -860,7 +860,10 @@ pub fn validate_output(output:&OutputRevision,source:&SourceRevision) -> StoreRe
         if output.rewrite_fallback.is_some() || matches!(output.kind,RevisionKind::Initial|RevisionKind::UseSource) {return Err(invalid("confirmed context belongs only to an explicit history revision"));}
     }
     if !source.complete || output.source_revision_id!=source.id || output.session_id!=source.session_id || output.blocks.is_empty() || output.resolved_mode==BaseMode::Auto {return Err(invalid("output must bind a complete source and resolved base Mode"));}
-    if output.rewrite_fallback.is_none() && !basic_cleanup && output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
+    // Keep the immutable selected snapshot. A completed automatic recovery may
+    // deliberately resolve a different layout after those selected rules fail.
+    let automatic_recovery=output.rewrite_recovery.is_some_and(|recovery|recovery.kind==RewriteRecoveryKind::AutomaticRewrite);
+    if output.rewrite_fallback.is_none() && !basic_cleanup && !automatic_recovery && output.mode_snapshot.base_mode!=BaseMode::Auto && output.mode_snapshot.base_mode!=output.resolved_mode {return Err(invalid("resolved Mode conflicts with the selected Mode"));}
     if output.rewrite_fallback.is_some() && (output.resolved_mode!=BaseMode::Light || !matches!(output.kind,RevisionKind::Initial|RevisionKind::Undo)) {return Err(invalid("source fallback must be an initial result or an explicit undo"));}
     let final_ids:HashSet<&str>=source.items.iter().filter(|i|i.is_final).map(|i|i.id.as_str()).collect();
     let mut blocks=HashSet::new();

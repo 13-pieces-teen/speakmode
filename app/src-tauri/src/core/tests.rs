@@ -210,8 +210,10 @@ fn recovered_output_persists_edits_and_undo_with_complete_source_references() {
     let mut result = output("recovered");
     result.mode_snapshot = frozen.mode_snapshot;
     result.rewrite_recovery = Some(RewriteRecovery {
-        kind: RewriteRecoveryKind::BasicCleanup, cause: RewriteFallbackReason::Timeout,
+        kind: RewriteRecoveryKind::AutomaticRewrite, cause: RewriteFallbackReason::Timeout,
     });
+    // Preserve the selected mode; recovery metadata explains why automatic
+    // cleanup resolved a different layout. It survives history/edit/undo.
     let mut conflicting = result.clone();
     conflicting.rewrite_fallback = Some(RewriteFallbackReason::Timeout);
     assert!(store.commit_ready(conflicting).is_err());

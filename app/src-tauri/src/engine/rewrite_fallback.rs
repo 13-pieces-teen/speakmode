@@ -1,5 +1,6 @@
 //! Recovery policy for completing editing after a cloud failure.
 use super::*;
+use crate::core::writing_context::WritingContext;
 
 /// Bound cloud editing before selecting the best available complete result. The short-text
 /// budget is an engineering margin over synthetic measurements, not a long-text or
@@ -34,6 +35,20 @@ pub(super) fn fallback_reason(error: &CloudError) -> Option<RewriteFallbackReaso
         | "protected_terms_limit" | "protected_terms_empty" | "protected_terms_nonce_invalid" | "protected_terms_nonce_collision" => RewriteFallbackReason::MeaningRisk,
         _ => RewriteFallbackReason::InvalidOutput,
     })
+}
+
+pub(super) fn automatic_mode() -> ModeSnapshot {
+    ModeSnapshot { mode_id: "auto".into(), name: "自动".into(), base_mode: BaseMode::Auto, rules: String::new(), revision: 1 }
+}
+
+pub(super) fn automatic_context(context: Option<&WritingContext>) -> WritingContext {
+    WritingContext { scene: AppWritingScene::General,
+        language: context.map_or(DraftLanguage::AsSpoken, |context| context.language),
+        input: None, personalization: None }
+}
+
+pub(super) fn automatic_wait(source: &SourceRevision) -> Duration {
+    Duration::from_secs(match source.text().chars().count() { 0..=800 => 20, 801..=3000 => 30, _ => 60 })
 }
 
 #[cfg(test)]

@@ -590,6 +590,16 @@ pub(crate) async fn rewrite_with_optional_context(config:&ProviderConfig,secret:
     }
 }
 
+/// Recovery always uses the complete generation/review pipeline, independent of
+/// the primary provider route. The caller supplies a plain automatic mode/context.
+pub(crate) async fn automatic_recovery(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
+    dictionary:&DictionarySnapshot,cancel:CancellationToken,execution:RewriteExecution,
+    context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError> {
+    execution.checkpoint(&cancel)?;
+    let endpoint=rewrite_endpoint(config)?;
+    minimum_pipeline::run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,context).await
+}
+
 /// Caller freezes context with the stop-time target. No capture, persistence or
 /// delivery authority is granted here; every request shares the same deadline.
 pub(crate) async fn rewrite_with_writing_context(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
