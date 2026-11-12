@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "speakmode"
-version = "0.2.38"
+version = "0.2.39"
 dependencies = [
  "anyhow",
  "async-trait",

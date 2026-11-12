@@ -8,7 +8,7 @@ fn budget_source(text: String) -> SourceRevision {
 #[test]
 fn initial_rewrite_wait_budget_uses_adaptive_unicode_characters_not_utf8_bytes() {
     for character in ["a","轻","🎙"] {
-        for (count,seconds) in [(400,5),(401,8),(800,8),(801,20)] {
+        for (count,seconds) in [(400,20),(401,20),(800,20),(801,30),(3000,30),(3001,60)] {
             let frozen=budget_source(character.repeat(count));
             assert_eq!(frozen.text().chars().count(),count);
             assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&frozen).deadline,
@@ -18,149 +18,71 @@ fn initial_rewrite_wait_budget_uses_adaptive_unicode_characters_not_utf8_bytes()
     // Separators are part of the actual source body sent for rewriting.
     let mut segmented=source("s");segmented.items[0].text="轻".repeat(399);segmented.items[1].text="语".repeat(400);
     assert_eq!(segmented.text().chars().count(),800);
-    assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&segmented).deadline,Duration::from_secs(8));
-    segmented.items[1].text.push('音');
     assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&segmented).deadline,Duration::from_secs(20));
+    segmented.items[1].text.push('音');
+    assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&segmented).deadline,Duration::from_secs(30));
 }
 
 #[test]
-fn explicit_rewrite_attempts_keep_twenty_seconds_even_for_short_multibyte_source() {
+fn explicit_rewrite_attempts_allow_full_source_length_budget() {
     for reason in [CreationReason::Retry,CreationReason::History,CreationReason::UseSource,CreationReason::Preview] {
-        for count in [1,800,801] {
+        for (count,seconds) in [(1,20),(800,20),(801,30),(3001,60)] {
             assert_eq!(RewriteWaitPolicy::for_source(reason,&budget_source("语".repeat(count))).deadline,
-                Duration::from_secs(20),"{reason:?}: {count} characters");
+                Duration::from_secs(seconds),"{reason:?}: {count} characters");
         }
     }
     assert_eq!(RewriteWaitPolicy::default().deadline,Duration::from_secs(20));
 }
 
-#[tokio::test(start_paused=true)]
-async fn production_short_rewrite_budget_falls_back_at_five_seconds_without_second_generation() {
-    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
-    let native=delivery_native_calls(&h);
-    let captured=Arc::new(Mutex::new(None));let slot=captured.clone();
-    let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let invoked=calls.clone();
-    let completed=Arc::new(std::sync::atomic::AtomicUsize::new(0));let returned=completed.clone();
-    let began=tokio::time::Instant::now();
-    // Exercise the production wrapper (no injected deadline). The target is absent,
-    // so delivery records a skip without touching host input or the clipboard.
-    h.finish_rewrite_with("s".into(),7,move|_,_,frozen,cancel,_execution|async move {
-        invoked.fetch_add(1,Ordering::SeqCst);*slot.lock().unwrap()=Some(cancel);
-        tokio::time::sleep(Duration::from_secs(6)).await;
-        returned.fetch_add(1,Ordering::SeqCst);
-        Ok(rewrite_fallback::source_fallback(&frozen))
-    }).await;
-    assert!(began.elapsed()>=Duration::from_secs(5)&&began.elapsed()<Duration::from_secs(6),"short rewrite budget: {:?}",began.elapsed());
-    assert!(captured.lock().unwrap().as_ref().unwrap().is_cancelled());
-    assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().cancel.is_cancelled());
-    assert_eq!(calls.load(Ordering::SeqCst),1);assert_eq!(completed.load(Ordering::SeqCst),0);
-    let saved=h.db.get_result("s").unwrap().output.unwrap();
-    assert_eq!(saved.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));assert_eq!(saved.text(),source("s").text());
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
-    tokio::time::resume();
-    wait_until(||h.inner.lock().unwrap().active.as_ref().unwrap().delivery_worker_released).await;
-    assert_eq!(view(&h).delivery_state,Some(DeliveryState::Skipped));
-    assert!(!native.lock().unwrap().iter().any(|(name,_)|name=="showMain"));
+pub(super) fn assert_unfinished(h:&Arc<AppHub>) {
+    assert_eq!(view(h).state,SessionPhase::Failed);
+    assert!(h.db.get_result("s").unwrap().output.is_none());
+    assert_eq!(usage_count(h),0);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
 }
 
 async fn fail_rewrite(h:&Arc<AppHub>,code:&'static str) {
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,_,_execution|async move {
+    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,_,_|async move {
         Err(CloudError::new(code,"rewrite","synthetic failure"))
-    },RewriteWaitPolicy::default(),|hub,_,_| {
-        hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true;
-    }).await;
+    },RewriteWaitPolicy{deadline:Duration::from_millis(10)},|_,_,_|panic!("unfinished result cannot deliver")).await;
 }
 
 #[tokio::test]
-async fn every_recoverable_rewrite_failure_runs_local_cleanup_with_complete_source_coverage() {
-    for (code, stage) in [
-        ("rewrite_network", "rewrite"), ("rewrite_timeout", "rewrite"),
-        ("rewrite_literal_changed", "rewrite"), ("rewrite_semantic_rejected", "rewrite"),
-        ("invalid_response", "rewrite"), ("future_provider_error", "rewrite"),
-        ("key_required", "credentials"), ("invalid_endpoint", "configuration"),
-    ] {
-        let h = hub();
-        install(&h, "s", SessionPhase::FinalizingAsr, true);
-        let mut frozen = source("s");
-        frozen.items[0].text = "嗯，呃，我我觉得预算3500元，先不要发送。".into();
-        frozen.items[1].text = "呃，用户可以在 A P P 里启动录音。".into();
-        h.checkpoint("s", 7, frozen.clone()).unwrap();
-        h.finish_rewrite_with_policy("s".into(), 7, move |_,_,_,_,_| async move {
-            Err(CloudError::new(code, stage, "synthetic failure"))
-        }, RewriteWaitPolicy::default(), |_,_,_| {}).await;
-        let detail = h.db.get_result("s").unwrap();
-        let output = detail.output.unwrap();
-        assert_eq!(output.text(), "我觉得预算3500元，先不要发送。\n用户可以在 APP 里启动录音。", "{code}");
-        assert_eq!(output.rewrite_recovery.unwrap().kind, RewriteRecoveryKind::BasicCleanup);
-        assert!(output.rewrite_fallback.is_none());
-        assert_eq!(output.blocks[0].source_refs, vec!["item-s-0", "item-s-1"]);
-        assert_eq!(detail.source, frozen);
-        assert_eq!(view(&h).state, SessionPhase::Ready);
+async fn failed_finalization_preserves_source_without_output_usage_or_delivery() {
+    for code in ["rewrite_timeout","rewrite_network","invalid_response","rewrite_meaning_risk","rewrite_semantic_rejected"] {
+        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);checkpoint(&h,"s");
+        fail_rewrite(&h,code).await;
+        assert_unfinished(&h);
+        assert_eq!(h.db.get_result("s").unwrap().source,source("s"));
+        assert!(view(&h).rewrite_recovery.is_none());
+        let diagnostics=h.diagnostics.snapshot().unwrap();
+        let rewrite=diagnostics.traces[0].rewrite.as_ref().unwrap();
+        assert_eq!(rewrite.automatic_recovery.as_ref().unwrap().error_code,Some("rewrite_network"));
+        assert!(!diagnostics.traces[0].marks.iter().any(|mark|mark.stage==Stage::ReadyCommitted));
     }
 }
 
-#[tokio::test]
-async fn rewrite_failures_deliver_recovered_text_exactly_once_and_never_open_main() {
-    for(code,reason)in [
-        ("rewrite_timeout",RewriteFallbackReason::Timeout),("rewrite_network",RewriteFallbackReason::ServiceUnavailable),
-        ("invalid_output",RewriteFallbackReason::InvalidOutput),("invalid_response",RewriteFallbackReason::InvalidOutput),
-        ("invalid_local_repair",RewriteFallbackReason::InvalidOutput),
-        ("rewrite_meaning_risk",RewriteFallbackReason::MeaningRisk),
-        ("rewrite_admission_rejected",RewriteFallbackReason::MeaningRisk),
-        ("rewrite_semantic_rejected",RewriteFallbackReason::MeaningRisk),
-    ] {
-        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);checkpoint(&h,"s");enable_fixture_delivery(&h);
-        let calls=delivery_native_calls(&h);fail_rewrite(&h,code).await;
-        let saved=h.db.get_result("s").unwrap();let output=saved.output.unwrap();
-        assert_eq!(saved.source,source("s"));assert_eq!(output.text(),saved.source.text());assert_eq!(output.rewrite_recovery.map(|recovery|recovery.cause),Some(reason));
-        assert_eq!(output.creation_reason,CreationReason::NormalInitial);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(reason));
-        let diagnostics=h.diagnostics.snapshot().unwrap();let trace=&diagnostics.traces[0];
-        let rewrite=trace.rewrite.as_ref().unwrap();
-        assert_eq!(rewrite.error_code,Some(code));assert_eq!(rewrite.fallback_reason,Some(reason));
-        assert!(!trace.marks.iter().any(|mark|mark.stage==Stage::RewriteValidated));
-        let sent=std::sync::atomic::AtomicUsize::new(0);
-        h.initial_delivery_with("s",7,|_|true,|permit,target,text,gate| {
-            assert_eq!(text,source("s").text());
-            platform::delivery::dispatch_with_test_operations(permit,target,text,gate,|_|true,||{sent.fetch_add(1,Ordering::SeqCst);4})
-        });
-        h.initial_delivery_with("s",7,|_|panic!("terminal delivery must not validate again"),|_,_,_,_|panic!("must not duplicate input"));
-        assert_eq!(sent.load(Ordering::SeqCst),1);assert_eq!(view(&h).delivery_state,Some(DeliveryState::Unconfirmed));
-        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),1);assert_eq!(usage_count(&h),1);
-        assert!(!calls.lock().unwrap().iter().any(|(name,_)|name=="showMain"));
-    }
+#[tokio::test(start_paused=true)]
+async fn production_budget_allows_complete_six_second_result_instead_of_basic_cleanup() {
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
+    h.finish_rewrite_with_policy("s".into(),7,|_,_,source,_,_|async move {
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        Ok(rewrite_fallback::source_fallback(&source))
+    },None::<RewriteWaitPolicy>,|_,_,_|{}).await;
+    assert_eq!(view(&h).state,SessionPhase::Ready);
+    assert!(h.db.get_result("s").unwrap().output.unwrap().rewrite_recovery.is_none());
 }
 
 #[tokio::test]
-async fn rewrite_deadline_drops_late_candidate_and_cancels_only_its_child() {
+async fn late_validation_cannot_turn_unfinished_draft_into_success() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
     let captured=Arc::new(Mutex::new(None));let slot=captured.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,_,cancel,_execution|async move {
+    h.finish_rewrite_with_policy("s".into(),7,move|_,_,source,cancel,_|async move {
         *slot.lock().unwrap()=Some(cancel);
-        std::future::pending::<std::result::Result<rewrite::RewriteResult,CloudError>>().await
-    },RewriteWaitPolicy{deadline:Duration::from_millis(10)},|hub,_,_|hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
-    assert!(captured.lock().unwrap().as_ref().unwrap().is_cancelled());
-    assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().cancel.is_cancelled());
-    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
-    assert_eq!(RewriteWaitPolicy::default().deadline,Duration::from_secs(20));
-}
-
-#[tokio::test]
-async fn synchronous_validation_finishing_after_deadline_cannot_commit_its_candidate() {
-    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
-    let captured=Arc::new(Mutex::new(None));let slot=captured.clone();
-    h.finish_rewrite_with_policy("s".into(),7,move|_,_,frozen,cancel,_execution|async move {
-        *slot.lock().unwrap()=Some(cancel);
-        // Simulates synchronous JSON/semantic checking: no yield to Tokio's timer.
         std::thread::sleep(Duration::from_millis(30));
-        let mut draft=rewrite_fallback::source_fallback(&frozen);
-        draft.blocks[0].text="late synthetic candidate".into();Ok(draft)
-    },RewriteWaitPolicy{deadline:Duration::from_millis(5)},|hub,_,_|hub.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
-    let saved=h.db.get_result("s").unwrap().output.unwrap();
-    assert_eq!(saved.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
-    assert_eq!(saved.text(),source("s").text());
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);
-    assert!(captured.lock().unwrap().as_ref().unwrap().is_cancelled());
+        Ok(rewrite_fallback::source_fallback(&source))
+    },RewriteWaitPolicy{deadline:Duration::from_millis(5)},|_,_,_|panic!("late draft cannot deliver")).await;
+    assert_unfinished(&h);assert!(captured.lock().unwrap().as_ref().unwrap().is_cancelled());
 }
 
 #[tokio::test]
@@ -180,8 +102,8 @@ async fn rewrite_cancel_or_session_replacement_cannot_create_fallback() {
 }
 
 #[tokio::test]
-async fn rewrite_invalid_source_pending_save_and_noninitial_attempts_do_not_fallback() {
-    for case in ["incomplete","pending","retry","history","revoked","invalid_source","cancelled"] {
+async fn rewrite_invalid_source_pending_save_and_history_attempts_do_not_fallback() {
+    for case in ["incomplete","pending","history","revoked","invalid_source","cancelled"] {
         let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
         {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();match case {
             "incomplete"=>s.source.as_mut().unwrap().complete=false,
@@ -195,43 +117,4 @@ async fn rewrite_invalid_source_pending_save_and_noninitial_attempts_do_not_fall
         assert_eq!(view(&h).state,SessionPhase::Failed,"{case}");assert!(view(&h).rewrite_fallback.is_none());
         assert_eq!(usage_count(&h),0);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
     }
-}
-
-#[tokio::test]
-async fn fallback_save_failure_preserves_retryable_output_without_delivery() {
-    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
-    fault(&h,"CREATE TRIGGER fail_usage BEFORE INSERT ON usage_events BEGIN SELECT RAISE(ABORT,'synthetic save failure'); END;");
-    fail_rewrite(&h,"rewrite_timeout").await;
-    assert_eq!(view(&h).state,SessionPhase::Failed);assert!(view(&h).can_retry_save);
-    assert_eq!(usage_count(&h),0);assert!(h.db.get_result("s").unwrap().output.is_none());
-    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
-    fault(&h,"DROP TRIGGER fail_usage;");let mut payload=identity("s");payload["pendingCommitId"]=json!(view(&h).pending_commit_id.unwrap());
-    h.retry_save(&payload).await.unwrap();
-    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().creation_reason,CreationReason::Retry);
-    assert_eq!(usage_count(&h),1);assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
-}
-
-#[tokio::test]
-async fn fallback_missing_target_and_preview_preserve_delivery_preferences() {
-    for preview in [false,true] {
-        let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");
-        if preview {h.inner.lock().unwrap().active.as_mut().unwrap().prefs.delivery_mode=DeliveryMode::Preview;}
-        let calls=delivery_native_calls(&h);fail_rewrite(&h,"rewrite_timeout").await;
-        h.initial_delivery_with("s",7,|_|panic!("no target"),|_,_,_,_|panic!("no automatic input"));
-        assert_eq!(view(&h).state,SessionPhase::Ready);
-        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),u64::from(!preview));
-        assert_eq!(calls.lock().unwrap().iter().any(|(name,_)|name=="showMain"),preview);
-    }
-}
-
-#[tokio::test]
-async fn fallback_persists_across_database_reopen_and_has_no_success_validation_mark() {
-    let(h,path)=file_hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);checkpoint(&h,"s");
-    fail_rewrite(&h,"rewrite_timeout").await;
-    let trace=h.diagnostics.snapshot().unwrap();assert!(!trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteValidated));
-    assert!(trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteFallbackSelected));
-    h.shutdown_ready().await.unwrap();let reopened=Store::open(&path).unwrap();
-    let output=reopened.get_result("s").unwrap().output.unwrap();assert_eq!(output.rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::Timeout));
-    assert_eq!(output.text(),source("s").text());assert_eq!(reopened.usage_today("2026-10-04").unwrap().count,1);
 }

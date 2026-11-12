@@ -24,6 +24,11 @@ impl Inner {
         if self.active.as_ref().is_some_and(|s|s.pending.is_some()){
             return Err(ApiError::new("save_recovery_pending","recovery","当前口述尚未保存，请先重试保存或明确放弃，再开始下一条。"));
         }
+        // A complete source without a finished draft still needs its active retry
+        // controls, even when history is disabled. Do not silently replace it.
+        if self.active.as_ref().is_some_and(|s|s.view().can_retry_rewrite && s.output.is_none()) {
+            return Err(ApiError::new("rewrite_recovery_pending","recovery","上一条最终整理尚未完成，请先重试整理、采用识别稿或明确放弃，再开始下一条。"));
+        }
         if self.active.as_ref().is_some_and(|s|s.view().can_retry_asr){
             if self.recovery.is_some(){
                 return Err(ApiError::new("recovery_capacity","recovery","已有一条暂存录音。请先恢复或放弃它，再开始下一条；当前两条内容均已保留。"));

@@ -1,8 +1,7 @@
 //! One caller-owned deadline and bounded, content-free request observations.
-use super::{CloudError, RewriteResult, semantic_review};
-use crate::core::{ModeSnapshot, SourceRevision};
+use super::CloudError;
 use serde::Serialize;
-use std::{sync::{Arc, Mutex}, time::{Duration, Instant as WallInstant}};
+use std::{sync::Arc, time::{Duration, Instant as WallInstant}};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -36,33 +35,17 @@ pub(crate) struct RewriteExecution {
     pub deadline: Instant,
     observer: Option<Arc<dyn Fn(RequestEvent) + Send + Sync>>,
     dispatch_observer: Option<Arc<dyn Fn(DispatchEvent) + Send + Sync>>,
-    reviewed: Arc<Mutex<Option<ReviewedDraft>>>,
 }
-struct ReviewedDraft { source_hash: String, mode_hash: String, draft: RewriteResult }
 impl RewriteExecution {
-    pub fn until(deadline: Instant) -> Self { Self { deadline, observer: None, dispatch_observer: None, reviewed: Arc::new(Mutex::new(None)) } }
+    pub fn until(deadline: Instant) -> Self { Self { deadline, observer: None, dispatch_observer: None } }
     pub fn for_duration(wait: Duration) -> Self { Self::until(Instant::now() + wait) }
     /// A separate recovery attempt shares observers, but never inherits an expired
-    /// clock or a draft reviewed under the original mode/context.
+    /// clock. No intermediate draft is stored in the execution context.
     pub(crate) fn recovery(&self, deadline: Instant) -> Self {
-        Self { deadline, reviewed: Arc::new(Mutex::new(None)), ..self.clone() }
+        Self { deadline, ..self.clone() }
     }
     pub fn observed(deadline: Instant, observer: impl Fn(RequestEvent) + Send + Sync + 'static) -> Self {
         Self { observer: Some(Arc::new(observer)), ..Self::until(deadline) }
-    }
-    /// Keep the exact draft whose content checks passed before further polishing.
-    pub(super) fn retain_reviewed(&self, source: &SourceRevision, mode: &ModeSnapshot,
-        draft: &RewriteResult, review: &semantic_review::SemanticReview, cancel: &CancellationToken) {
-        if self.checkpoint(cancel).is_err() || !review.fidelity_passed()
-            || !semantic_review::matches_draft(review, source, draft) { return; }
-        *self.reviewed.lock().unwrap() = Some(ReviewedDraft {
-            source_hash: super::minimum::hash(source), mode_hash: super::minimum::hash(mode), draft: draft.clone(),
-        });
-    }
-    pub(crate) fn take_reviewed(&self, source: &SourceRevision, mode: &ModeSnapshot) -> Option<RewriteResult> {
-        self.reviewed.lock().unwrap().take()
-            .filter(|saved| saved.source_hash == super::minimum::hash(source) && saved.mode_hash == super::minimum::hash(mode))
-            .map(|saved| saved.draft)
     }
     /// Add task-level dispatch tracking without replacing existing timing or
     /// dispatch observers, and without changing the caller-owned deadline.

@@ -19,6 +19,7 @@ mod provider_tests;
 #[serde(rename_all = "camelCase")]
 pub struct RewriteResult { pub resolved_mode: BaseMode, pub blocks: Vec<OutputBlock> }
 
+#[cfg(test)]
 #[path="rewrite_basic_cleanup.rs"]
 pub(crate) mod basic_cleanup;
 
@@ -427,7 +428,7 @@ pub fn uses_guarded_long(source: &SourceRevision) -> bool {
 }
 
 pub fn initial_wait_ms(source: &SourceRevision) -> u64 {
-    match source.text().chars().count() { 0..=400 => 5000, 401..=800 => 8000, _ => 20000 }
+    match source.text().chars().count() { 0..=800 => 20000, 801..=3000 => 30000, _ => 60000 }
 }
 
 pub fn normalize_draft_dictionary(source:&SourceRevision, dictionary:&DictionarySnapshot, draft:&mut RewriteResult) {

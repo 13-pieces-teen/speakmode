@@ -132,7 +132,7 @@ async fn bounded_capture_grace_is_inside_rewrite_deadline(){
         Err(CloudError::new("rewrite_timeout","rewrite","fixture"))
     },RewriteWaitPolicy{deadline:Duration::from_millis(30)},|h,_,_|h.inner.lock().unwrap().active.as_mut().unwrap().delivery_worker_released=true).await;
     assert!(start.elapsed()<Duration::from_secs(1));
-    let output=h.db.get_result("s").unwrap().output.unwrap();assert_eq!(output.text(),source("s").text());assert!(output.writing_receipt.is_none());
+    super::rewrite_fallback_tests::assert_unfinished(&h);
 }
 #[tokio::test]
 async fn cancellation_never_commits_scene_or_retains_host_text(){

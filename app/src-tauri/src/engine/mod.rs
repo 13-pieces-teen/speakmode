@@ -768,7 +768,7 @@ impl AppHub {
         let profile_dispatch=personalization::DispatchTracker::default();
         let _=self.record_personalization_event(profile_event.clone()).await;
         let generation=async {
-            let execution=profile_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(std::time::Duration::from_secs(20)),writing_context.as_ref());
+            let execution=profile_dispatch.observe(rewrite::execution::RewriteExecution::for_duration(std::time::Duration::from_millis(rewrite::initial_wait_ms(&detail.source))),writing_context.as_ref());
             if let Some(context)=&confirmed_context {rewrite::confirmed_candidate::generate_with_writing_context_execution(&config,&secret,&mode,&detail.source,&dictionary,context,cancel.clone(),writing_context.as_ref(),execution).await}
             else {rewrite::rewrite_manual_candidate_with_writing_context_execution(&config,&secret,&mode,&detail.source,&dictionary,cancel.clone(),writing_context.as_ref(),execution).await}
         };

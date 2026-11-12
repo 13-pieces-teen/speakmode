@@ -445,27 +445,20 @@ async fn parsed_complete_ranges_commit_stable_source_refs_without_changing_sourc
 }
 
 #[tokio::test]
-async fn parsed_missing_time_qualifier_delivers_complete_source_instead_of_rejected_output() {
+async fn parsed_missing_time_qualifier_keeps_source_without_delivering_unfinished_result() {
     let h=hub();range_rewrite_checkpoint(&h);let seen=events(&h);
     {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
     finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
-    assert_eq!(view(&h).state,SessionPhase::Ready);
-    assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::MeaningRisk));
-    assert!(view(&h).error.is_none());
-    let output=h.db.get_result("s").unwrap().output.unwrap();assert_eq!(output.text(),range_rewrite_source().text());
-    assert_eq!(output.blocks[0].source_refs,["item-s-0","item-s-1"]);
-    assert_eq!(usage_count(&h),1);
-    let trace=h.diagnostics.snapshot().unwrap();assert!(trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteFallbackSelected));
-    assert!(!trace.traces[0].marks.iter().any(|m|m.stage==Stage::RewriteValidated));
-    assert!(!seen.lock().unwrap().iter().any(|event|event.kind=="session"&&event.payload["state"]=="failed"));
+    rewrite_fallback_tests::assert_unfinished(&h);
+    assert_eq!(h.db.get_result("s").unwrap().source,range_rewrite_source());
+    assert!(seen.lock().unwrap().iter().any(|event|event.kind=="session"&&event.payload["state"]=="failed"));
 }
 
 #[tokio::test]
-async fn parsed_range_gap_uses_complete_source_and_counts_one_completed_dictation() {
+async fn parsed_range_gap_cannot_count_unfinished_dictation_as_completed() {
     let h=hub();range_rewrite_checkpoint(&h);
     finish_parsed_fixture(&h,range_rewrite_content(true,false)).await;
-    assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(view(&h).rewrite_recovery.map(|recovery|recovery.cause),Some(RewriteFallbackReason::InvalidOutput));
-    assert_eq!(h.db.get_result("s").unwrap().output.unwrap().text(),range_rewrite_source().text());assert_eq!(usage_count(&h),1);
+    rewrite_fallback_tests::assert_unfinished(&h);
 }
 
 #[tokio::test]
@@ -494,7 +487,10 @@ async fn rejected_retry_output_never_falls_back_or_reinputs_after_explicit_sourc
     let h=hub();range_rewrite_checkpoint(&h);
     {let mut inner=h.inner.lock().unwrap();let active=inner.active.as_mut().unwrap();active.reason=CreationReason::Retry;active.prefs.delivery_mode=DeliveryMode::Direct;active.target=Some(delivery_target_fixture());}
     finish_parsed_fixture(&h,range_rewrite_content(false,true)).await;
-    assert_range_rewrite_rejected(&h,"rewrite_meaning_risk");
+    assert_range_rewrite_rejected(&h,"rewrite_network");
+    let diagnostics=h.diagnostics.snapshot().unwrap();let attempt=diagnostics.traces[0].rewrite.as_ref().unwrap();
+    assert_eq!(attempt.error_code,Some("rewrite_meaning_risk"));
+    assert_eq!(attempt.automatic_recovery.as_ref().unwrap().error_code,Some("rewrite_network"));
     h.initial_delivery_with("s",7,|_|panic!("failure cannot enter input"),|_,_,_,_|panic!("failure cannot fall back to source input"));
     let adopted=h.use_source_async(&identity("s")).await.unwrap();
     assert_eq!(adopted["source"],serde_json::to_value(range_rewrite_source()).unwrap());

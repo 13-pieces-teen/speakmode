@@ -1,6 +1,6 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.37**，前端 package 版本为 **0.4.34**；对应分支为 `fix/dictation-reliability-20261028`。
+当前桌面源码版本为 **0.2.39**，前端 package 版本为 **0.4.34**；本轮最终成稿修复分支为 `fix/final-rewrite-0.2.39`，合入目标为 `main`。
 
 ## 环境准备
 
