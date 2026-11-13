@@ -23,7 +23,7 @@ function deleted(reference:PersonalizationReference,policy:PersonalizationRefere
 
 // These are the reference-bearing links in native replies, snapshots and local
 // record/comparison views. Text blocks, source, IDs and revision markers stay intact.
-const referenceLinks=['writingReceipt','personalization','output','detail','native','result','temporaryResult','session','recovery','reference'] as const;
+const referenceLinks=['writingReceipt','personalization','output','detail','native','result','temporaryResult','session','recovery','recoveries','reference'] as const;
 /** Recheck at acceptance AND render time: a response may predate the deletion. */
 export function clearDeletedPersonalizationReferences<T>(value:T,policy:PersonalizationReferencePolicy=emptyPersonalizationReferencePolicy):T {
  if(!value||typeof value!=='object'||policy.version===0)return value;

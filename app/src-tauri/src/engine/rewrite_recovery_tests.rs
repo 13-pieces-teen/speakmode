@@ -239,6 +239,14 @@ async fn final_recovery_save_failure_can_retry_save_without_regenerating_or_deli
     },|_,_,source,_,_,_|async move {Ok(rewrite_fallback::source_fallback(&source))},None::<RewriteWaitPolicy>,
         |_,_,_|panic!("uncommitted result cannot deliver")).await;
     assert_unfinished(&h);assert!(view(&h).can_retry_save);
+    let mut config=h.db.snapshot().provider_config;let version=config.version;config.region=Some("beijing".into());
+    h.db.submit(DbCommand::SaveProviderConfig{config,expected_version:version},None,DbPriority::Normal).unwrap().wait_blocking().unwrap();
+    h.inner.lock().unwrap().key_configured=true;
+    let pending=view(&h).pending_commit_id;
+    h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
+    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();s.phase=SessionPhase::Ready;s.processing_worker_released=true;}
+    h.activate_recovery(&identity("s")).unwrap();
+    assert_eq!(view(&h).pending_commit_id,pending);
     fault(&h,"DROP TRIGGER fail_usage;");let mut payload=identity("s");payload["pendingCommitId"]=json!(view(&h).pending_commit_id.unwrap());
     h.retry_save(&payload).await.unwrap();
     assert_eq!(view(&h).state,SessionPhase::Ready);assert_eq!(usage_count(&h),1);
@@ -247,7 +255,7 @@ async fn final_recovery_save_failure_can_retry_save_without_regenerating_or_deli
 }
 
 #[tokio::test]
-async fn failed_final_rewrite_cannot_be_silently_replaced_by_next_recording() {
+async fn failed_final_rewrite_is_recoverable_after_starting_another_recording() {
     for keep_history in [false,true] {
         let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);
         h.inner.lock().unwrap().active.as_mut().unwrap().prefs.keep_history=keep_history;
@@ -255,10 +263,13 @@ async fn failed_final_rewrite_cannot_be_silently_replaced_by_next_recording() {
         let mut config=h.db.snapshot().provider_config;let expected=config.version;config.region=Some("beijing".into());
         h.db.submit(DbCommand::SaveProviderConfig{config,expected_version:expected},None,DbPriority::Normal).unwrap().wait_blocking().unwrap();
         h.inner.lock().unwrap().key_configured=true;
-        let error=h.prepare_start_state(Instant::now(),Origin::UiCommand).err().expect("unresolved source must block replacement");
-        assert_eq!(error.code,"rewrite_recovery_pending");
-        assert_eq!(h.inner.lock().unwrap().active.as_ref().unwrap().id,"s");assert!(view(&h).can_retry_rewrite);
-        h.cancel_session_async(&identity("s")).await.unwrap();
+        h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
+        {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();s.phase=SessionPhase::Ready;s.processing_worker_released=true;}
+        let restored=h.activate_recovery(&identity("s")).unwrap();
+        assert_eq!(restored["canRetryRewrite"],true);assert_eq!(restored["generation"],7);
+        h.use_source_async(&identity("s")).await.unwrap();
+        assert_eq!(view(&h).state,SessionPhase::Ready);
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
         assert!(h.prepare_start_state(Instant::now(),Origin::UiCommand).is_ok());
     }
 }

@@ -25,7 +25,7 @@ _shared = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_shared)
 managed_preview, screenshot, write_new = _shared.managed_preview, _shared.screenshot, _shared.write_new
 RETAINED_ID, CURRENT_ID = "synthetic-retained", "synthetic-current"
-READS = {"state.snapshot", "audio.listDevices", "history.list", "history.get"}
+READS = {"state.snapshot", "audio.listDevices", "history.list", "history.get", "personalization.get", "usage.today"}
 
 
 def live(session_id, generation, state="failed", *, released=True):
@@ -53,7 +53,10 @@ def fixture(*, current_state="ready", released=True, retained=True, activate_err
 BRIDGE = r"""
 (() => {
  const data=__FIXTURE__, copy=value=>structuredClone(value), ledger=[], events=[], callbacks=new Map(), channels=new Map();
+ const entries=()=>data.snapshot.recoveries??(data.snapshot.recovery?[data.snapshot.recovery]:[]);
+ const recoveryPatch=values=>({recoveries:values,recovery:values[0]??null});
  let callbackId=0;
+ const liveNext=generation=>({sessionId:'synthetic-next',id:'synthetic-next',generation,state:'recording',workerReleased:false,captureReady:true});
  window.isTauri=true;
  function emit(event) {
   events.push(copy(event));
@@ -71,7 +74,7 @@ BRIDGE = r"""
   emit({kind:'session',sequence:data.snapshot.sequence,sessionId:session.sessionId,generation:session.generation,payload:copy(session)});
  }
  window.__speakmodeQA={ledger,events,data,publishSnapshot,publishSession,expire(){
-  data.snapshot.recovery=null;data.snapshot.sequence++;
+  Object.assign(data.snapshot,recoveryPatch([]));data.snapshot.sequence++;
   emit({kind:'recovery.changed',sequence:data.snapshot.sequence,payload:{expired:true}});
  }};
  window.__TAURI_INTERNALS__={
@@ -84,25 +87,34 @@ BRIDGE = r"""
    const {name,payload}=args.request;ledger.push({name,payload:copy(payload)});
    if(name==='state.snapshot')return copy(data.snapshot);
    if(name==='audio.listDevices')return [];
+   if(name==='personalization.get')return {version:0,enabled:false,globalHabits:'',profiles:[]};
+   if(name==='usage.today')return copy(data.snapshot.usage);
    if(name==='history.list')return {items:[],total:0,nextCursor:null};
    if(name==='recovery.activate') {
     if(data.activateError)throw {code:'stale_recovery',message:'这条恢复已变化，请刷新后重试。'};
-    const retained=data.snapshot.recovery;
+    const retained=entries().find(item=>item.session.sessionId===payload.sessionId);
     if(!retained||payload.sessionId!==retained.session.sessionId||payload.expectedGeneration!==retained.session.generation)
      throw new Error('Synthetic stale recovery identity');
     const active=data.snapshot.session;
     if(active&&(!active.workerReleased||['starting','recording','finalizingasr','rewriting'].includes(active.state.toLowerCase())))
      throw new Error('Synthetic active worker is busy');
-    const restored=copy(retained.session);restored.generation=Math.max(restored.generation,active?.generation??0)+1;
-    const replacement=active&&active.canRetryAsr&&['failed','incomplete'].includes(active.state.toLowerCase())
-     ?{session:copy(active),expiresAt:data.currentRecoveryExpiresAt}:null;
-    publishSnapshot({session:restored,recovery:replacement});return copy(restored);
+    const restored=copy(retained.session);if(!restored.sourceRevisionId)restored.generation=Math.max(restored.generation,active?.generation??0)+1;
+    const remaining=entries().filter(item=>item!==retained);
+    if(active&&['failed','incomplete'].includes(active.state.toLowerCase())&&(active.canRetryAsr||active.canCopyRecovery||active.canRetrySave||active.canRetryRewrite))remaining.push({session:copy(active),expiresAt:data.currentRecoveryExpiresAt});
+    publishSnapshot({session:restored,...recoveryPatch(remaining)});return copy(restored);
    }
    if(name==='recovery.discard') {
-    const retained=data.snapshot.recovery;
+    const retained=entries().find(item=>item.session.sessionId===payload.sessionId);
     if(!retained||payload.sessionId!==retained.session.sessionId||payload.expectedGeneration!==retained.session.generation)
      throw new Error('Synthetic stale discard identity');
-    publishSnapshot({recovery:null});return null;
+    publishSnapshot(recoveryPatch(entries().filter(item=>item!==retained)));return null;
+   }
+   if(name==='session.start') {
+    const active=data.snapshot.session;
+    if(!active.workerReleased)throw new Error('Synthetic resources not released');
+    const remaining=entries();remaining.push({session:copy(active),expiresAt:data.currentRecoveryExpiresAt});
+    const next=liveNext(active.generation+1);
+    publishSnapshot({session:next,...recoveryPatch(remaining)});return copy(next);
    }
    if(name==='asr.retry') {
     const session=data.snapshot.session;
@@ -212,7 +224,7 @@ def main():
                 assert before[0]["payload"]["sessionId"] == RETAINED_ID
                 assert before[0]["payload"]["expectedGeneration"] == 41
                 current_card(page).get_by_role("button", name="重试识别", exact=True).click()
-                expect(current_card(page)).to_contain_text("正在收齐识别结果")
+                expect(current_card(page)).to_contain_text("正在转成文字")
                 calls = actions(page)
                 assert [row["name"] for row in calls] == ["recovery.activate", "asr.retry"], calls
                 assert calls[1]["payload"]["sessionId"] == RETAINED_ID
@@ -237,9 +249,9 @@ def main():
                 expect(retained_card(page)).to_be_visible()
                 expect(retained_card(page).get_by_role("button", name="打开恢复", exact=True)).to_be_disabled()
                 expect(retained_card(page).get_by_role("button", name="放弃这条恢复", exact=True)).to_be_enabled()
-                expect(current_card(page)).to_contain_text("正在录音")
+                expect(current_card(page)).to_contain_text("准备录音")
                 discard(page)
-                expect(current_card(page)).to_contain_text("正在录音")
+                expect(current_card(page)).to_contain_text("准备录音")
                 return {"openDisabledDuringRecording": True, "discardPreservesCurrentRecording": True}
             run_case("04-new-recording-keeps-recovery", busy, fixture(current_state="recording", released=False))
 
@@ -255,12 +267,11 @@ def main():
                                     "canRetrySave": retry_kind == "save", "canRetryRewrite": retry_kind == "rewrite",
                                     "pendingCommitId": "synthetic-pending" if retry_kind == "save" else None})
                     page.evaluate("patch=>window.__speakmodeQA.publishSnapshot(patch)", {"session": session})
-                    expect(retained_card(page).get_by_role("button", name="打开恢复", exact=True)).to_be_disabled()
-                    expect(retained_card(page)).to_contain_text("请先处理当前口述")
+                    expect(retained_card(page).get_by_role("button", name="打开恢复", exact=True)).to_be_enabled()
                     expect(retained_card(page).get_by_role("button", name="放弃这条恢复", exact=True)).to_be_enabled()
                     checks.append(retry_kind)
                 assert actions(page) == []
-                return {"openBlockedFor": checks, "currentWorkDisplaced": False}
+                return {"workerBlockedThenFailuresCanSwap": checks, "currentWorkDisplaced": False}
             run_case("04b-current-worker-and-unsaved-work-protected", unresolved_current, fixture(released=False))
 
             def empty_preflight_failure(page):
@@ -324,7 +335,7 @@ def main():
                 expect(current_card(page).get_by_role("button", name="重试识别", exact=True)).to_be_enabled()
                 expect(current_card(page).get_by_role("button", name="结束口述", exact=True)).to_have_count(0)
                 current_card(page).get_by_role("button", name="重试识别", exact=True).click()
-                expect(current_card(page)).to_contain_text("正在收齐识别结果")
+                expect(current_card(page)).to_contain_text("正在转成文字")
                 request = actions(page)[-1]
                 assert request["name"] == "asr.retry" and request["payload"]["sessionId"] == RETAINED_ID and request["payload"]["expectedGeneration"] == 43, request
                 return {"resurrectedGeneration": 43, "lateGenerationsRejected": [41, 42], "explicitRetryRequest": request}
@@ -343,7 +354,7 @@ def main():
                 retained_card(page).get_by_role("button", name="打开恢复", exact=True).click()
                 expect(current_card(page).get_by_role("button", name="重试识别", exact=True)).to_be_enabled()
                 current_card(page).get_by_role("button", name="重试识别", exact=True).click()
-                expect(current_card(page)).to_contain_text("正在收齐识别结果")
+                expect(current_card(page)).to_contain_text("正在转成文字")
                 calls = actions(page)
                 assert [row["name"] for row in calls] == ["recovery.activate", "recovery.activate", "asr.retry"], calls
                 assert [(row["payload"]["sessionId"], row["payload"]["expectedGeneration"]) for row in calls] == [
@@ -353,7 +364,7 @@ def main():
             run_case("07b-swap-keeps-current-and-clears-old-confirmation", swap_recovery, fixture(current_state="failed"))
 
             def pending_delivery(page):
-                expect(current_card(page)).to_contain_text("正在发送到输入位置")
+                expect(current_card(page)).to_have_count(0)
                 expect(current_card(page).get_by_role("button", name="查看成稿", exact=True)).to_have_count(0)
                 expect(current_card(page).get_by_role("button", name="复制成稿", exact=True)).to_have_count(0)
                 assert actions(page) == []
@@ -375,6 +386,30 @@ def main():
                     sizes.append(geometry)
                 return {"viewports": sizes, "nativeWindowAcceptance": False}
             run_case("09-responsive-retained-card", responsive)
+            def start_next(page):
+                expect(current_card(page).get_by_role("button", name="开始下一条口述", exact=True)).to_be_enabled()
+                current_card(page).get_by_role("button", name="开始下一条口述", exact=True).click()
+                expect(retained_card(page)).to_have_count(2)
+                expect(current_card(page)).to_contain_text("正在聆听")
+                for card in retained_card(page).all():
+                    expect(card.get_by_role("button", name="打开恢复", exact=True)).to_be_disabled()
+                assert [row["name"] for row in actions(page)] == ["session.start"]
+                return {"bothFailuresRetained": True, "newRecordingStarted": True, "cloudRetry": False}
+            run_case("10-start-next-keeps-multiple-failures", start_next, fixture(current_state="incomplete"))
+
+            def source_reactivation(page):
+                source=live(RETAINED_ID,41)
+                source.update({"canRetryAsr":False,"canRetryRewrite":True,"canUseSource":True,"sourceRevisionId":"source-immutable","retryKind":"rewrite"})
+                page.evaluate("patch=>window.__speakmodeQA.publishSnapshot(patch)",{"session":source,"recovery":None})
+                page.evaluate("patch=>window.__speakmodeQA.publishSnapshot(patch)",{"session":live(CURRENT_ID,42,"ready"),"recoveries":[{"session":source,"expiresAt":fixture()["snapshot"]["recovery"]["expiresAt"]}]})
+                retained_card(page).get_by_role("button", name="打开恢复", exact=True).click()
+                expect(retained_card(page)).to_have_count(0)
+                expect(current_card(page).get_by_role("button",name="重试整理",exact=True)).to_be_enabled()
+                assert page.evaluate("window.__speakmodeQA.data.snapshot.session.generation")==41
+                assert [row["name"] for row in actions(page)]==["recovery.activate"]
+                return {"immutableSourceGenerationRestored":True,"noAutomaticRewrite":True}
+            run_case("11-source-restores-with-immutable-generation", source_reactivation)
+
             if args.cases and set(args.cases) - {row["name"] for row in rows}:
                 raise ValueError("Unknown case selection: " + ", ".join(sorted(set(args.cases) - {row["name"] for row in rows})))
             receipt["status"] = "INSPECTION_ONLY" if args.inspect_only else "PASS" if all(row["status"] == "PASS" for row in rows) else "FAIL"
