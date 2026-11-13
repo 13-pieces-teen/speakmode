@@ -121,7 +121,7 @@ pub(crate) struct Inner {
     sequence:u64,
     main_result_request:Option<Value>,
     pub(crate) active:Option<session::ActiveSession>,
-    recovery:Option<session::ActiveSession>,
+    recoveries:Vec<session::ActiveSession>,
     candidate:Option<CandidateSlot>,
     preview:Option<(String,CancellationToken)>,
     // Source identity only; entries live as long as their actual request lease,
@@ -246,7 +246,8 @@ impl AppHub {
         // A COMMIT receipt can be scheduled after a newer delete command.
         // Preserve the successful ledger without resurrecting the live body.
         if i.guards.get(id).is_some_and(|guard|guard.is_cancelled()){return false;}
-        if let Some(s)=i.active.as_mut(){s.adopt_first_history_result(detail);}true
+        if let Some(s)=i.active.as_mut(){s.adopt_first_history_result(detail);}
+        if detail.output.is_some(){i.recoveries.retain(|s|s.id!=id);}true
     }
     fn reserve_revision_intent(&self,id:&str)->Option<RevisionIntent>{
         let mut i=self.inner.lock().unwrap();let s=i.active.as_mut().filter(|s|s.id==id)?;
@@ -267,7 +268,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,main_result_request:None,active:None,recovery:None,candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_dismiss_control:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,main_result_request:None,active:None,recoveries:Vec::new(),candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_dismiss_control:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_dismiss_control(&self,control:Arc<dyn Fn(String,u64)->Result<()>+Send+Sync>){*self.recorder_dismiss_control.lock().unwrap()=Some(control);}
@@ -310,7 +311,7 @@ impl AppHub {
         let mut provider=wire(ProviderStatus{config,configured:valid&&i.key_configured,credential_configured:i.key_configured,asr_credential_configured:i.asr_key_configured,rewrite_credential_configured:i.rewrite_key_configured,status:if valid&&i.key_configured{"configuredUnverified"}else{"unconfigured"}.into(),message:configuration.err().map(|error|error.message)})?;
         provider["modelCatalog"]=wire(model_catalog)?;
         provider["providerCatalog"]=wire(cloud::models::providers())?;
-        Ok(json!({"sequence":i.sequence,"mainResultRequest":i.main_result_request,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"onboarding":{"progress":cache.onboarding,"active":i.onboarding.active,"shortcutPresses":i.onboarding.shortcut_presses},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recovery.as_ref().and_then(|s|s.recovery_view()),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
+        Ok(json!({"sequence":i.sequence,"mainResultRequest":i.main_result_request,"dbRevision":cache.revision,"storage":{"pending":self.db.outstanding(),"ownerReleased":self.db.owner_released(),"cacheError":self.db.cache_error().map(|e|e.code())},"onboarding":{"progress":cache.onboarding,"active":i.onboarding.active,"shortcutPresses":i.onboarding.shortcut_presses},"preferences":cache.preferences,"modes":modes,"dictionary":cache.dictionary,"usage":cache.usage,"provider":provider,"session":i.active.as_ref().map(|s|s.view()),"recovery":i.recoveries.first().and_then(|s|s.recovery_view()),"recoveries":i.recoveries.iter().filter_map(|s|s.recovery_view()).collect::<Vec<_>>(),"temporaryResult":cache.temporary_result,"capabilities":{"recording":true,"streamingAsr":true,"customModes":true,"dictionary":true,"history":true,"nativeDelivery":true}}))
     }
 
     pub async fn command(self:&Arc<Self>,window:&str,request:CommandRequest)->Result<Value> {
@@ -446,7 +447,7 @@ impl AppHub {
             "history.get"=>db_wire(self.db_read(DbCommand::GetResult{session_id:text(&p,"sessionId")?.into()}).await?),
             "history.delete"=>{let id=text(&p,"sessionId")?.to_owned();let guard=self.record_guard(&id,0);guard.delete();
                 {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id){s.revoke_for_deletion();}
-                    if i.recovery.as_ref().is_some_and(|s|s.id==id){i.discard_retained_recovery();}
+                    i.recoveries.retain(|s|s.id!=id);
                     Self::cancel_previews_for_source_locked(&mut i,&id);
                     if i.candidate.as_ref().is_some_and(|c|c.key==id){i.candidate.take().unwrap().cancel.cancel();}}
                 self.publish("recovery.changed",Value::Null);

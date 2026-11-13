@@ -73,7 +73,7 @@ pub(super) fn hub() -> Arc<AppHub> {
         diagnostics:diagnostics::DiagnosticsRecorder::default(),
         inner: Mutex::new(Inner {
             onboarding:OnboardingRuntime::default(),
-            guards: Default::default(), sequence: 0, main_result_request:None, active: None, recovery: None,
+            guards: Default::default(), sequence: 0, main_result_request:None, active: None, recoveries: Vec::new(),
             candidate: None, preview: None, preview_sources:Default::default(),personalization_workers:Default::default(),personalization_revocations:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, asr_key_configured:false, rewrite_key_configured:false, requests: Default::default(),
             request_order: Default::default(),settings_pending:None,

@@ -111,7 +111,7 @@ impl AppHub {
                 if let Some(candidate)=inner.candidate.take(){candidate.cancel.cancel();if let Some(guard)=candidate.adopting{guard.cancel();}}
             }
             if let Some(session)=inner.active.as_mut(){session.revoke_personalization(stopped,&deleted);}
-            if let Some(session)=inner.recovery.as_mut(){session.revoke_personalization(stopped,&deleted);}
+            for session in &mut inner.recoveries{session.revoke_personalization(stopped,&deleted);}
         }
         self.publish_session();
         wire(saved)

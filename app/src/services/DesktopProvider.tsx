@@ -6,7 +6,7 @@ import {fromDetail,fromSummary,type Dictation} from '../model';
 import {mergeLiveLevel,receiveLevel} from './liveLevel';
 import {isPersonalizationConfig} from './personalization';
 import {advancePersonalizationReferencePolicy,clearDeletedPersonalizationReferences,emptyPersonalizationReferencePolicy,type PersonalizationReferencePolicy} from './personalizationReferences';
-export interface DesktopState {mainResultRequest:MainResultRequest|null;recorderCaptionsEnabled:boolean;onboarding:OnboardingState|null;available:boolean;status:'browser'|'loading'|'ready'|'error';error:string;errors:DesktopError[];recorderModeRequest:RecorderModeRequest|null;preferences:NativePreferences;modes:ModeRecord[];dictionary:DictionarySnapshot|null;usage:DailyUsage;provider:ProviderStatus;devices:AudioDevice[];devicesStatus:'idle'|'loading'|'ready'|'error';session:LiveSession|null;recovery:RetainedRecovery|null;temporaryResult:HistoryDetail|null;capabilities:Record<string,boolean>;personalizationReferences:PersonalizationReferencePolicy}
+export interface DesktopState {mainResultRequest:MainResultRequest|null;recorderCaptionsEnabled:boolean;onboarding:OnboardingState|null;available:boolean;status:'browser'|'loading'|'ready'|'error';error:string;errors:DesktopError[];recorderModeRequest:RecorderModeRequest|null;preferences:NativePreferences;modes:ModeRecord[];dictionary:DictionarySnapshot|null;usage:DailyUsage;provider:ProviderStatus;devices:AudioDevice[];devicesStatus:'idle'|'loading'|'ready'|'error';session:LiveSession|null;recovery:RetainedRecovery|null;recoveries:RetainedRecovery[];temporaryResult:HistoryDetail|null;capabilities:Record<string,boolean>;personalizationReferences:PersonalizationReferencePolicy}
 interface DesktopContextValue extends DesktopState {
  records:Dictation[];historyTotal:number;nextCursor:number|null;historyLoading:boolean;query:string;
  command:<T>(name:string,payload?:Record<string,unknown>)=>Promise<T>;refresh:()=>Promise<void>;
@@ -42,19 +42,20 @@ function eventIssue(event:AppEvent,current:LiveSession|null):DesktopError|null {
 export function DesktopProvider({children}:{children:ReactNode}) {
  const available=desktopAvailable();
  const recorderSurface=new URLSearchParams(location.search).get('window')==='recorder';
- const [state,setState]=useState<DesktopState>({mainResultRequest:null,recorderCaptionsEnabled:false,onboarding:null,available,status:available?'loading':'browser',error:'',errors:[],recorderModeRequest:null,preferences:{...initialPreferences},modes:[],dictionary:null,usage:emptyUsage,provider:initialProvider,devices:[],devicesStatus:'idle',session:null,recovery:null,temporaryResult:null,capabilities:{},personalizationReferences:emptyPersonalizationReferencePolicy});
+ const [state,setState]=useState<DesktopState>({mainResultRequest:null,recorderCaptionsEnabled:false,onboarding:null,available,status:available?'loading':'browser',error:'',errors:[],recorderModeRequest:null,preferences:{...initialPreferences},modes:[],dictionary:null,usage:emptyUsage,provider:initialProvider,devices:[],devicesStatus:'idle',session:null,recovery:null,recoveries:[],temporaryResult:null,capabilities:{},personalizationReferences:emptyPersonalizationReferencePolicy});
  const [records,setRecords]=useState<Dictation[]>([]),[historyTotal,setHistoryTotal]=useState(0),[nextCursor,setNextCursor]=useState<number|null>(null),[historyLoading,setHistoryLoading]=useState(false),[query,setQuery]=useState('');
  const queryRef=useRef(''),listRun=useRef(0),deviceReadRun=useRef(0),sequence=useRef(-1),alive=useRef(true),refreshTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
  const details=useRef(new Map<string,Dictation>());
  const personalizationPolicy=useRef(emptyPersonalizationReferencePolicy);
  const sessionHead=useRef<{id:string;generation:number}|null>(null),retiredSessions=useRef(new Map<string,number>());
  // Only an authoritative snapshot can reactivate an older session identity,
- // and its generation must advance. Delayed worker events cannot resurrect it.
+ // with a non-older generation. Checkpoint recovery keeps its immutable stored
+ // generation; delayed worker events still cannot resurrect a retired identity.
  const acceptSession=useCallback((next:LiveSession|null,authoritative=false)=>{
   const id=sessionId(next),head=sessionHead.current;
   if(next&&id){
    const retired=retiredSessions.current.get(id);
-   if((retired!==undefined&&(!authoritative||next.generation<=retired))||(head?.id===id&&next.generation<head.generation))return false;
+   if((retired!==undefined&&(!authoritative||next.generation<retired))||(head?.id===id&&next.generation<head.generation))return false;
    if(head&&head.id!==id)retiredSessions.current.set(head.id,head.generation);
    if(retired!==undefined)retiredSessions.current.delete(id);
    sessionHead.current={id,generation:next.generation};
@@ -94,7 +95,7 @@ export function DesktopProvider({children}:{children:ReactNode}) {
   if(!snap||typeof snap!=='object')return;if(typeof snap.sequence==='number'&&snap.sequence<sequence.current)return;
   sequence.current=Math.max(sequence.current,snap.sequence??0);
   const updateSession='session'in snap&&acceptSession(snap.session??null,true);
-  setState(prev=>{const current=clearDeletedPersonalizationReferences(snap,personalizationPolicy.current),next={...prev,...('mainResultRequest'in current?{mainResultRequest:current.mainResultRequest??null}:{}),...(typeof current.recorderCaptionsEnabled==='boolean'?{recorderCaptionsEnabled:current.recorderCaptionsEnabled}:{}),...(current.onboarding?{onboarding:current.onboarding}:{}),...(current.preferences&&current.preferences.version>=prev.preferences.version?{preferences:current.preferences}:{}),...(current.modes?{modes:current.modes}:{}),...(current.dictionary&&(!prev.dictionary||current.dictionary.version>=prev.dictionary.version)?{dictionary:current.dictionary}:{}),...(current.usage?{usage:current.usage}:{}),...(current.provider?{provider:current.provider}:{}),...(current.devices?{devices:current.devices}:{}),...('recovery'in current?{recovery:current.recovery??null}:{}),...('temporaryResult'in current?{temporaryResult:current.temporaryResult??null}:{}),...(current.capabilities?{capabilities:current.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,current.session??null):next;});
+  setState(prev=>{const current=clearDeletedPersonalizationReferences(snap,personalizationPolicy.current),next={...prev,...('mainResultRequest'in current?{mainResultRequest:current.mainResultRequest??null}:{}),...(typeof current.recorderCaptionsEnabled==='boolean'?{recorderCaptionsEnabled:current.recorderCaptionsEnabled}:{}),...(current.onboarding?{onboarding:current.onboarding}:{}),...(current.preferences&&current.preferences.version>=prev.preferences.version?{preferences:current.preferences}:{}),...(current.modes?{modes:current.modes}:{}),...(current.dictionary&&(!prev.dictionary||current.dictionary.version>=prev.dictionary.version)?{dictionary:current.dictionary}:{}),...(current.usage?{usage:current.usage}:{}),...(current.provider?{provider:current.provider}:{}),...(current.devices?{devices:current.devices}:{}),...('recoveries'in current?{recovery:current.recoveries?.[0]??null,recoveries:current.recoveries??[]}:('recovery'in current?{recovery:current.recovery??null,recoveries:current.recovery?[current.recovery]:[]}:{})),...('temporaryResult'in current?{temporaryResult:current.temporaryResult??null}:{}),...(current.capabilities?{capabilities:current.capabilities}:{}),status:'ready' as const};return updateSession?withSession(next,current.session??null):next;});
  },[acceptSession]);
  const readFailed=useCallback((operation:string,error:unknown)=>{if(alive.current)setState(prev=>putError(prev,{scope:'transport',operation,message:errorMessage(error)}));},[]);
  const refresh=useCallback(async()=>{

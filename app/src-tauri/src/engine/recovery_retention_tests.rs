@@ -102,19 +102,21 @@ fn source_fixture(id:&str,generation:u64)->SourceRevision {
 }
 
 #[test]
-fn full_recovery_slot_preserves_both_failures_and_explicit_swap_preserves_each_deadline() {
+fn repeated_incomplete_recordings_allow_the_next_capture_and_preserve_all_deadlines() {
     let h=hub();let first_created=cached_failure(&h,"first");configure_capture_state_fixture(&h);
     h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
     let(later_id,later_generation,later_created)=finished_later_failure(&h);
-    let error=h.prepare_start_state(Instant::now(),Origin::UiCommand).err().unwrap();
-    assert_eq!(error.code,"recovery_capacity");
-    let snapshot=h.snapshot("main").unwrap();assert_eq!(snapshot["session"]["sessionId"],later_id);assert_eq!(snapshot["recovery"]["session"]["sessionId"],"first");
+    let(next_id,_,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+    let snapshot=h.snapshot("main").unwrap();
+    assert_eq!(snapshot["session"]["sessionId"],next_id);
+    assert_eq!(snapshot["recoveries"].as_array().unwrap().len(),2);
+    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();s.phase=SessionPhase::Ready;s.processing_worker_released=true;}
     let first=h.activate_recovery(&json!({"sessionId":"first","expectedGeneration":7})).unwrap();
     assert!(first["generation"].as_u64().unwrap()>later_generation);
-    {let inner=h.inner.lock().unwrap();assert_eq!(inner.active.as_ref().unwrap().cache_created,Some(first_created));assert_eq!(inner.recovery.as_ref().unwrap().cache_created,Some(later_created));}
+    {let inner=h.inner.lock().unwrap();assert_eq!(inner.active.as_ref().unwrap().cache_created,Some(first_created));assert_eq!(inner.recoveries.first().unwrap().cache_created,Some(later_created));}
     let later=h.activate_recovery(&json!({"sessionId":later_id,"expectedGeneration":later_generation})).unwrap();
     assert!(later["generation"].as_u64().unwrap()>first["generation"].as_u64().unwrap());
-    {let inner=h.inner.lock().unwrap();assert_eq!(inner.active.as_ref().unwrap().cache_created,Some(later_created));assert_eq!(inner.recovery.as_ref().unwrap().cache_created,Some(first_created));}
+    {let inner=h.inner.lock().unwrap();assert_eq!(inner.active.as_ref().unwrap().cache_created,Some(later_created));assert_eq!(inner.recoveries.first().unwrap().cache_created,Some(first_created));}
     let before=h.snapshot("main").unwrap()["session"].clone();
     assert_eq!(h.activate_recovery(&json!({"sessionId":"first","expectedGeneration":7})).unwrap_err().code,"stale_recovery");
     assert_eq!(h.snapshot("main").unwrap()["session"],before);
@@ -145,16 +147,84 @@ fn activation_waits_for_current_workers_and_global_resource_admission_without_mo
 }
 
 #[test]
-fn activation_and_new_capture_preserve_an_unsaved_source_checkpoint_or_ready_failure() {
+fn next_capture_and_activation_preserve_an_unsaved_source_checkpoint() {
     let h=hub();cached_failure(&h,"first");configure_capture_state_fixture(&h);
     let(id,generation,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
     h.prepare_checkpoint(&id,generation,source_fixture(&id,generation)).unwrap();
     {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();s.phase=SessionPhase::Failed;s.processing_worker_released=true;s.db_pending=0;}
-    assert_eq!(h.activate_recovery(&json!({"sessionId":"first","expectedGeneration":7})).unwrap_err().code,"recovery_conflict");
-    assert_eq!(h.prepare_start_state(Instant::now(),Origin::UiCommand).err().unwrap().code,"save_recovery_pending");
-    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();assert!(s.pending.is_some());s.pending=None;}
-    assert_eq!(h.activate_recovery(&json!({"sessionId":"first","expectedGeneration":7})).unwrap_err().code,"recovery_conflict");
-    assert_eq!(h.snapshot("main").unwrap()["recovery"]["session"]["sessionId"],"first");
+    let pending=h.inner.lock().unwrap().active.as_ref().unwrap().pending.clone().unwrap().0;
+    h.activate_recovery(&json!({"sessionId":"first","expectedGeneration":7})).unwrap();
+    let restored=h.activate_recovery(&json!({"sessionId":id,"expectedGeneration":generation})).unwrap();
+    assert_eq!(restored["canRetrySave"],true);assert_eq!(restored["pendingCommitId"],pending);
+    assert_eq!(restored["generation"],generation);
+    h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
+    let inner=h.inner.lock().unwrap();
+    let retained=inner.recoveries.iter().find(|s|s.id==id).unwrap();
+    assert_eq!(retained.pending.as_ref().unwrap().0,pending);
+    assert_eq!(retained.source.as_ref().unwrap().text(),"不要删除测试文件。");
+    assert!(retained.original_delivery_revoked);
+}
+
+#[test]
+fn partial_captions_without_retryable_audio_survive_a_new_recording_and_late_failure() {
+    let h=hub();cached_failure(&h,"partial");configure_capture_state_fixture(&h);
+    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();
+        s.cache_complete=false;s.captions=vec![CaptionItem{id:"partial-item".into(),text:"保留这半句话".into(),is_final:false,revision:1,capture_order:0}];}
+    let(id,generation,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+    h.fail("partial",7,ApiError::new("asr_closed","asr","late failure"),true);
+    let snapshot=h.snapshot("main").unwrap();
+    assert_eq!(snapshot["session"]["sessionId"],id);assert_eq!(snapshot["session"]["generation"],generation);
+    assert_eq!(snapshot["recoveries"][0]["session"]["partial"],"保留这半句话");
+    assert_eq!(snapshot["recoveries"][0]["session"]["canRetryAsr"],false);
+    assert_eq!(snapshot["recoveries"][0]["session"]["canCopyRecovery"],true);
+}
+
+#[test]
+fn incomplete_phase_waits_for_real_worker_release_before_parking_or_starting() {
+    let h=hub();cached_failure(&h,"held");configure_capture_state_fixture(&h);
+    h.inner.lock().unwrap().active.as_mut().unwrap().processing_worker_released=false;
+    assert_eq!(h.prepare_start_state(Instant::now(),Origin::HotkeyHook).err().unwrap().code,"session_busy");
+    assert!(h.inner.lock().unwrap().recoveries.is_empty());
+    h.inner.lock().unwrap().active.as_mut().unwrap().processing_worker_released=true;
+    assert!(h.prepare_start_state(Instant::now(),Origin::HotkeyHook).is_ok());
+    assert_eq!(h.inner.lock().unwrap().recoveries[0].id,"held");
+}
+
+#[test]
+fn adopting_a_parked_source_finishes_its_recovery_without_replacing_current_recording() {
+    let h=hub();install(&h,"saved-source",SessionPhase::FinalizingAsr,true);
+    h.checkpoint("saved-source",7,source_fixture("saved-source",7)).unwrap();
+    h.inner.lock().unwrap().active.as_mut().unwrap().phase=SessionPhase::Failed;
+    configure_capture_state_fixture(&h);
+    let(id,_,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
+    h.use_source(&json!({"sessionId":"saved-source","expectedGeneration":7})).unwrap();
+    let inner=h.inner.lock().unwrap();assert!(inner.recoveries.is_empty());
+    assert_eq!(inner.active.as_ref().unwrap().id,id);
+    assert_eq!(inner.active.as_ref().unwrap().phase,SessionPhase::Starting);
+}
+
+#[test]
+fn removing_a_recovery_card_does_not_revoke_the_saved_source_in_history() {
+    let h=hub();install(&h,"saved-source",SessionPhase::FinalizingAsr,true);
+    h.checkpoint("saved-source",7,source_fixture("saved-source",7)).unwrap();
+    h.inner.lock().unwrap().active.as_mut().unwrap().phase=SessionPhase::Failed;
+    configure_capture_state_fixture(&h);
+    h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
+    h.discard_recovery(&json!({"sessionId":"saved-source","expectedGeneration":7})).unwrap();
+    assert!(!h.inner.lock().unwrap().guards["saved-source"].is_cancelled());
+    h.use_source(&json!({"sessionId":"saved-source","expectedGeneration":7})).unwrap();
+}
+
+#[tokio::test]
+async fn parked_text_without_audio_expires_without_ui_activity() {
+    let h=hub();cached_failure(&h,"text-only");configure_capture_state_fixture(&h);
+    let created=Instant::now()-AUDIO_CACHE_RETENTION+Duration::from_millis(30);
+    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();
+        s.cache=None;s.cache_complete=false;s.cache_created=Some(created);
+        s.captions=vec![CaptionItem{id:"text-item".into(),text:"保留文字".into(),revision:1,is_final:false,capture_order:0}];}
+    h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();h.schedule_retained_expiry();
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert!(h.inner.lock().unwrap().recoveries.is_empty());
 }
 
 #[tokio::test]
@@ -164,7 +234,8 @@ async fn retained_audio_is_main_only_and_discard_requires_exact_identity_without
     assert!(h.snapshot("recording").unwrap().get("recovery").is_none());
     let payload=json!({"sessionId":"first","expectedGeneration":7,"requestId":"discard-first"});
     assert_eq!(h.command("recording",CommandRequest{name:"recovery.discard".into(),payload:payload.clone()}).await.unwrap_err().code,"forbidden");
-    for p in [json!({"sessionId":"wrong","expectedGeneration":7}),json!({"sessionId":"first","expectedGeneration":6})]{assert_eq!(h.discard_recovery(&p).unwrap_err().code,"stale_recovery");}
+    assert_eq!(h.discard_recovery(&json!({"sessionId":"wrong","expectedGeneration":7})).unwrap_err().code,"recovery_expired");
+    assert_eq!(h.discard_recovery(&json!({"sessionId":"first","expectedGeneration":6})).unwrap_err().code,"stale_recovery");
     let result=h.command("main",CommandRequest{name:"recovery.discard".into(),payload:payload.clone()}).await.unwrap();assert_eq!(result["discarded"],true);
     assert_eq!(h.command("main",CommandRequest{name:"recovery.discard".into(),payload}).await.unwrap(),result);
     let snapshot=h.snapshot("main").unwrap();assert!(snapshot["recovery"].is_null());assert_eq!(snapshot["session"]["sessionId"],id);assert_eq!(snapshot["session"]["generation"],generation);
@@ -195,8 +266,8 @@ async fn retained_expiry_notifies_main_even_when_recorder_snapshot_already_clean
     h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
     let seen=Arc::new(Mutex::new(Vec::new()));let sink=seen.clone();h.subscribe("main",Arc::new(move|event|sink.lock().unwrap().push(event.kind))).unwrap();
     let expired=created-AUDIO_CACHE_RETENTION-Duration::from_secs(1);
-    h.inner.lock().unwrap().recovery.as_mut().unwrap().cache_created=Some(expired);
-    h.snapshot("recording").unwrap();assert!(h.inner.lock().unwrap().recovery.is_none());
+    h.inner.lock().unwrap().recoveries.first_mut().unwrap().cache_created=Some(expired);
+    h.snapshot("recording").unwrap();assert!(h.inner.lock().unwrap().recoveries.is_empty());
     h.schedule_audio_cache_expiry("first".into(),expired);
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert!(seen.lock().unwrap().iter().any(|kind|kind=="recovery.changed"));
@@ -208,7 +279,7 @@ async fn locking_or_quitting_discards_both_audio_slots_and_cancels_old_guards() 
         let h=hub();cached_failure(&h,"first");configure_capture_state_fixture(&h);
         h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();finished_later_failure(&h);
         if shutdown{h.shutdown().unwrap();}else{h.interrupt_session("Locked").await.unwrap();}
-        let inner=h.inner.lock().unwrap();assert!(inner.recovery.is_none());assert!(inner.active.as_ref().unwrap().cache.is_none());assert!(inner.guards["first"].is_cancelled());
+        let inner=h.inner.lock().unwrap();assert!(inner.recoveries.is_empty());assert!(inner.active.as_ref().unwrap().cache.is_none());assert!(inner.guards["first"].is_cancelled());
     }
 }
 
@@ -226,7 +297,7 @@ async fn locking_after_a_later_ready_result_releases_both_audio_slots_without_er
         s.source=Some(source.clone());s.output=Some(output.clone());s.phase=SessionPhase::Ready;output};
     h.interrupt_session("Locked").await.unwrap();
     let inner=h.inner.lock().unwrap();let s=inner.active.as_ref().unwrap();
-    assert!(inner.recovery.is_none());
+    assert!(inner.recoveries.is_empty());
     assert!(s.cache.is_none(),"locking must release Ready audio even when cancellation reports alreadyCompleted");
     assert!(!s.cache_complete&&s.cache_created.is_none());
     assert_eq!(s.phase,SessionPhase::Ready);

@@ -258,13 +258,15 @@ impl AppHub {
         // This owner retains no PCM or strong AppHub reference. Moving a failed
         // session must never reset its original monotonic retention deadline.
         let weak=Arc::downgrade(self);
-        tokio::spawn(async move {
+        let Ok(runtime)=tokio::runtime::Handle::try_current()else{return;};
+        runtime.spawn(async move {
             tokio::time::sleep(AUDIO_CACHE_RETENTION.saturating_sub(created.elapsed())).await;
             let Some(hub)=weak.upgrade()else{return;};
             let expired={let mut inner=hub.inner.lock().unwrap();
                 let active=inner.active.as_mut().filter(|s|s.id==id&&s.cache_created==Some(created)).is_some_and(ActiveSession::expire_audio_cache);
-                let retained=inner.recovery.as_mut().filter(|s|s.id==id&&s.cache_created==Some(created)).is_some_and(ActiveSession::expire_audio_cache);
-                if retained{inner.recovery=None;}active||retained};
+                let before=inner.recoveries.len();
+                inner.recoveries.retain(|s|!(s.id==id&&s.cache_created==Some(created)));
+                active||before!=inner.recoveries.len()};
             if expired{hub.publish_session();}
             // A concurrent snapshot may already have released this lease. The
             // main panel must still learn that its retained entry has expired.
@@ -331,13 +333,14 @@ impl AppHub {
             let mode:ModeSnapshot=cache.modes.into_iter().find(|m|m.id==prefs.default_mode_id).ok_or_else(||ApiError::new("notFound","mode","默认整理方式已删除"))?.into();
             let generation=i.active.as_ref().map(|s|s.generation+1).unwrap_or(1);
             let id=Uuid::new_v4().to_string();
-            i.park_retryable_failure()?;
+            i.park_retryable_failure();
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
             i.active=Some(ActiveSession{personalization:cache.personalization,personalization_commit:None,onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,input_context_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
         let (id,generation,config,prefs,mode,dictionary)=self.prepare_start_state(intent,origin)?;
+        self.schedule_retained_expiry();
         self.publish("recovery.changed",Value::Null);
         let preflight=self.processing_lease(&id,generation);
         // Input position is frozen at the stop intent, so browsing or moving the
@@ -947,8 +950,8 @@ impl AppHub {
     fn use_source_receipt(&self,id:&str,generation:u64,result:Result<DbValue>)->Result<Value> {
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.db_pending=s.db_pending.saturating_sub(1);}}
         let detail=db_detail(result?)?;
-        {let mut i=self.inner.lock().unwrap();let deleted=i.guards.get(id).is_some_and(|g|g.is_cancelled());if !deleted{if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.adopt_first_history_result(&detail);s.reason=CreationReason::UseSource;}}}
-        self.publish_session();wire(detail)
+        if self.sync_first_adoption(id,&detail){let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.reason=CreationReason::UseSource;}}
+        self.publish_session();self.publish("recovery.changed",Value::Null);wire(detail)
     }
     pub fn use_source(&self,p:&Value)->Result<Value> {
         let id=p.get("sessionId").or_else(||p.get("resultId")).and_then(Value::as_str).ok_or_else(||ApiError::new("invalid_payload","recovery","缺少来源身份"))?;

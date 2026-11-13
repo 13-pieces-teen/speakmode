@@ -1,11 +1,22 @@
-//! One explicitly managed, memory-only recovery slot. Finished capture owns its
-//! original 30-minute deadline; moving between slots never extends that lease.
+//! Finished failures are independent of capture admission. Moving entries never
+//! extends their original 30-minute lease or resumes cloud/input work.
 use super::*;
 
 impl ActiveSession {
+    fn needs_recovery(&self)->bool {
+        matches!(self.phase,SessionPhase::Failed|SessionPhase::Incomplete)&&
+            (self.pending.is_some()||self.source.is_some()||!self.captions.is_empty()||self.view().can_retry_asr)
+    }
+    fn park(&mut self) {
+        self.expire_audio_cache();
+        if self.cache.is_none()&&self.cache_created.is_some_and(|created|created.elapsed()>=AUDIO_CACHE_RETENTION){self.cache_created=None;}
+        self.cache_created.get_or_insert_with(Instant::now);
+        self.original_delivery_revoked=true;self.target=None;
+        if let Some(permit)=self.delivery_permit.take(){permit.cancel_before_injection();}
+        self.discard_input_context();
+    }
     pub(crate) fn recovery_view(&self)->Option<Value> {
         let remaining=AUDIO_CACHE_RETENTION.checked_sub(self.cache_created?.elapsed())?;
-        if !self.view().can_retry_asr{return None;}
         let expires=chrono::Utc::now()+chrono::Duration::from_std(remaining).ok()?;
         Some(json!({"session":self.view(),"expiresAt":expires.to_rfc3339()}))
     }
@@ -14,82 +25,80 @@ impl ActiveSession {
 impl Inner {
     pub(crate) fn expire_audio_caches(&mut self)->bool {
         let active=self.active.as_mut().is_some_and(ActiveSession::expire_audio_cache);
-        let retained=self.recovery.as_mut().is_some_and(ActiveSession::expire_audio_cache);
-        if retained{self.recovery=None;}
-        active||retained
+        let before=self.recoveries.len();
+        self.recoveries.retain(|s|s.cache_created.is_some_and(|created|created.elapsed()<AUDIO_CACHE_RETENTION));
+        active||before!=self.recoveries.len()
     }
 
-    pub(super) fn park_retryable_failure(&mut self)->Result<()> {
+    pub(super) fn park_retryable_failure(&mut self) {
         self.expire_audio_caches();
-        if self.active.as_ref().is_some_and(|s|s.pending.is_some()){
-            return Err(ApiError::new("save_recovery_pending","recovery","当前口述尚未保存，请先重试保存或明确放弃，再开始下一条。"));
+        if self.active.as_ref().is_some_and(ActiveSession::needs_recovery){
+            let mut session=self.active.take().unwrap();session.park();self.recoveries.push(session);
         }
-        // A complete source without a finished draft still needs its active retry
-        // controls, even when history is disabled. Do not silently replace it.
-        if self.active.as_ref().is_some_and(|s|s.view().can_retry_rewrite && s.output.is_none()) {
-            return Err(ApiError::new("rewrite_recovery_pending","recovery","上一条最终整理尚未完成，请先重试整理、采用识别稿或明确放弃，再开始下一条。"));
-        }
-        if self.active.as_ref().is_some_and(|s|s.view().can_retry_asr){
-            if self.recovery.is_some(){
-                return Err(ApiError::new("recovery_capacity","recovery","已有一条暂存录音。请先恢复或放弃它，再开始下一条；当前两条内容均已保留。"));
-            }
-            self.recovery=self.active.take();
-        }
-        Ok(())
     }
 
     pub(crate) fn discard_retained_recovery(&mut self) {
-        if let Some(mut session)=self.recovery.take(){
+        for mut session in self.recoveries.drain(..){
+            let has_source=session.source.is_some();
             session.revoke_for_deletion();session.discard_deleted_content();
-            if let Some(guard)=self.guards.get(&session.id){guard.cancel();}
+            // Saved checkpoints remain independently usable from history.
+            // Only audio-only entries have no stored content/operations to keep.
+            if !has_source{if let Some(guard)=self.guards.get(&session.id){guard.cancel();}}
         }
     }
 }
 
 impl AppHub {
-    pub(crate) fn activate_recovery(&self,p:&Value)->Result<Value> {
+    pub(crate) fn activate_recovery(self:&Arc<Self>,p:&Value)->Result<Value> {
         let id=text(p,"sessionId")?;let expected=number(p,"expectedGeneration")?;
         let result={
             let _native=self.native_io.try_lock().map_err(|_|ApiError::new("native_busy","recovery","上一条复制或输入操作尚未结束"))?;
             let mut inner=self.inner.lock().unwrap();inner.expire_audio_caches();
-            let retained=inner.recovery.as_ref().ok_or_else(||ApiError::new("recovery_expired","recovery","这条录音已恢复、放弃或到期"))?;
-            if retained.id!=id||retained.generation!=expected{return Err(ApiError::new("stale_recovery","recovery","暂存录音已变化，请刷新后再打开"));}
-            if !retained.view().can_retry_asr{return Err(ApiError::new("asr_retry_unavailable","recovery","完整音频缓存不可用，请重新口述"));}
+            let index=inner.recoveries.iter().position(|s|s.id==id).ok_or_else(||ApiError::new("recovery_expired","recovery","这条口述已恢复、放弃或到期"))?;
+            let retained=&inner.recoveries[index];
+            if retained.generation!=expected{return Err(ApiError::new("stale_recovery","recovery","暂存口述已变化，请刷新后再打开"));}
             if self.quitting.load(Ordering::SeqCst)||self.db.owner_released()||!self.capture_available.load(Ordering::SeqCst){return Err(ApiError::new("system_unavailable","recovery","系统尚未恢复，请稍候"));}
             if self.db.outstanding()>0||self.db_command_workers.load(Ordering::SeqCst)>0{return Err(ApiError::new("storage_busy","recovery","本机处理尚未结束，请稍候"));}
             if inner.settings_pending.is_some(){return Err(ApiError::new("settings_busy","recovery","设置正在保存，请稍候"));}
             if inner.shortcut_capture.is_some()||!platform::audio::capture_resources_released(){return Err(ApiError::new("capture_busy","recovery","录音或快捷键录制尚未释放，请稍候"));}
             if !inner.auxiliary_workers.is_empty(){return Err(ApiError::new("processing_busy","recovery","文字处理任务尚未释放，请稍候"));}
             if inner.active.as_ref().is_some_and(ActiveSession::busy){return Err(ApiError::new("session_busy","recovery","请等待当前口述处理结束后再打开恢复"));}
-            if inner.active.as_ref().is_some_and(|s|s.pending.is_some()||
-                (matches!(s.phase,SessionPhase::Failed|SessionPhase::Incomplete)&&
-                    (s.source.is_some()||(!s.captions.is_empty()&&!s.view().can_retry_asr)))){
-                return Err(ApiError::new("recovery_conflict","recovery","当前口述仍有待恢复内容，请先保存、复制或明确放弃"));
-            }
             let generation=inner.active.as_ref().map(|s|s.generation).unwrap_or(0).max(retained.generation)+1;
-            // No state moves until every identity, deadline and admission check
-            // has succeeded. A second failed ASR swaps into the one spare slot.
-            let mut restored=inner.recovery.take().unwrap();
-            if inner.active.as_ref().is_some_and(|s|s.view().can_retry_asr){inner.recovery=inner.active.take();}
-            restored.generation=generation;restored.cancel=CancellationToken::new();
+            // No moves until all checks succeed. Preserve the current failure
+            // too, including partial captions and unsaved checkpoints/drafts.
+            let mut restored=inner.recoveries.remove(index);inner.park_retryable_failure();
+            // Source/checkpoint generations are immutable in the store. An
+            // audio-only entry instead gets a fresh ASR attempt generation.
+            if restored.source.is_none(){restored.generation=generation;}
+            restored.cancel=CancellationToken::new();restored.park();
             restored.reason=CreationReason::Retry;restored.original_delivery_revoked=true;
             restored.target=None;restored.target_capture_failure_reason=None;restored.delivery=None;
             restored.delivery_permit=None;restored.delivery_failure_reason=None;
             restored.diagnostic_trace=None;restored.caption_render_token=None;
-            if let Some(old)=inner.guards.get(id){old.cancel();}
-            inner.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),generation)));
+            if restored.source.is_none(){
+                if let Some(old)=inner.guards.get(id){old.cancel();}
+                inner.guards.insert(id.into(),Arc::new(CommitGuard::new(id.into(),restored.generation)));
+            }
             let result=wire(restored.view())?;inner.active=Some(restored);result
         };
+        self.schedule_retained_expiry();
         self.publish_session();self.publish("recovery.changed",Value::Null);Ok(result)
+    }
+
+    pub(super) fn schedule_retained_expiry(self:&Arc<Self>) {
+        let entry=self.inner.lock().unwrap().recoveries.last().and_then(|s|s.cache_created.map(|created|(s.id.clone(),created)));
+        if let Some((id,created))=entry{self.schedule_audio_cache_expiry(id,created);}
     }
 
     pub(crate) fn discard_recovery(&self,p:&Value)->Result<Value> {
         let id=text(p,"sessionId")?;let expected=number(p,"expectedGeneration")?;
         {
             let mut inner=self.inner.lock().unwrap();inner.expire_audio_caches();
-            let retained=inner.recovery.as_ref().ok_or_else(||ApiError::new("recovery_expired","recovery","这条录音已恢复、放弃或到期"))?;
-            if retained.id!=id||retained.generation!=expected{return Err(ApiError::new("stale_recovery","recovery","暂存录音已变化，未放弃任何内容"));}
-            inner.discard_retained_recovery();
+            let index=inner.recoveries.iter().position(|s|s.id==id).ok_or_else(||ApiError::new("recovery_expired","recovery","这条口述已恢复、放弃或到期"))?;
+            if inner.recoveries[index].generation!=expected{return Err(ApiError::new("stale_recovery","recovery","暂存口述已变化，未放弃任何内容"));}
+            let mut session=inner.recoveries.remove(index);let has_source=session.source.is_some();
+            session.revoke_for_deletion();session.discard_deleted_content();
+            if !has_source{if let Some(guard)=inner.guards.get(id){guard.cancel();}}
         }
         self.publish("recovery.changed",Value::Null);Ok(json!({"discarded":true}))
     }

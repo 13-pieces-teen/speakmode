@@ -63,8 +63,8 @@ fn recording_and_recovery_keep_provider_snapshot_when_preferences_change() {
         assert_eq!(session.id,id);assert_eq!(session.generation,generation);assert_eq!(session.config,original);
         session.phase=SessionPhase::Incomplete;session.processing_worker_released=true;
         session.cache=Some(vec![1;1600]);session.cache_complete=true;session.cache_created=Some(Instant::now());
-        inner.park_retryable_failure().unwrap();
-        assert_eq!(inner.recovery.as_ref().unwrap().config,original);
+        inner.park_retryable_failure();
+        assert_eq!(inner.recoveries.first().unwrap().config,original);
     }
     let (history_config,_)=h.auxiliary_rewrite_snapshot();
     assert_eq!(history_config.rewrite_provider,"aliyun");

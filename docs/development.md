@@ -1,6 +1,6 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.39**，前端 package 版本为 **0.4.34**；本轮最终成稿修复分支为 `fix/final-rewrite-0.2.39`，合入目标为 `main`。
+当前桌面源码版本为 **0.2.40**，前端 package 版本为 **0.4.34**。识别未完整后继续录音及恢复列表的逻辑见[本轮修复记录](experiments/recovery-next-recording-2026-11-13.md)。
 
 ## 环境准备
 
