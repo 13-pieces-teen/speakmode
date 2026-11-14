@@ -76,6 +76,15 @@ orphaned held key from rejecting all later F8 taps. Injected paste events still
 bypass physical gesture recognition. Physical repeated-recording acceptance is
 reported separately from deterministic state and coordinator tests.
 
+In 0.2.42 `HotkeyService::refresh()` asks the existing native owner to replace
+its keyboard and mouse hooks and waits for a matching completion receipt. It
+resets the tap recognizer after success; a live worker alone is not a hook-health
+receipt. Cancellation keeps its admission gate closed until this bounded refresh
+finishes. Lock/suspend and shutdown do not request recovery or resume admission.
+A routine successful refresh emits no application lifecycle interrupt; a failed
+native reinstall still reports HooksUnavailable. This adds no synthetic input
+or alternate physical-event filter.
+
 ## Audio
 
 `enumerate_inputs()` reads descriptors only. `CaptureHandle::start(Option<&str>)`

@@ -135,9 +135,13 @@ async fn app_command(window: WebviewWindow, state: State<'_, Arc<DesktopState>>,
         return Err(native_error("app_exiting", if exit == 3 { "退出尚未完成，可核对复制已有内容，并从托盘再次选择退出" } else { "正在退出，请等待本机任务释放" }));
     }
     let cancel = request.name == "session.cancel";
+    let cancel_identity = cancel.then(|| request.payload["sessionId"].as_str()
+        .zip(request.payload["expectedGeneration"].as_u64()).map(|(id,generation)|(id.to_owned(),generation))).flatten();
     let result = state.hub.command(window.label(), request).await;
     if cancel {
-        if result.is_ok() { recorder_visibility(&window.app_handle().clone(), state.inner(), false)?; }
+        if result.is_ok() { if let Some((id,generation)) = cancel_identity {
+            hide_recorder_for_session(window.app_handle(), state.inner(), id, generation)?;
+        } }
         else { let _ = show_main(window.app_handle()); }
     }
     result
@@ -493,6 +497,20 @@ fn recorder_visibility(app: &AppHandle, state: &Arc<DesktopState>, visible: bool
     on_ui(app, state, move || {
         #[cfg(windows)] { win::visible(&window, &state2, visible) }
         #[cfg(not(windows))] { let _ = (window, state2, visible); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
+    })
+}
+fn recorder_session_is_current(snapshot: &Value, id: &str, generation: u64) -> bool {
+    let session=&snapshot["session"];
+    session["sessionId"].as_str().or(session["id"].as_str())==Some(id)
+        &&session["generation"].as_u64()==Some(generation)
+}
+fn hide_recorder_for_session(app: &AppHandle, state: &Arc<DesktopState>, id: String, generation: u64) -> Result<()> {
+    let window=app.get_webview_window("recording").ok_or_else(|| window_error("missing recorder"))?;
+    let state2=Arc::clone(state);
+    on_ui(app,state,move|| {
+        if !recorder_session_is_current(&state2.hub.snapshot("recording")?,&id,generation){return Ok(());}
+        #[cfg(windows)] { win::visible(&window,&state2,false) }
+        #[cfg(not(windows))] { let _=window;Err(native_error("unsupported_platform","MVP 需要 Windows")) }
     })
 }
 fn resize_recorder(app: &AppHandle, state: &Arc<DesktopState>, width: f64, height: f64, menu_open: bool) -> Result<()> {
@@ -908,7 +926,7 @@ pub fn run() {
                                     state.hub.command("recording", CommandRequest { name: "session.cancel".into(), payload: json!({
                                         "sessionId": id, "expectedGeneration": generation, "requestId": uuid::Uuid::new_v4().to_string()
                                     }) }).await.map_err(|error| error.for_session(id, generation))?;
-                                    return recorder_visibility(&app, &state, false).map_err(|error| error.for_session(id, generation));
+                                    return hide_recorder_for_session(&app, &state, id.to_owned(), generation).map_err(|error| error.for_session(id, generation));
                                 }
                                 recorder_visibility(&app, &state, false)
                             }.await;
@@ -1018,6 +1036,12 @@ mod tests {
     }
     fn live(state: &str, id: &str, generation: u64) -> Value {
         json!({"session": {"state":state,"sessionId":id,"generation":generation}})
+    }
+    #[test] fn delayed_cancel_hide_cannot_target_a_later_recording_or_recovery_generation() {
+        assert!(recorder_session_is_current(&live("cancelled","first",7),"first",7));
+        assert!(!recorder_session_is_current(&live("recording","second",8),"first",7));
+        assert!(!recorder_session_is_current(&live("recording","first",8),"first",7));
+        assert!(!recorder_session_is_current(&Value::Null,"first",7));
     }
     #[test] fn tray_mode_only_accepts_current_recording_phases() {
         for phase in ["starting", "recording"] {

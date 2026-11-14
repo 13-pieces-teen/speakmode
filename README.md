@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/status.svg" alt="当前桌面源码 v0.2.41 · Windows x64 · 自备 API Key · Tauri 2、Rust 与 React" width="594" />
+  <img src="docs/assets/readme/status.svg" alt="当前桌面源码 v0.2.42 · Windows x64 · 自备 API Key · Tauri 2、Rust 与 React" width="594" />
 </p>
 
 <p align="center">

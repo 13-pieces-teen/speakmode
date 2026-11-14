@@ -557,18 +557,22 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
             // SendMessage (dispatched inside PeekMessageW, never seen by the
             // drain loop) -- WM_POWERBROADCAST always, WM_WTSSESSION_CHANGE
             // on builds that send rather than post it.
-            if outcome.reinstall_hooks || take_reinstall_request() {
+            let system_reinstall = outcome.reinstall_hooks || take_reinstall_request();
+            let requested = HOOK_CONTEXT.with(|cell| cell.borrow().as_ref()
+                .and_then(|ctx| ctx.standalone_tap.as_ref()).and_then(StandaloneTapMenuMask::pending_hook_refresh));
+            if system_reinstall || requested.is_some() {
                 super::activity::invalidate();
-                unsafe {
-                    if reinstall_hooks(&mut kb_hook, &mut mouse_hook) {
-                        // At most a few lines per unlock/resume, and it makes
-                        // the re-arm observable in the field.
-                        lifecycle_event(Lifecycle::HooksReinstalled);
-                    } else {
-                        // Keep the old hooks: they usually still work (the
-                        // reinstall is defensive hardening, not a repair).
-                        lifecycle_event(Lifecycle::HooksUnavailable);
-                    }
+                let succeeded = unsafe { reinstall_hooks(&mut kb_hook, &mut mouse_hook) };
+                if let Some(request) = requested {
+                    HOOK_CONTEXT.with(|cell| { if let Some(mask) = cell.borrow().as_ref()
+                        .and_then(|ctx| ctx.standalone_tap.as_ref()) { mask.complete_hook_refresh(request, succeeded); } });
+                }
+                if succeeded {
+                    // Routine recovery must not impersonate an unlock/resume
+                    // and interrupt a newer application task.
+                    if system_reinstall { lifecycle_event(Lifecycle::HooksReinstalled); }
+                } else {
+                    lifecycle_event(Lifecycle::HooksUnavailable);
                 }
             }
 

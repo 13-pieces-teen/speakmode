@@ -843,6 +843,39 @@ async fn cancellation_cleanup_failure_is_not_reported_as_deleted_and_can_be_retr
     fault(&h, "DROP TRIGGER fail_cleanup;");
     assert_eq!(h.cancel_session(&identity("s")).unwrap()["status"], "cancelled");
     assert!(h.db.get_result("s").is_err()); assert_eq!(view(&h).state, SessionPhase::Cancelled);
+    assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy(), "successful cleanup must retire the old failure gate");
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn recorder_cancel_waits_for_hook_refresh_before_admitting_the_next_f8_recording() {
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);
+    let (entered,seen)=std::sync::mpsc::channel();
+    let (release,wait)=std::sync::mpsc::channel();let wait=Mutex::new(wait);
+    *h.hooks.lock().unwrap()=Some(platform::hotkeys::HotkeyService::test_refresh_service(move||{
+        entered.send(()).unwrap();wait.lock().unwrap().recv_timeout(Duration::from_secs(2)).unwrap();Ok(())
+    }));
+    let worker=h.clone();let task=tokio::spawn(async move{worker.command("recording",CommandRequest{name:"session.cancel".into(),payload:identity("s")}).await});
+    tokio::task::spawn_blocking(move||seen.recv_timeout(Duration::from_secs(2)).unwrap()).await.unwrap();
+    assert!(view(&h).cancel_pending);
+    assert_eq!(h.toggle_from_hotkey().await.unwrap_err().code,"session_busy");
+    assert_eq!(view(&h).state,SessionPhase::Recording,"a cancel in progress must not be turned into stop/finalization");
+    release.send(()).unwrap();assert_eq!(task.await.unwrap().unwrap()["status"],"cancelled");
+    assert_eq!(view(&h).state,SessionPhase::Cancelled);assert!(view(&h).worker_released);
+    assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy());
+    // Missing region deliberately stops before credentials, microphone or cloud.
+    let next=h.toggle_from_hotkey().await.unwrap_err();assert_ne!(next.code,"session_busy");
+    h.hooks.lock().unwrap().as_mut().unwrap().shutdown(Duration::from_secs(1)).unwrap();
+}
+
+#[tokio::test]
+async fn recorder_cancel_reports_failed_hook_refresh_after_still_completing_content_cleanup() {
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);
+    *h.hooks.lock().unwrap()=Some(platform::hotkeys::HotkeyService::test_refresh_service(||Err("synthetic native refresh failure".into())));
+    let result=h.command("recording",CommandRequest{name:"session.cancel".into(),payload:identity("s")}).await;
+    assert_eq!(result.unwrap_err().code,"shortcut_unavailable");
+    assert_eq!(view(&h).state,SessionPhase::Cancelled);assert!(!view(&h).cancel_pending);
+    assert!(h.db.get_result("s").is_err());assert_eq!(usage_count(&h),0);
+    h.hooks.lock().unwrap().as_mut().unwrap().shutdown(Duration::from_secs(1)).unwrap();
 }
 
 #[test]

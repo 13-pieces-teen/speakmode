@@ -84,6 +84,7 @@ impl ShortcutTap {
 }
 
 enum Command {
+    Refresh(UpdateAck),
     Replace(Hotkey, UpdateAck),
     Capture(bool, UpdateAck),
     Enable(bool, UpdateAck),
@@ -199,6 +200,21 @@ impl HotkeyService {
         self.require_running()?;
         self.control.send_timeout(Command::Reset, Duration::from_secs(1)).map_err(|_| PlatformError::Disconnected)
     }
+    pub fn refresh(&self) -> Result<()> { self.ack(Command::Refresh) }
+    #[cfg(test)]
+    pub(crate) fn test_refresh_service(refresh: impl Fn() -> std::result::Result<(), String> + Send + 'static) -> Self {
+        Self::start_worker(Duration::from_secs(1), move |rx, stopping, ready| {
+            ready.send(Ok(())).unwrap();
+            while !stopping.load(Ordering::SeqCst) {
+                match rx.recv_timeout(Duration::from_millis(5)) {
+                    Ok(Command::Refresh(ack)) => ack.apply(&refresh),
+                    Err(RecvTimeoutError::Timeout) => {},
+                    Err(RecvTimeoutError::Disconnected) => break,
+                    _ => panic!("unexpected test hotkey command"),
+                }
+            }
+        }).unwrap()
+    }
     fn ack(&self, make: impl FnOnce(UpdateAck) -> Command) -> Result<()> {
         self.require_running()?;
         let (tx, rx) = bounded(1);
@@ -263,6 +279,18 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
     while !stopping.load(Ordering::SeqCst) {
         while let Ok(command) = control.try_recv() {
             match command {
+                Command::Refresh(ack) => ack.apply(|| {
+                    if !enabled || capture || !hook_available { return Err("keyboard hook recovery is unavailable".into()); }
+                    let request = menu_mask.request_hook_refresh();
+                    let deadline = Instant::now() + Duration::from_millis(750);
+                    let succeeded = loop {
+                        if let Some(result) = menu_mask.hook_refresh_result(request) { break result; }
+                        if Instant::now() >= deadline { return Err("keyboard hook recovery timed out".into()); }
+                        thread::sleep(Duration::from_millis(5));
+                    };
+                    if !succeeded { return Err("keyboard hook reinstall failed".into()); }
+                    tap.reset(); recorded = None; menu_mask.reset(); Ok(())
+                }),
                 Command::Replace(shortcut, ack) => {
                     ack.apply(|| {
                         if hook_available {

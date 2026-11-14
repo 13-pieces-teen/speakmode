@@ -181,7 +181,7 @@ impl ActiveSession {
         self.stop.store(true,Ordering::SeqCst);self.cancel.cancel();self.discard_input_context();if let Some(permit)=&self.delivery_permit{permit.cancel_before_injection();}
     }
     pub(crate) fn discard_deleted_content(&mut self){
-        self.phase=SessionPhase::Cancelled;self.discard_input_context();self.pending=None;self.cache=None;self.cache_complete=false;self.cache_created=None;self.source=None;self.output=None;self.captions.clear();
+        self.phase=SessionPhase::Cancelled;self.error=None;self.discard_input_context();self.pending=None;self.cache=None;self.cache_complete=false;self.cache_created=None;self.source=None;self.output=None;self.captions.clear();
         if let Some(delivery)=self.delivery.as_mut(){if matches!(delivery.state,DeliveryState::Prepared|DeliveryState::Dispatched){delivery.state=DeliveryState::Unconfirmed;delivery.reason=Some("deletedBeforeReceipt".into());}}
     }
     pub(crate) fn view(&self)->LiveSession {
@@ -511,13 +511,23 @@ impl AppHub {
         let(id,generation,guard,completed,attempt)=self.begin_cancel(p)?;self.publish_session();
         if completed{if let Some(attempt)=attempt{let _=self.db_blocking(DbCommand::TransitionDelivery{attempt_id:attempt,expected:DeliveryState::Prepared,next:DeliveryState::Skipped,reason:Some("cancelledBeforeInjection".into())},Some(guard),DbPriority::Critical);}return Ok(json!({"status":"alreadyCompleted"}));}
         let result=self.db_blocking(DbCommand::CancelUnfinished{session_id:id.clone()},Some(guard),DbPriority::Critical);
-        self.finish_cancel(&id,generation,result)
+        let refreshed=if result.is_ok(){self.refresh_hotkeys_after_cancel()}else{Ok(())};
+        let value=self.finish_cancel(&id,generation,result)?;refreshed?;Ok(value)
     }
     pub async fn cancel_session_async(self:&Arc<Self>,p:&Value)->Result<Value> {
         let(id,generation,guard,completed,attempt)=self.begin_cancel(p)?;self.publish_session();
         if completed{if let Some(attempt)=attempt{let _=self.db_write(DbCommand::TransitionDelivery{attempt_id:attempt,expected:DeliveryState::Prepared,next:DeliveryState::Skipped,reason:Some("cancelledBeforeInjection".into())},guard,DbPriority::Critical).await;}return Ok(json!({"status":"alreadyCompleted"}));}
         let result=self.db_write(DbCommand::CancelUnfinished{session_id:id.clone()},guard,DbPriority::Critical).await;
-        self.finish_cancel(&id,generation,result)
+        let refreshed=if result.is_ok(){let hub=Arc::clone(self);tokio::task::spawn_blocking(move||hub.refresh_hotkeys_after_cancel()).await
+            .map_err(|_|ApiError::new("shortcut_unavailable","shortcut","录音已取消，但快捷键监听恢复未完成，请退出重开应用"))
+            .and_then(|result|result)}else{Ok(())};
+        let value=self.finish_cancel(&id,generation,result)?;refreshed?;Ok(value)
+    }
+    fn refresh_hotkeys_after_cancel(&self)->Result<()> {
+        if self.quitting.load(Ordering::SeqCst)||!self.capture_available.load(Ordering::SeqCst){return Ok(());}
+        let hooks=self.hooks.lock().unwrap();
+        if let Some(hooks)=hooks.as_ref(){hooks.refresh().map_err(|_|ApiError::new("shortcut_unavailable","shortcut","录音已取消，但快捷键监听恢复未完成，请退出重开应用"))?;}
+        Ok(())
     }
     fn apply_session_mode(&self,p:&Value,mode:ModeSnapshot)->Result<Value> {
         let value={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
@@ -558,9 +568,9 @@ impl AppHub {
         self.toggle_from_hotkey_at(Instant::now()).await
     }
     pub async fn toggle_from_hotkey_at(self:&Arc<Self>,intent:Instant)->Result<()> {
-        let current={let i=self.inner.lock().unwrap();if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","shortcut","请先结束快捷键录制"));}i.active.as_ref().map(|s|(s.phase,s.busy(),json!({"sessionId":s.id,"expectedGeneration":s.generation})))};
-        if let Some((phase,busy,p))=current {
-            if matches!(phase,SessionPhase::Starting|SessionPhase::Recording){self.stop_session_at(&p,intent).await.map_err(|e|e.for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()))?;return Ok(());}
+        let current={let i=self.inner.lock().unwrap();if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","shortcut","请先结束快捷键录制"));}i.active.as_ref().map(|s|(s.phase,s.busy(),s.cancel.is_cancelled(),json!({"sessionId":s.id,"expectedGeneration":s.generation})))};
+        if let Some((phase,busy,cancelled,p))=current {
+            if !cancelled&&matches!(phase,SessionPhase::Starting|SessionPhase::Recording){self.stop_session_at(&p,intent).await.map_err(|e|e.for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()))?;return Ok(());}
             if busy{return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候").for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()));}
         }
         if self.onboarding_shortcut_check()? { return Ok(()); }
