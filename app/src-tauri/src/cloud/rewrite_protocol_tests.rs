@@ -6,32 +6,33 @@ use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
 use std::time::Instant;
 
 #[tokio::test]
-async fn non_gated_auto_keeps_legacy_transport_and_does_not_upload_dictionary() {
+async fn singapore_auto_uses_shared_review_and_frozen_dictionary() {
+    use super::minimum_pipeline::tests::{Server,Reply};
     assert!(!AUTOMATIC_PROTOCOL_PROMOTED);
     let (mut config,mut mode,mut source)=fixture();
     config.region=Some("singapore".into()); config.rewrite_model="qwen3.8-flash".into();
     mode.base_mode=BaseMode::Auto; mode.mode_id="auto".into();
     assert!(!uses_fluent_contract(&config,&mode));
-    assert_eq!(production_protocol_version(&config,&mode),REWRITE_PROMPT_VERSION);
+    assert_eq!(production_protocol_version(&config,&mode),MINIMUM_PIPELINE_VERSION);
     source.items[0].text="嗯，用 typeless 测试。".into();
     let original=source.clone();
     let dictionary=DictionarySnapshot{version:7,entries:vec![crate::core::DictionaryEntry{
         id:"term-1".into(),term:"Typeless".into(),created_at:"now".into(),updated_at:"now".into()}]};
-    let content=json!({"resolvedMode":"light","blocks":[{"text":"用 Typeless 测试。","sourceRefs":["attempt-1:item-1"]}]}).to_string();
-    let (url,request,server)=http_server("200 OK",envelope(content,"stop"),Duration::ZERO,Duration::ZERO).await;
-    let result=rewrite_with_client_dictionary(&build_client().unwrap(),&config,"test-only-not-a-real-key",&mode,&source,&dictionary,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap();
-    let (_,body)=request.await.unwrap(); server.await.unwrap();
+    let server=Server::new(vec![Reply::draft("用 typeless 测试。"),Reply::new(r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#)]).await;
+    let result=rewrite_with_client_dictionary(&build_client().unwrap(),&config,"test-only-not-a-real-key",&mode,&source,&dictionary,CancellationToken::new(),&server.endpoint,Duration::from_secs(2)).await.unwrap();
+    let body=production_request_body(&config,&mode,&source,&dictionary).unwrap();
     assert_eq!(body["model"],"qwen3.8-flash"); assert_eq!(body["enable_thinking"],false);
-    assert_eq!(body,baseline_request_body(&config,&mode,&source).unwrap());
+    assert_eq!(server.count(),2);
     let data:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-    assert!(data.get("canonicalTerms").is_none());
+    assert_eq!(data["canonicalTerms"],json!(["Typeless"]));
     assert!(!data.to_string().contains("attempt-1:item-1"));
     assert_eq!(result.blocks[0].source_refs,vec!["attempt-1:item-1"]);
+    assert_eq!(result.blocks[0].text,"用 Typeless 测试。");
     assert_eq!(source,original);
 }
 
 #[test]
-fn fluent_gate_is_explicit_and_legacy_contract_remains_frozen_outside_it() {
+fn production_review_is_universal_and_legacy_replay_contract_remains_frozen() {
     use sha2::{Digest,Sha256};
     assert!(!AUTOMATIC_PROTOCOL_PROMOTED);
     let (mut config,mut mode,source)=fixture();
@@ -73,22 +74,17 @@ fn fluent_gate_is_explicit_and_legacy_contract_remains_frozen_outside_it() {
         }
         assert!(!uses_fluent_contract(&other_config,&other_mode),"variation {variation}");
         assert!(!uses_automatic_contract(&other_config,&other_mode));
-        if variation>=4 {
-            assert!(uses_minimum_contract(&other_config,&other_mode));
-            assert_eq!(production_protocol_version(&other_config,&other_mode),MINIMUM_PIPELINE_VERSION);
-        } else {
-            assert_eq!(production_protocol_version(&other_config,&other_mode),REWRITE_PROMPT_VERSION);
-            assert_eq!(production_request_body(&other_config,&other_mode,&source,&dictionary).unwrap(),baseline_request_body(&other_config,&other_mode,&source).unwrap());
-        }
+        assert_eq!(production_protocol_version(&other_config,&other_mode),MINIMUM_PIPELINE_VERSION);
+        assert_ne!(production_request_body(&other_config,&other_mode,&source,&dictionary).unwrap(),baseline_request_body(&other_config,&other_mode,&source).unwrap());
     }
 }
 
 #[tokio::test]
-async fn non_gated_auto_rejects_fluent_schema_and_late_cancelled_legacy_response() {
+async fn production_auto_rejects_legacy_schema_and_late_cancelled_response() {
     let (mut config,mut mode,source)=fixture();config.region=Some("singapore".into());config.rewrite_model="qwen3.8-flash".into();mode.base_mode=BaseMode::Auto;
     assert!(!uses_fluent_contract(&config,&mode));
     let dictionary=DictionarySnapshot::default();
-    let content=json!({"resolvedMode":"light","text":"如果审核通过，再发布，不要今天发。"}).to_string();
+    let content=valid_content();
     let (url,_,server)=http_server("200 OK",envelope(content,"stop"),Duration::ZERO,Duration::ZERO).await;
     let failure=rewrite_with_client_dictionary(&build_client().unwrap(),&config,"test-only",&mode,&source,&dictionary,CancellationToken::new(),&url,Duration::from_secs(2)).await.unwrap_err();
     assert_eq!(failure.code,"invalid_output");server.await.unwrap();

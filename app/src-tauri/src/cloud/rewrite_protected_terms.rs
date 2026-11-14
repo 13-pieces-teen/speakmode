@@ -16,6 +16,7 @@ const MARKER_END: char = '⟫';
 struct Term {
     original: String,
     chars: usize,
+    required: bool,
 }
 
 /// Do not derive Debug/Serialize: this object contains private dictated terms.
@@ -140,6 +141,7 @@ impl ProtectedTerms {
         let mut masked_chars = 0;
         let mut offset = 0;
         let mut literals = if protect_literals { super::literals::spans(source_text) } else { Vec::new() }.into_iter().peekable();
+        let retired=if protect_literals {super::literal_corrections::retired_ranges(source_text)}else{Vec::new()};
         while offset < source_text.len() {
             let c = source_text[offset..].chars().next().unwrap();
             let literal_end = literals.peek().filter(|span| span.start == offset).map(|span| span.end);
@@ -154,11 +156,15 @@ impl ProtectedTerms {
                 let end = literal_end.or(exact_end).unwrap_or_else(|| term_end(source_text, offset));
                 if literal_end.is_some() { literals.next(); }
                 let original = &source_text[offset..end];
+                let required=!retired.iter().any(|range|range.start<=offset&&range.end>=end);
                 let index = *indices.entry(original.to_owned()).or_insert_with(|| {
                     let index = terms.len();
-                    terms.push(Term { original: original.to_owned(), chars: original.chars().count() });
+                    terms.push(Term { original: original.to_owned(), chars: original.chars().count(), required });
                     index
                 });
+                // Retiring one occurrence cannot retire a separate, still
+                // substantive occurrence of the same literal/name elsewhere.
+                if required {terms[index].required=true;}
                 let marker = format!("{prefix}{index}{MARKER_END}");
                 Self::append(&mut masked_source, &mut masked_chars, &marker, marker.chars().count())?;
                 offset = end;
@@ -172,6 +178,10 @@ impl ProtectedTerms {
     }
 
     pub(super) fn masked_source(&self) -> &str { &self.masked_source }
+    pub(super) fn retired_name_markers(&self)->Vec<String> {
+        self.terms.iter().enumerate().filter(|(_,term)|!term.required)
+            .map(|(index,_)|format!("{}{index}{MARKER_END}",self.prefix)).collect()
+    }
 
     fn append(result: &mut String, chars: &mut usize, text: &str, count: usize) -> Result<(), CloudError> {
         if result.len().saturating_add(text.len()) > MAX_BYTES || chars.saturating_add(count) > MAX_CHARS {
@@ -222,7 +232,7 @@ impl ProtectedTerms {
                 offset = end;
             }
         }
-        if seen.iter().any(|present| !present) {
+        if seen.iter().zip(&self.terms).any(|(present,term)|term.required&&!present) {
             return Err(failure("protected_terms_missing", "整理结果遗漏了来源中的专名"));
         }
         check_text(&result)?;
@@ -233,6 +243,18 @@ impl ProtectedTerms {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn guarded_name_correction_can_drop_old_marker_but_not_another_active_occurrence(){
+        let source="项目叫 OpenCloud，不对，叫 OpenViking。";
+        let protected=ProtectedTerms::new_guarded(source).unwrap();
+        let old=format!("{}0⟫",protected.prefix);
+        let replacement=protected.masked_source().replace(&format!("{old}，不对，叫 "),"");
+        assert_eq!(protected.restore_checked(&replacement).unwrap(),"项目叫 OpenViking。");
+        let repeated=ProtectedTerms::new_guarded(&format!("{source}另外保留 OpenCloud。")).unwrap();
+        let marker=format!("{}0⟫",repeated.prefix);
+        assert_eq!(repeated.restore_checked(&repeated.masked_source().replace(&marker,"")).unwrap_err().code,"protected_terms_missing");
+        let code=ProtectedTerms::new_guarded("代码是 `old`，不对，是 `new`。").unwrap();
+        assert_eq!(code.restore_checked(&code.masked_source().replace(&format!("{}0⟫",code.prefix),"")).unwrap_err().code,"protected_terms_missing");
+    }
     #[test]
     fn precise_candidate_allows_ordinary_english_cleanup_but_keeps_exact_literals(){
         let source="我的介绍里 I I mainly use Python，同时保留 `user_id`，网址 https://example.com/a?q=1，名称 GraphRAG，原话‘嗯，先别改’。";

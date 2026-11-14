@@ -30,6 +30,8 @@ mod personalization_tests;
 mod typeless_import_tests;
 #[path="hotkey_toggle_tests.rs"]
 mod hotkey_toggle_tests;
+#[path="capture_bridge_tests.rs"]
+mod capture_bridge_tests;
 
 
 trait TestDb {
@@ -98,7 +100,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         personalization:hub.db.snapshot().personalization,personalization_commit:None,
         onboarding_lesson:None,
         diagnostic_trace:None,caption_render_token:None,
-        id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
+        id: id.into(), generation: 7, phase, prefs, original_config:config.clone(),config,processing_stage:None,mode, dictionary:hub.db.snapshot().dictionary,
         started_at: "2026-10-04T10:00:00+08:00".into(),started_intent:Instant::now()-Duration::from_secs(2),finished_intent:None,
         ended_at: Some("2026-10-04T10:00:12+08:00".into()), capture_duration_ms: 12_000, recording_limit_ms:RECORDING_LIMIT_MS, recording_limit_remaining_ms:None,
         first_samples: true, provider_ready: true, level: 0.0, captions: vec![], error: None,
@@ -107,7 +109,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         source: None, output: None, pending: None, cache: None, cache_complete: false,
         cache_created: None, target: None, target_application:None, writing_scene:None, input_context_frozen:false,input_context:None,input_context_status:InputContextStatus::Disabled, target_capture_pending:false,input_context_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
-        original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,
+        original_delivery_revoked:false,manual_copy_preserves_context:false,revision_intent_sequence:0,revision_receipt_sequence:0,
         reason: CreationReason::NormalInitial, asr_attempt_id: Some(format!("attempt-{id}")),
     });
 }
@@ -605,16 +607,16 @@ fn checkpoint_fault_keeps_pending_identity_and_no_partial_database_content() {
 }
 
 #[tokio::test]
-async fn source_save_retry_preflight_failure_preserves_pending_and_is_not_busy() {
+async fn source_save_retry_saves_locally_before_cloud_preflight_failure() {
     let h = hub(); install(&h, "s", SessionPhase::FinalizingAsr, true);
     fault(&h, "CREATE TRIGGER fail_checkpoint BEFORE INSERT ON source_items BEGIN SELECT RAISE(ABORT,'fault'); END;");
     let error = h.checkpoint("s", 7, source("s")).unwrap_err(); h.fail("s", 7, error, true);
     let pending = view(&h).pending_commit_id.unwrap(); fault(&h, "DROP TRIGGER fail_checkpoint;");
     let mut p = identity("s"); p["pendingCommitId"] = json!(pending);
     assert!(h.retry_save(&p).await.is_err());
-    assert_eq!(view(&h).state, SessionPhase::Failed); assert_eq!(view(&h).pending_commit_id.as_deref(), Some(pending.as_str()));
+    assert_eq!(view(&h).state, SessionPhase::Failed); assert!(view(&h).pending_commit_id.is_none());assert!(view(&h).can_retry_rewrite);
     assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy());
-    assert!(h.db.get_result("s").is_err());
+    assert_eq!(h.db.get_result("s").unwrap().source,source("s"));
     h.cancel_session(&identity("s")).unwrap(); assert!(h.retry_save(&p).await.is_err()); assert_eq!(usage_count(&h), 0);
 }
 
@@ -1393,7 +1395,7 @@ fn ready_storage_failure_is_bound_to_the_producing_retry_generation() {
 }
 
 #[test]
-fn recording_limit_warns_from_actual_sample_time_then_preserves_partial_without_ready() {
+fn recording_limit_warns_then_normally_finalizes_without_automatic_input() {
     let h=hub();install(&h,"limit",SessionPhase::Recording,false);
     h.inner.lock().unwrap().active.as_mut().unwrap().captions.push(CaptionItem{id:"pending".into(),revision:1,capture_order:0,text:"如果没有确认，不要发邀请。".into(),is_final:false});
     assert!(!h.recording_progress("limit",7,569_999));
@@ -1403,8 +1405,9 @@ fn recording_limit_warns_from_actual_sample_time_then_preserves_partial_without_
     assert!(!h.recording_progress("limit",7,599_999));
     assert_eq!(view(&h).recording_limit_remaining_ms,Some(1));
     assert!(h.recording_progress("limit",7,600_000));
-    let result=view(&h);assert_eq!(result.state,SessionPhase::Incomplete);
-    assert_eq!(result.error_code.as_deref(),Some("recording_limit"));
+    let result=view(&h);assert_eq!(result.state,SessionPhase::FinalizingAsr);
+    assert!(result.error_code.is_none());
+    {let inner=h.inner.lock().unwrap();let session=inner.active.as_ref().unwrap();assert!(session.stop.load(Ordering::SeqCst));assert!(!session.cancel.is_cancelled());assert_eq!(session.prefs.delivery_mode,DeliveryMode::Preview);assert!(session.original_delivery_revoked);}
     assert!(result.partial.contains("不要发邀请"));assert!(result.can_copy_recovery);
     assert!(!result.worker_released);assert!(!result.can_retry_asr);assert!(!result.can_use_source);
     assert_eq!(usage_count(&h),0);assert!(h.db.get_result("limit").is_err());

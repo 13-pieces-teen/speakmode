@@ -61,9 +61,9 @@ export function RecorderWindow(){
   {view.canStop&&session?.recordingLimitRemainingMs!=null&&<p className="recorder-limit-warning" role="status">本次录音还可继续 {Math.ceil(session.recordingLimitRemainingMs/1000)} 秒，请结束后另起一段。</p>}
   {(attention||view.showResult)&&<div className="recorder-recovery" role={presentationError?'alert':'status'} aria-live="polite">
    {(presentationError||view.message)&&<p>{presentationError||view.message}</p>}
-   {copied&&<p className="recorder-copy-notice">已复制，可回到输入框粘贴。</p>}
+   {copied&&<p className="recorder-copy-notice">{view.state==='processing'?'已复制原文，本次不再自动输入；成稿完成后请手动复制。':'已复制，可回到输入框粘贴。'}</p>}
    <div className="recorder-recovery-actions">
-    {(view.showResult||presentationError)&&view.primary!=='openResult'&&<Button size="1" variant="ghost" color="gray" disabled={!desktop.available||busy} onClick={()=>void perform('openResult')}>查看结果</Button>}
+    {(view.showResult||presentationError)&&view.state!=='processing'&&view.primary!=='openResult'&&<Button size="1" variant="ghost" color="gray" disabled={!desktop.available||busy} onClick={()=>void perform('openResult')}>查看结果</Button>}
     {view.primary&&<Button size="1" variant="soft" disabled={!desktop.available||busy} onClick={()=>void perform(view.primary!)}>{copied&&view.primary!=='openResult'?'已复制':actionLabel}</Button>}
    </div>
   </div>}

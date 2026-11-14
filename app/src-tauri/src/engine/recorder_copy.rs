@@ -18,8 +18,8 @@ impl AppHub {
         // native IO so a delayed copy cannot outlive session replacement/cancel.
         // Holding the live-session lock through the bounded clipboard operation
         // makes this explicit user action atomic with a new recording/dismissal.
-        let _native=self.native_io.lock().unwrap();let inner=self.inner.lock().unwrap();
-        let s=inner.active.as_ref().filter(|s|s.id==id&&s.generation==generation)
+        let _native=self.native_io.lock().unwrap();let mut inner=self.inner.lock().unwrap();
+        let s=inner.active.as_mut().filter(|s|s.id==id&&s.generation==generation)
             .ok_or_else(||ApiError::new("stale_session","result","当前口述已经变化").for_session(id,generation))?;
         let cache_expired=recovery&&s.error.as_ref().is_some_and(|error|error.code=="asr_retry_expired");
         if s.cancel_pending||(s.cancel.is_cancelled()&&!cache_expired) {
@@ -29,7 +29,7 @@ impl AppHub {
             return Err(ApiError::new("delivery_busy","result","正在发送，请等待发送结束后复制").for_session(id,generation));
         }
         let content=if recovery {
-            if !matches!(s.phase,SessionPhase::Failed|SessionPhase::Incomplete)||s.error.as_ref().is_some_and(|error|error.code=="cancel_cleanup_failed") {
+            if !matches!(s.phase,SessionPhase::FinalizingAsr|SessionPhase::Rewriting|SessionPhase::Failed|SessionPhase::Incomplete)||s.error.as_ref().is_some_and(|error|error.code=="cancel_cleanup_failed") {
                 return Err(ApiError::new("recovery_unavailable","recovery","当前没有可复制的恢复内容").for_session(id,generation));
             }
             s.source.as_ref().map(SourceRevision::text).unwrap_or_else(||s.captions.iter().map(|item|item.text.as_str()).collect::<Vec<_>>().join("\n"))
@@ -45,6 +45,17 @@ impl AppHub {
         };
         if content.trim().is_empty(){return Err(ApiError::new("empty_recovery","result","没有可复制的文字").for_session(id,generation));}
         copy(&content)?;
-        Ok(if recovery{json!({"copied":true,"adopted":false})}else{json!({"copied":true})})
+        let manual=recovery&&matches!(s.phase,SessionPhase::FinalizingAsr|SessionPhase::Rewriting);
+        if manual {
+            // Preserve only a still-authorized context. Copy must not revive a
+            // discarded target after a version action, retry or cancellation.
+            s.manual_copy_preserves_context=app_writing::accepts_stop_context(s);
+            s.original_delivery_revoked=true;s.prefs.delivery_mode=DeliveryMode::Preview;
+            if let Some(permit)=&s.delivery_permit{permit.cancel_before_injection();}
+        }
+        drop(inner);drop(_native);
+        if manual{self.publish_session();}
+        Ok(if manual{json!({"copied":true,"adopted":false,"automaticDeliveryRevoked":true})}
+            else if recovery{json!({"copied":true,"adopted":false})}else{json!({"copied":true})})
     }
 }

@@ -35,7 +35,7 @@ function RecoveryCard({recovery}:{recovery:Recovery}) {
    {!confirmDiscard&&<Button variant="ghost" color="gray" disabled={busy} onClick={()=>setConfirmDiscard(true)}>放弃这条恢复</Button>}
   </div>
   {confirmDiscard&&<div className="retained-recovery-confirm">
-   <p>确认移除这条恢复及其音频缓存？此操作无法撤销。当前口述和已经保存的识别稿、记录仍会保留。</p>
+   <p>确认移除这条恢复及其音频缓存？此操作无法撤销。关闭历史时，这条未完成的识别稿也会清除；当前口述和已经保存的历史记录仍会保留。</p>
    <div className="session-recovery-actions"><Button variant="soft" color="red" disabled={busy} onClick={()=>void act('recovery.discard')}>确认放弃</Button><Button variant="ghost" color="gray" disabled={busy} onClick={()=>setConfirmDiscard(false)}>保留恢复</Button></div>
   </div>}
   {busy&&<p role="status">正在处理…</p>}{error&&<p role="alert" className="inline-error">{error}</p>}

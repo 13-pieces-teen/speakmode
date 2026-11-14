@@ -5,6 +5,35 @@ use crate::cloud::rewrite::minimum_pipeline::tests::{Server, Reply, rejection};
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 
 #[tokio::test]
+async fn permanent_failures_inside_correction_never_start_a_second_session_attempt(){
+    let input="嗯，预算3500元，如果测试通过再上线。";
+    let bad="预算3500元，直接上线。";
+    let corrected="预算3500元，如果测试通过再上线。";
+    for final_review in [false,true] {
+        for (status,expected) in [(401,"authentication_failed"),(403,"authentication_failed"),
+            (429,"rate_limited"),(400,"rewrite_request_rejected"),(404,"rewrite_request_rejected"),(200,"rewrite_refused")] {
+            let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);
+            h.inner.lock().unwrap().active.as_mut().unwrap().config.region=Some("beijing".into());
+            let mut frozen=source("s");frozen.items.truncate(1);frozen.items[0].text=input.into();
+            h.checkpoint("s",7,frozen.clone()).unwrap();
+            let terminal=if status==200{Reply::refused()}else{Reply::new("private provider failure").http_status(status)};
+            let mut replies=vec![Reply::draft(bad)];if final_review{replies.push(Reply::draft(corrected));}replies.push(terminal);
+            let server=Server::new(replies).await;let endpoint=server.endpoint.clone();
+            h.finish_rewrite_with_recovery_policy("s".into(),7,move|config,mode,source,cancel,execution,context|async move{
+                rewrite::rewrite_with_client_optional_context(&reqwest::Client::builder().no_proxy().build().unwrap(),&config,
+                    "synthetic-key",&mode,&source,&DictionarySnapshot::default(),cancel,&endpoint,execution,context.as_ref()).await
+            },|_,_,_,_,_,_|async{panic!("a terminal correction/review failure cannot start automatic recovery")},
+            None::<RewriteWaitPolicy>,|_,_,_|panic!("a failed pipeline cannot deliver")).await;
+            assert_eq!(view(&h).error_code.as_deref(),Some(expected),"status={status}, final_review={final_review}");
+            assert_unfinished(&h);assert_eq!(h.db.get_result("s").unwrap().source,frozen);
+            assert_eq!(server.count(),if final_review{3}else{2});
+            let diagnostics=h.diagnostics.snapshot().unwrap();
+            assert!(diagnostics.traces[0].rewrite.as_ref().unwrap().automatic_recovery.is_none());
+        }
+    }
+}
+
+#[tokio::test]
 async fn primary_and_recovery_http_requests_keep_separate_diagnostic_receipts() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);
     h.inner.lock().unwrap().active.as_mut().unwrap().config.region=Some("beijing".into());
@@ -57,7 +86,8 @@ async fn primary_failure_runs_complete_automatic_recovery_before_single_commit_a
         frozen.items[0].text=format!("嗯，预算3500元，先不要发送。{}", "我们会在核对需求后安排下一步。".repeat(65));
         h.checkpoint("s",7,frozen.clone()).unwrap();
         let expected=frozen.text().trim_start_matches("嗯，").to_owned();
-        let server=Server::new(vec![Reply::draft(&expected),Reply::new(ACCEPT)]).await;
+        let server=Server::new(vec![Reply::new(json!({"resolvedMode":if selected.base_mode==BaseMode::Structure{"structure"}else{"light"},"text":expected}).to_string()),Reply::new(ACCEPT)]).await;
+        let recovery_selection=selected.clone();
         let endpoint=server.endpoint.clone();let worker=h.clone();
         let delivered=Arc::new(std::sync::atomic::AtomicUsize::new(0));let receipt=delivered.clone();
         h.finish_rewrite_with_recovery_policy("s".into(),7,move|_,_,_,_,execution,_|async move {
@@ -65,7 +95,7 @@ async fn primary_failure_runs_complete_automatic_recovery_before_single_commit_a
             Err(CloudError::new(failure,"rewrite","synthetic primary failure"))
         },move|config,mode,input,cancel,execution,context|async move {
             assert_eq!(worker.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),0);
-            assert_eq!(mode.mode_id,"auto");assert!(mode.rules.is_empty());
+            assert_eq!(mode,recovery_selection);
             assert_eq!(context.scene,AppWritingScene::General);assert!(context.input.is_none()&&context.personalization.is_none());
             assert!(!cancel.is_cancelled());assert!(execution.deadline>tokio::time::Instant::now()+Duration::from_secs(59));
             rewrite::minimum_pipeline::run_until_with_writing_context(&reqwest::Client::builder().no_proxy().build().unwrap(),
@@ -119,7 +149,7 @@ async fn cancellation_or_replacement_during_automatic_recovery_cannot_save_or_de
 }
 
 #[test]
-fn recovery_budget_and_language_are_frozen_independently_of_failed_context() {
+fn recovery_budget_preserves_the_frozen_language_scene_and_context() {
     let mut input=source("s");input.items.truncate(1);
     for (chars,seconds) in [(800,30),(801,60),(3000,60),(3001,120)] {
         input.items[0].text="字".repeat(chars);
@@ -128,7 +158,7 @@ fn recovery_budget_and_language_are_frozen_independently_of_failed_context() {
     let context=WritingContext{scene:AppWritingScene::Email,language:DraftLanguage::English,
         input:Some(InputContext{before_text:"nearby host text".into(),..Default::default()}),personalization:None};
     let recovery=rewrite_fallback::automatic_context(Some(&context));
-    assert_eq!(recovery.language,DraftLanguage::English);assert_eq!(recovery.scene,AppWritingScene::General);assert!(recovery.input.is_none());
+    assert_eq!(recovery.language,DraftLanguage::English);assert_eq!(recovery.scene,AppWritingScene::Email);assert_eq!(recovery.input,context.input);
 }
 
 #[tokio::test]

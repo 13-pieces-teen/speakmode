@@ -37,15 +37,17 @@ pub(super) fn spans(text: &str) -> Vec<Literal> {
 }
 
 pub(super) fn validate(source: &str, output: &str) -> Result<(), CloudError> {
-    let collect = |text: &str| {
+    let retired=super::literal_corrections::retired_ranges(source);
+    let collect = |text: &str, source:bool| {
         let mut counts = HashMap::new();
         for span in spans(text) {
+            if source && retired.iter().any(|range|range.start==span.start&&range.end==span.end){continue;}
             let key = (span.code, text[span.content_start..span.content_end].to_owned());
             *counts.entry(key).or_insert(0usize) += 1;
         }
         counts
     };
-    let required = collect(source); let actual = collect(output);
+    let required = collect(source,true); let actual = collect(output,false);
     if required.iter().any(|(literal, count)| actual.get(literal).copied().unwrap_or(0) < *count) {
         return Err(CloudError::new("rewrite_literal_changed", "rewrite", "整理结果改变了引语或代码，识别稿仍保留"));
     }
@@ -54,6 +56,16 @@ pub(super) fn validate(source: &str, output: &str) -> Result<(), CloudError> {
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn explicit_name_correction_retires_only_the_withdrawn_occurrence(){
+        let source="标题叫《旧名》，不对，叫《新名》。";
+        assert!(validate(source,"标题叫《新名》。").is_ok());
+        for (source,draft) in [
+            ("标题叫《旧名》，不对，叫《新名》。另外引用《旧名》。","标题叫《新名》。"),
+            ("原来标题叫《旧名》，后来叫《新名》。","标题叫《新名》。"),
+            ("他说‘标题叫《旧名》，不对，叫《新名》’。","他说‘标题叫《新名》’。"),
+            ("代码是 `old`，不对，是 `new`。","代码是 `new`。"),
+        ]{assert!(validate(source,draft).is_err(),"{source}");}
+    }
     #[test] fn quoted_fillers_are_data_even_when_other_fillers_can_be_cleaned() {
         let source = "嗯，请逐字保留‘嗯，这个，等我想一下’，呃，说明这是原话。";
         assert!(validate(source, "请逐字保留\"嗯，这个，等我想一下\"，说明这是原话。").is_ok());

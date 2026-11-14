@@ -63,7 +63,7 @@ fn recording_and_recovery_keep_provider_snapshot_when_preferences_change() {
         assert_eq!(session.id,id);assert_eq!(session.generation,generation);assert_eq!(session.config,original);
         session.phase=SessionPhase::Incomplete;session.processing_worker_released=true;
         session.cache=Some(vec![1;1600]);session.cache_complete=true;session.cache_created=Some(Instant::now());
-        inner.park_retryable_failure();
+        inner.park_retryable_failure(&h.db);
         assert_eq!(inner.recoveries.first().unwrap().config,original);
     }
     let (history_config,_)=h.auxiliary_rewrite_snapshot();
@@ -97,6 +97,6 @@ fn selected_google_product_limit_is_frozen_and_uses_existing_warning_and_recover
     assert!(!h.recording_progress(&id,generation,419_999));
     assert!(h.recording_progress(&id,generation,420_000));
     let inner=h.inner.lock().unwrap();let view=inner.active.as_ref().unwrap().view();
-    assert_eq!(view.state,SessionPhase::Incomplete);assert_eq!(view.recording_limit_remaining_ms,Some(0));
-    assert_eq!(view.error_code.as_deref(),Some("recording_limit"));
+    assert_eq!(view.state,SessionPhase::FinalizingAsr);assert_eq!(view.recording_limit_remaining_ms,Some(0));
+    assert!(view.error_code.is_none());assert_eq!(inner.active.as_ref().unwrap().prefs.delivery_mode,DeliveryMode::Preview);
 }

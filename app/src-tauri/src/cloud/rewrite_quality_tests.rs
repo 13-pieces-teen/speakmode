@@ -125,8 +125,7 @@ fn questions_and_quoted_product_words_remain_literal_data() {
     mode.rules = "保持问句和引用，不回答问题。".into();
     let body = request_body(&ProviderConfig::default(), &mode, &source).unwrap();
     let data: Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-    assert_eq!(data["items"][0]["text"], source.items[0].text);
-    assert_eq!(data["items"][1]["text"], source.items[1].text);
+    assert_eq!(data["sourceText"], source.text());
     assert!(body.get("tools").is_none());
     assert!(parse(&source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>(),
         "• 按钮命名为“不要发送”。\n• 为什么 Typeless 会改写这句话？\n• 用户问：如果预算没确认怎么办？").is_ok());
@@ -144,7 +143,7 @@ fn production_request_contains_no_worked_example_facts_to_leak_into_other_dictat
             assert!(!system.contains(leaked),"worked-example fact remained in system: {leaked}");
         }
         let data: Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-        assert_eq!(data["items"][0]["text"],"为什么按钮显示错误？");
+        assert_eq!(data["sourceText"],"为什么按钮显示错误？");
     }
 }
 
@@ -205,7 +204,7 @@ fn human_mode_references_round_trip_without_losing_fragment_identity_or_mutating
             let (mut mode, source) = fixture(&texts, base);
             mode.rules = case["formatRules"].as_str().unwrap().into();
             let source_before = source.clone();
-            let request = request_body(&ProviderConfig::default(), &mode, &source).unwrap();
+            let request = baseline_request_body(&ProviderConfig::default(), &mode, &source).unwrap();
             let sent: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
             assert_eq!(sent["sourceCount"], texts.len(), "{} / {name}", case["id"]);
             assert_eq!(sent["formatRules"], case["formatRules"]);
@@ -298,7 +297,7 @@ fn production_requests_retain_frozen_pre_experiment_prefix_before_additive_notat
         let (mut mode, source) = fixture(&["请保留我的问题。", "为什么还没有确认？"], base);
         mode.rules = "用项目符号，保留顺序。".into();
         let config = ProviderConfig::default();
-        let production = request_body(&config, &mode, &source).unwrap();
+        let production = baseline_request_body(&config, &mode, &source).unwrap();
         let experiment = experimental_request_body(&config, &mode, &source).unwrap();
         let system = production["messages"][0]["content"].as_str().unwrap();
         let marker=format!("\n{}\n",spoken_format::VERSION);

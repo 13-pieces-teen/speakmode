@@ -111,3 +111,20 @@ fn google_product_limit_leaves_room_for_inline_encoding_and_request_overhead() {
     assert!(serde_json::to_vec(&body).unwrap().len()<MAX_REQUEST);
     assert_eq!(request_body(&config(),"auto",&DictionarySnapshot::default(),&vec![0;420*16000+1]).unwrap_err().code,"audio_frame_limit");
 }
+
+#[tokio::test]
+async fn exact_product_cutoff_finishes_a_complete_batch_request_and_final_transcript(){
+    // Seven minutes of synthetic samples, delivered without real-time waiting.
+    // This is the real batch adapter against loopback HTTP, not Google service.
+    let (url,request,server)=server("200 OK",valid(),Duration::ZERO).await;
+    let (tx,rx)=mpsc::channel(4);
+    let producer=tokio::spawn(async move{
+        for sequence in 0..4200{tx.send(AsrInput::Frame{sequence,pcm16:vec![7;1600],padding_samples:0}).await.unwrap();}
+        tx.send(AsrInput::Finish{next_sequence:4200}).await.unwrap();
+    });
+    let captions=Arc::new(std::sync::atomic::AtomicUsize::new(0));let observed=captions.clone();
+    let items=run_at(config(),"synthetic-key".into(),"auto".into(),DictionarySnapshot::default(),"cutoff".into(),rx,CancellationToken::new(),Arc::new(move|progress|if matches!(progress,AsrProgress::Caption(_)){observed.fetch_add(1,std::sync::atomic::Ordering::SeqCst);}),url,Duration::from_secs(8)).await.unwrap();
+    producer.await.unwrap();assert_eq!(items[0].text,"Hello，明天再试。");assert_eq!(captions.load(std::sync::atomic::Ordering::SeqCst),1);
+    let (_,body)=request.await.unwrap();let wav=STANDARD.decode(body["input"][0]["data"].as_str().unwrap()).unwrap();
+    assert_eq!(wav.len(),44+420*16000*2);assert_eq!(&wav[44..46],&7_i16.to_le_bytes());assert_eq!(&wav[wav.len()-2..],&7_i16.to_le_bytes());server.await.unwrap();
+}

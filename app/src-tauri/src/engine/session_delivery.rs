@@ -84,10 +84,14 @@ impl AppHub {
     }
 
     pub fn copy_recoverable(&self,p:&Value)->Result<Value> {
-        let content={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;
-            if p.get("recoverableContentId").and_then(Value::as_str).is_some_and(|id|id!=s.id){return Err(ApiError::new("stale_session","recovery","来源已过期"));}
-            if let Some(source)=&s.source{source.text()}else{s.captions.iter().map(|c|c.text.as_str()).collect::<Vec<_>>().join("\n")}};
-        if content.trim().is_empty(){return Err(ApiError::new("empty_recovery","recovery","没有可复制的识别内容"));}
-        let _native=self.native_io.lock().unwrap();platform::delivery::copy_text(&content)?;Ok(json!({"copied":true,"adopted":false}))
+        self.copy_recoverable_with(p,|content|platform::delivery::copy_text(content).map_err(Into::into))
+    }
+    pub(crate) fn copy_recoverable_with(&self,p:&Value,copy:impl FnOnce(&str)->Result<()>)->Result<Value> {
+        // Main commands may contain recovery action selectors. Reduce them to
+        // the exact live identity; the common native gate rechecks after waiting.
+        let payload={let mut inner=self.inner.lock().unwrap();let s=matching(&mut inner,p)?;
+            json!({"sessionId":s.id,"expectedGeneration":s.generation,
+                "recoverableContentId":p.get("recoverableContentId").and_then(Value::as_str).map(|id|json!(id)).unwrap_or_else(||json!(s.id))})};
+        self.copy_current_recorder_with("recoverable.copy",&payload,copy)
     }
 }

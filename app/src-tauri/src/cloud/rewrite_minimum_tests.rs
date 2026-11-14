@@ -49,11 +49,13 @@ fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
 }
 
 #[derive(Clone)]
-pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration }
+pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration, refusal:Option<&'static str> }
 impl Reply {
-    pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO } }
+    pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO, refusal:None } }
     pub(crate) fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
     pub(crate) fn after(mut self, millis: u64) -> Self { self.delay = Duration::from_millis(millis); self }
+    pub(crate) fn http_status(mut self,status:u16)->Self{self.status=status;self}
+    pub(crate) fn refused()->Self{let mut reply=Self::new("refused synthetic response");reply.refusal=Some("synthetic refusal");reply}
 }
 pub(crate) struct Server { pub(crate) endpoint: String, requests: Arc<Mutex<Vec<Value>>>, arrived: Arc<Notify>, task: JoinHandle<()> }
 impl Drop for Server { fn drop(&mut self) { self.task.abort(); } }
@@ -86,10 +88,17 @@ impl Server {
                 let response_content = if reply.content == "__ECHO_GUARDED_SOURCE__" {
                     let data:Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
                     json!({"resolvedMode":"light","text":data["sourceText"]}).to_string()
+                } else if reply.content == "__CORRECT_GUARDED_NAME__" {
+                    let data:Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+                    let source=data["sourceText"].as_str().unwrap();
+                    let (_,replacement)=source.split_once("，不对，叫 ").expect("fixed name correction fixture");
+                    json!({"resolvedMode":"light","text":format!("项目叫 {replacement}")}).to_string()
                 } else { reply.content.clone() };
                 seen.lock().unwrap().push(body); signal.notify_one();
                 tokio::time::sleep(reply.delay).await;
-                let body = json!({"choices":[{"finish_reason":reply.finish,"message":{"content":response_content}}]}).to_string();
+                let mut message=json!({"content":response_content});
+                if let Some(refusal)=reply.refusal{message["refusal"]=json!(refusal);}
+                let body = json!({"choices":[{"finish_reason":reply.finish,"message":message}]}).to_string();
                 let header = format!("HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", reply.status, body.len());
                 if socket.write_all(header.as_bytes()).await.is_err() { return; }
                 if socket.write_all(body.as_bytes()).await.is_err() { return; }
@@ -110,6 +119,39 @@ pub(crate) fn rejection(source:&str,draft:&str,dimension:&str)->String {
     value["issues"]=json!([{"dimension":dimension,"sourceQuote":source,"draftQuote":draft,"reason":"局部搭配不自然"}]);value.to_string()
 }
 fn client()->Client{Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().build().unwrap()}
+
+#[tokio::test]
+async fn named_literal_and_guarded_long_corrections_reach_full_review_without_source_mutation(){
+    for long in [false,true] {
+        let input=if long {format!("项目叫 OpenCloud，不对，叫 OpenViking。{}","这是项目背景说明。".repeat(50))}
+            else{"标题叫《旧名》，不对，叫《新名》。".into()};
+        let expected=if long {input.replace("OpenCloud，不对，叫 ","")}else{"标题叫《新名》。".into()};
+        let reply=if long {Reply::new("__CORRECT_GUARDED_NAME__")}else{Reply::draft(&expected)};
+        let server=Server::new(vec![reply,Reply::new(ACCEPT)]).await;
+        let (config,mode,source)=fixture(&input);let original=source.clone();
+        let result=super::super::rewrite_with_client_execution(&client(),&config,"synthetic-key",&mode,&source,
+            &DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,
+            RewriteExecution::for_duration(Duration::from_secs(4))).await.unwrap();
+        assert_eq!(result.blocks[0].text,expected);assert_eq!(server.count(),2);assert_eq!(source,original);
+        let requests=server.requests.lock().unwrap();
+        let review:Value=serde_json::from_str(requests[1]["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(review["sourceText"],input,"review still sees every original correction and literal");
+    }
+}
+
+#[tokio::test]
+async fn automatic_capacity_is_checked_before_dispatch_and_preserves_complete_source(){
+    let (_,_,mut source)=fixture("ok");
+    source.items[0].text="a".repeat(super::super::AUTOMATIC_SOURCE_JSON_BYTES-2);
+    assert!(super::super::validate_automatic_capacity(&source).is_ok());
+    source.items[0].text.push('a');let before=source.clone();
+    let (config,mode,_)=fixture("unused");
+    let error=super::super::rewrite_with_client_execution(&client(),&config,"synthetic-key",&mode,&source,
+        &DictionarySnapshot::default(),CancellationToken::new(),"http://127.0.0.1:1",RewriteExecution::for_duration(Duration::from_secs(2))).await.unwrap_err();
+    assert_eq!(error.code,"rewrite_source_too_long");assert_eq!(error.stage,"rewrite_capacity");assert_eq!(source,before);
+    source.items[0].text="字".repeat(2047);assert!(super::super::validate_automatic_capacity(&source).is_ok());
+    source.items[0].text.push('字');assert_eq!(super::super::validate_automatic_capacity(&source).unwrap_err().code,"rewrite_source_too_long");
+}
 fn assert_correction_not_review(server:&Server) {
     let requests=server.requests.lock().unwrap();assert_eq!(requests.len(),2);
     let data:Value=serde_json::from_str(requests[1]["messages"][1]["content"].as_str().unwrap()).unwrap();

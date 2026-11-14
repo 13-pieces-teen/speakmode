@@ -18,12 +18,11 @@ impl RewriteWaitPolicy {
 }
 
 pub(super) fn fallback_reason(error: &CloudError) -> Option<RewriteFallbackReason> {
-    if matches!(error.code.as_str(),"cancelled"|"source_incomplete"|"invalid_source") || error.code.starts_with("stale_") {return None;}
-    if matches!(error.stage.as_str(),"credentials"|"configuration") {return Some(RewriteFallbackReason::ServiceUnavailable);}
+    if error.forbids_automatic_rewrite_retry() {return None;}
     if !matches!(error.stage.as_str(),"rewrite"|"semantic_review") { return None; }
     Some(match error.code.as_str() {
         "rewrite_timeout" => RewriteFallbackReason::Timeout,
-        "rewrite_network" | "network_setup" | "rewrite_service_error" | "authentication_failed" | "rate_limited" => RewriteFallbackReason::ServiceUnavailable,
+        "rewrite_network" | "network_setup" | "rewrite_service_error" => RewriteFallbackReason::ServiceUnavailable,
         "invalid_response" | "invalid_output" | "invalid_local_repair" | "empty_output" | "response_too_large" | "truncated_output" | "invalid_source_mapping" | "incomplete_source_coverage" => RewriteFallbackReason::InvalidOutput,
         "rewrite_meaning_risk" | "rewrite_admission_rejected" | "rewrite_semantic_rejected" | "rewrite_literal_changed"
         | "protected_terms_missing" | "protected_terms_new_latin" | "protected_terms_marker_unknown" | "protected_terms_marker_invalid"
@@ -32,14 +31,9 @@ pub(super) fn fallback_reason(error: &CloudError) -> Option<RewriteFallbackReaso
     })
 }
 
-pub(super) fn automatic_mode() -> ModeSnapshot {
-    ModeSnapshot { mode_id: "auto".into(), name: "自动".into(), base_mode: BaseMode::Auto, rules: String::new(), revision: 1 }
-}
-
 pub(super) fn automatic_context(context: Option<&WritingContext>) -> WritingContext {
-    WritingContext { scene: AppWritingScene::General,
-        language: context.map_or(DraftLanguage::AsSpoken, |context| context.language),
-        input: None, personalization: None }
+    context.cloned().unwrap_or(WritingContext { scene: AppWritingScene::General,
+        language: DraftLanguage::AsSpoken, input: None, personalization: None })
 }
 
 pub(super) fn automatic_wait(source: &SourceRevision) -> Duration {

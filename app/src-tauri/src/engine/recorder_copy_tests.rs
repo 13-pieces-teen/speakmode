@@ -60,7 +60,7 @@ fn recorder_recovery_copy_is_partial_and_never_forges_a_ready_result() {
 
 #[test]
 fn recorder_recovery_copy_respects_phase_cancellation_and_expired_audio_boundary() {
-    for phase in [SessionPhase::Recording,SessionPhase::Rewriting,SessionPhase::Ready,SessionPhase::Cancelled] {
+    for phase in [SessionPhase::Recording,SessionPhase::Ready,SessionPhase::Cancelled] {
         let h=hub();install(&h,"s",phase,true);
         assert_eq!(h.copy_current_recorder_with("recoverable.copy",&identity("s"),denied).unwrap_err().code,"recovery_unavailable");
     }
@@ -70,6 +70,31 @@ fn recorder_recovery_copy_respects_phase_cancellation_and_expired_audio_boundary
     // Audio retention expiry cancels its worker, but deliberately retains text.
     h.inner.lock().unwrap().active.as_mut().unwrap().error=Some(ApiError::new("asr_retry_expired","recovery","synthetic expiry"));
     assert_eq!(h.copy_current_recorder_with("recoverable.copy",&identity("s"),|text|{assert_eq!(text,source("s").text());Ok(())}).unwrap()["adopted"],false);
+}
+
+#[test]
+fn processing_source_copy_is_manual_takeover_only_after_clipboard_success_on_both_surfaces() {
+    for main in [false,true] {for phase in [SessionPhase::FinalizingAsr,SessionPhase::Rewriting] {for fails in [false,true] {
+        let h=hub();install(&h,"s",phase,true);
+        if phase==SessionPhase::Rewriting{checkpoint(&h,"s");}
+        else{h.inner.lock().unwrap().active.as_mut().unwrap().captions=vec![CaptionItem{id:"partial".into(),text:"仍在识别的文字".into(),revision:1,is_final:false,capture_order:0}];}
+        let permit=Arc::new(platform::delivery::DeliveryPermit::from_committed_attempt("synthetic-permit".into(),7));
+        h.inner.lock().unwrap().active.as_mut().unwrap().delivery_permit=Some(permit.clone());
+        let before=h.inner.lock().unwrap().active.as_ref().unwrap().source.clone();
+        let copy=|text:&str|{assert!(!text.is_empty());if fails{Err(ApiError::new("clipboard_unavailable","native","synthetic failure"))}else{Ok(())}};
+        let answer=if main{h.copy_recoverable_with(&identity("s"),copy)}else{h.copy_current_recorder_with("recoverable.copy",&identity("s"),copy)};
+        {let inner=h.inner.lock().unwrap();let s=inner.active.as_ref().unwrap();
+            assert_eq!(s.phase,phase);assert_eq!(s.source,before);assert!(!s.cancel.is_cancelled());
+            assert_eq!(s.original_delivery_revoked,!fails);assert_eq!(permit.consumed(),!fails);
+            assert_eq!(s.prefs.delivery_mode,if fails{DeliveryMode::Direct}else{DeliveryMode::Preview});
+        }
+        if fails{assert_eq!(answer.unwrap_err().code,"clipboard_unavailable");}
+        else{
+            assert_eq!(answer.unwrap()["automaticDeliveryRevoked"],true);
+            ready(&h,"s");h.initial_delivery_with("s",7,|_|panic!("manual takeover cannot validate a paste target"),|_,_,_,_|panic!("manual takeover cannot paste"));
+            assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+        }
+    }}}
 }
 
 #[test]

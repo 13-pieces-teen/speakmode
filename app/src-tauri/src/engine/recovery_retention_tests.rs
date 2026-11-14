@@ -101,6 +101,66 @@ fn source_fixture(id:&str,generation:u64)->SourceRevision {
         items:vec![SourceItem{id:"source-item".into(),provider_item_id:"0".into(),capture_order:0,text:"不要删除测试文件。".into(),is_final:true,start_ms:Some(0),end_ms:Some(100)}]}
 }
 
+fn private_checkpoint_recovery(h:&AppHub,id:&str) {
+    install(h,id,SessionPhase::FinalizingAsr,true);
+    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();
+        s.prefs.keep_history=false;s.cache_created=Some(Instant::now());}
+    h.checkpoint(id,7,source_fixture(id,7)).unwrap();
+    h.inner.lock().unwrap().active.as_mut().unwrap().phase=SessionPhase::Failed;
+    configure_capture_state_fixture(h);h.prepare_start_state(Instant::now(),Origin::UiCommand).unwrap();
+    {let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();s.phase=SessionPhase::Ready;s.processing_worker_released=true;}
+}
+
+#[tokio::test]
+async fn private_checkpoint_is_released_on_discard_expiry_timer_and_lock() {
+    for cleanup in 0..4 {
+        let h=hub();private_checkpoint_recovery(&h,"private-source");
+        assert!(h.db.submit(DbCommand::GetResult{session_id:"private-source".into()},None,DbPriority::Normal).unwrap().wait().await.is_ok());
+        match cleanup {
+            0=>{h.discard_recovery(&json!({"sessionId":"private-source","expectedGeneration":7})).unwrap();},
+            1=>{h.inner.lock().unwrap().recoveries[0].cache_created=Some(Instant::now()-AUDIO_CACHE_RETENTION-Duration::from_secs(1));h.snapshot("main").unwrap();},
+            2=>{
+                let expired=Instant::now()-AUDIO_CACHE_RETENTION-Duration::from_secs(1);
+                h.inner.lock().unwrap().recoveries[0].cache_created=Some(expired);
+                h.schedule_audio_cache_expiry("private-source".into(),expired);
+                tokio::time::timeout(Duration::from_secs(2),async{while !h.inner.lock().unwrap().recoveries.is_empty(){tokio::task::yield_now().await;}}).await.unwrap();
+            },
+            _=>{h.interrupt_session("Locked").await.unwrap();},
+        }
+        tokio::time::timeout(Duration::from_secs(2),async{while h.db.outstanding()!=0{tokio::task::yield_now().await;}}).await.unwrap();
+        assert!(h.inner.lock().unwrap().recoveries.is_empty());
+        assert!(h.inner.lock().unwrap().guards["private-source"].is_cancelled());
+        assert!(matches!(h.db.submit(DbCommand::GetResult{session_id:"private-source".into()},None,DbPriority::Normal).unwrap().wait().await,Err(StoreError::NotFound)),"cleanup path {cleanup} retained a private source");
+        assert!(h.db.snapshot().temporary_result.is_none());
+    }
+}
+
+#[test]
+fn stale_use_source_generation_cannot_reserve_a_permanent_busy_count() {
+    let h=hub();install(&h,"source",SessionPhase::FinalizingAsr,true);
+    h.checkpoint("source",7,source_fixture("source",7)).unwrap();
+    h.inner.lock().unwrap().active.as_mut().unwrap().phase=SessionPhase::Failed;
+    assert_eq!(h.use_source(&json!({"sessionId":"source","expectedGeneration":6})).unwrap_err().code,"stale_session");
+    let inner=h.inner.lock().unwrap();let s=inner.active.as_ref().unwrap();
+    assert_eq!(s.db_pending,0);assert!(!s.busy());assert!(s.view().can_retry_rewrite);
+}
+
+#[test]
+fn retry_configuration_is_explicit_versioned_and_keeps_the_recording_original() {
+    let h=hub();install(&h,"retry-config",SessionPhase::Incomplete,true);
+    let original=h.inner.lock().unwrap().active.as_ref().unwrap().original_config.clone();
+    let mut config=h.db.snapshot().provider_config;let expected=config.version;
+    config.region=Some("beijing".into());config.rewrite_provider="openai".into();config.rewrite_model="gpt-5.4-mini".into();
+    let DbValue::ProviderConfig(current)=h.db.submit(DbCommand::SaveProviderConfig{config,expected_version:expected},None,DbPriority::Normal).unwrap().wait_blocking().unwrap()else{panic!("provider receipt");};
+    let mut inner=h.inner.lock().unwrap();let s=inner.active.as_mut().unwrap();s.config=current.clone();
+    assert_eq!(h.retry_configuration(&json!({}),s).unwrap(),original);
+    assert_eq!(h.retry_configuration(&json!({"retryConfiguration":"original"}),s).unwrap(),original);
+    assert_eq!(h.retry_configuration(&json!({"retryConfiguration":"current","expectedProviderVersion":current.version}),s).unwrap(),current);
+    assert_eq!(h.retry_configuration(&json!({"retryConfiguration":"current","expectedProviderVersion":expected}),s).unwrap_err().code,"revisionConflict");
+    assert_eq!(h.retry_configuration(&json!({"retryConfiguration":"unknown"}),s).unwrap_err().code,"invalid_retry_configuration");
+    assert_eq!(s.original_config,original);assert_eq!(s.generation,7);assert!(s.source.is_none());
+}
+
 #[test]
 fn repeated_incomplete_recordings_allow_the_next_capture_and_preserve_all_deadlines() {
     let h=hub();let first_created=cached_failure(&h,"first");configure_capture_state_fixture(&h);

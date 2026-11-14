@@ -60,6 +60,8 @@ mod long;
 mod protected_terms;
 #[path="rewrite_literals.rs"]
 mod literals;
+#[path="rewrite_literal_corrections.rs"]
+mod literal_corrections;
 #[path="rewrite_format_requests.rs"]
 mod format_requests;
 #[path="rewrite_email_authoring.rs"]
@@ -185,6 +187,7 @@ pub const MINIMUM_PIPELINE_VERSION: &str = if cfg!(feature="experimental-english
     "minimum-edit-v4+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v4+residue-hint-v2+local-repair-v2+minimum-correction-v1"
 } else { "minimum-edit-v3+minimum-review-v5+minimum-review-ordered-v2+minimum-review-v3+residue-hint-v2+local-repair-v2+minimum-correction-v1" };
 fn uses_minimum_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
+    // Frozen historical selector, retained for explicit human-reviewed replay.
     writing_context::for_mode(mode).is_some() || (MINIMUM_PROTOCOL_PROMOTED && config.rewrite_provider=="aliyun" && config.rewrite_model=="qwen3.8-flash" && config.region.as_deref()==Some("beijing"))
 }
 fn uses_fluent_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool {
@@ -197,16 +200,20 @@ fn uses_automatic_contract(config: &ProviderConfig, mode: &ModeSnapshot) -> bool
         && mode.base_mode == BaseMode::Auto && mode.rules.trim().is_empty()
 }
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-enum ProductionContract { Situational, Minimum, Fluent, Automatic, Baseline }
+enum ProductionContract {
+    Situational, Minimum,
+    // Explicit historical request/replay variants remain typed for their frozen
+    // protocol helpers; the current production selector cannot construct these.
+    #[allow(dead_code)] Fluent,
+    Automatic,
+    Baseline,
+}
 /// One selector for execution, request preparation and diagnostic labels.
-/// Historical protocols remain available for replay; provider coverage is not
-/// silently broadened by an orchestration refactor.
-fn production_contract(config:&ProviderConfig,mode:&ModeSnapshot,has_context:bool)->ProductionContract {
+/// Historical protocols remain available through explicit replay functions.
+/// Every production provider/layout receives the same minimum fidelity checks.
+fn production_contract(_config:&ProviderConfig,mode:&ModeSnapshot,has_context:bool)->ProductionContract {
     if has_context||writing_context::for_mode(mode).is_some(){ProductionContract::Situational}
-    else if uses_minimum_contract(config,mode){ProductionContract::Minimum}
-    else if uses_fluent_contract(config,mode){ProductionContract::Fluent}
-    else if uses_automatic_contract(config,mode){ProductionContract::Automatic}
-    else{ProductionContract::Baseline}
+    else{ProductionContract::Minimum}
 }
 /// Report the actual selected production protocol, independently of provider
 /// model naming. Diagnostics must not infer protocol from a model preference.
@@ -223,12 +230,10 @@ pub fn production_protocol_version_with_context(config:&ProviderConfig,mode:&Mod
     }
 }
 pub fn manual_protocol_version(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision)->&'static str {
-    match production_contract(config,mode,false) {
-        ProductionContract::Situational=>writing_context::VERSION,
-        ProductionContract::Minimum=>minimum::VERSION,
-        ProductionContract::Fluent=>if uses_guarded_long(source){LONG_REWRITE_PROMPT_VERSION}else{FLUENT_REWRITE_PROMPT_VERSION},
-        _=>REWRITE_PROMPT_VERSION,
-    }
+    if writing_context::for_mode(mode).is_some(){writing_context::VERSION}
+    else if uses_minimum_contract(config,mode){minimum::VERSION}
+    else if uses_fluent_contract(config,mode){if uses_guarded_long(source){LONG_REWRITE_PROMPT_VERSION}else{FLUENT_REWRITE_PROMPT_VERSION}}
+    else{REWRITE_PROMPT_VERSION}
 }
 fn production_request_body(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot) -> Result<Value, CloudError> {
     match production_contract(config,mode,false) {
@@ -431,6 +436,19 @@ pub fn initial_wait_ms(source: &SourceRevision) -> u64 {
     match source.text().chars().count() { 0..=800 => 20000, 801..=3000 => 30000, _ => 60000 }
 }
 
+/// The 8192-token generation envelope is finite. Admit a conservative encoded
+/// source budget, leaving 2048 units for JSON/layout and modest editing growth.
+/// UTF-8 bytes are a deliberately conservative engineering bound, not an exact
+/// token count or a promise about an arbitrary custom provider's tokenizer.
+pub const AUTOMATIC_SOURCE_JSON_BYTES:usize=6144;
+pub(crate) fn validate_automatic_capacity(source:&SourceRevision)->Result<(),CloudError> {
+    validate_source(source)?;
+    if serde_json::to_vec(&source.text()).expect("source text serialize").len()>AUTOMATIC_SOURCE_JSON_BYTES {
+        return Err(CloudError::new("rewrite_source_too_long","rewrite_capacity","这条识别稿过长，暂不能完整自动整理。识别稿已保留，请复制后分段整理。"));
+    }
+    Ok(())
+}
+
 pub fn normalize_draft_dictionary(source:&SourceRevision, dictionary:&DictionarySnapshot, draft:&mut RewriteResult) {
     let matched = terms::matching_terms(source,dictionary);
     let supported = DictionarySnapshot { version:dictionary.version, entries:dictionary.entries.iter()
@@ -591,12 +609,13 @@ pub(crate) async fn rewrite_with_optional_context(config:&ProviderConfig,secret:
     }
 }
 
-/// Recovery always uses the complete generation/review pipeline, independent of
-/// the primary provider route. The caller supplies a plain automatic mode/context.
+/// Bounded same-contract recovery retains the caller's frozen mode/context and
+/// uses the complete generation/review pipeline. It grants no delivery authority.
 pub(crate) async fn automatic_recovery(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,execution:RewriteExecution,
     context:&crate::core::writing_context::WritingContext)->Result<RewriteResult,CloudError> {
     execution.checkpoint(&cancel)?;
+    validate_automatic_capacity(source)?;
     let endpoint=rewrite_endpoint(config)?;
     minimum_pipeline::run_until_with_writing_context(shared_client()?,config,secret,mode,source,dictionary,cancel,&endpoint,execution,context).await
 }
@@ -665,7 +684,9 @@ async fn rewrite_at(config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source
 
 #[cfg(test)]
 async fn rewrite_with_client(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,cancel:CancellationToken,endpoint:&str,timeout:Duration)->Result<RewriteResult,CloudError> {
-    rewrite_with_client_dictionary(client,config,secret,mode,source,&DictionarySnapshot::default(),cancel,endpoint,timeout).await
+    // Explicit frozen single-request seam for historical transport regressions.
+    // Production and cross-provider tests use rewrite_with_client_execution.
+    execute_single_request(client,config,secret,mode,source,&DictionarySnapshot::default(),cancel,endpoint,RewriteExecution::for_duration(timeout),ProductionContract::Baseline).await
 }
 
 #[cfg(test)]
@@ -680,7 +701,8 @@ pub(crate) async fn rewrite_with_client_execution(client:&reqwest::Client,config
     rewrite_with_client_optional_context(client,config,secret,mode,source,dictionary,cancel,endpoint,execution,None).await
 }
 async fn execute_single_request(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution,contract:ProductionContract)->Result<RewriteResult,CloudError> {
-    let body = production_request_body(config, mode, source, dictionary)?;
+    let body = if contract==ProductionContract::Baseline {baseline_request_body(config,mode,source)?}
+        else {production_request_body(config, mode, source, dictionary)?};
     let job = async {
         let content = fluent_pipeline::request_observed(client,config,secret,endpoint,&body,&cancel,&execution,RequestStage::Generation).await?;
         let result = if contract==ProductionContract::Automatic { parse_automatic_output(&content,mode,source) }

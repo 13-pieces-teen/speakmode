@@ -165,13 +165,19 @@ async fn confirmed_history_english_dates_share_format_and_real_source_ids(){
 }
 
 #[tokio::test]
-async fn compatible_provider_legacy_mode_uses_same_date_and_acronym_presentation(){
+async fn compatible_provider_explicit_mode_reviews_same_date_and_acronym_presentation(){
     let input="今天研究 A D H D，报告日期是二零二六年十月二十三日。";
     let(mut config,mut mode,source)=fixture(input);config.rewrite_provider="deepseek".into();config.rewrite_model="deepseek-flash".into();
     mode.mode_id="light".into();mode.base_mode=BaseMode::Light;let before=source.clone();
-    let content=json!({"resolvedMode":"light","blocks":[{"text":input,"sourceRange":[0,0]}]}).to_string();
-    let server=Server::new(vec![Reply::Fixed(content)]).await;
+    let server=Server::new(vec![draft(input),Reply::Fixed(ACCEPT.into())]).await;
     let result=run(&server,&config,&mode,&source).await.unwrap();
     assert!(result.blocks[0].text.contains("ADHD"));assert!(result.blocks[0].text.contains("2026年10月23日"));assert_eq!(source,before);
-    assert_eq!(server.count(),1);assert!(server.requests.lock().unwrap()[0]["messages"][0]["content"].as_str().unwrap().contains(spoken_format::VERSION));
+    assert_eq!(server.count(),2);
+    let requests=server.requests.lock().unwrap();
+    for request in requests.iter(){assert!(request["messages"][0]["content"].as_str().unwrap().contains(spoken_format::VERSION));}
+    let review=data(&requests[1]);
+    assert_eq!(review["sourceText"],input);
+    assert_eq!(review["draftText"],result.blocks[0].text);
+    assert!(review["draftText"].as_str().unwrap().contains("ADHD"));
+    assert!(review["draftText"].as_str().unwrap().contains("2026年10月23日"));
 }

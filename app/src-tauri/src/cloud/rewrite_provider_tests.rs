@@ -135,6 +135,9 @@ async fn provider_refusal_empty_truncation_and_http_errors_keep_static_recoverab
             (200, refused, "rewrite_refused"), (200, envelope(" \n "), "empty_output"),
             (200, truncated, "truncated_output"),
             (429, json!({"error":"SENSITIVE_RATE_LIMIT"}), "rate_limited"),
+            (400, json!({"error":"SENSITIVE_BAD_PARAMETER"}), "rewrite_request_rejected"),
+            (404, json!({"error":"SENSITIVE_UNKNOWN_MODEL"}), "rewrite_request_rejected"),
+            (503, json!({"error":"SENSITIVE_UNAVAILABLE"}), "rewrite_service_error"),
         ] {
             let server = Server::new(vec![(status, reply)]).await;
             let body = json!({"model":model,"messages":[{"role":"system","content":"Return JSON"}],
@@ -156,7 +159,7 @@ fn aliyun_rollouts_cannot_be_selected_by_another_provider_with_a_qwen_model_name
         assert!(!uses_minimum_contract(&config, &mode));
         assert!(!uses_fluent_contract(&config, &mode));
         assert!(!uses_automatic_contract(&config, &mode));
-        assert_eq!(production_protocol_version(&config, &mode), REWRITE_PROMPT_VERSION);
+        assert_eq!(production_protocol_version(&config, &mode), MINIMUM_PIPELINE_VERSION);
         assert!(semantic_review::minimum_format(&config, &source) == semantic_review::MinimumReviewFormat::Named);
     }
     let mut config = config("aliyun", "qwen3.8-flash"); config.provider = "google".into();
@@ -164,21 +167,69 @@ fn aliyun_rollouts_cannot_be_selected_by_another_provider_with_a_qwen_model_name
 }
 
 #[tokio::test]
-async fn legacy_layouts_on_new_providers_still_reject_changed_source_facts() {
+async fn explicit_layouts_on_all_providers_keep_local_fact_admission() {
     for (provider, model) in PROVIDERS.into_iter().filter(|(provider, _)| *provider != "aliyun") {
         let (mut mode, source) = fixture(); let before = source.clone();
         mode.mode_id = "light".into(); mode.base_mode = BaseMode::Light;
         let config = config(provider, model);
-        assert_eq!(production_protocol_version(&config, &mode), REWRITE_PROMPT_VERSION);
-        let content = json!({"resolvedMode":"light","blocks":[{
-            "text":source.text().replace("3500", "5000"),"sourceRefs":["item-0"]}]}).to_string();
+        assert_eq!(production_protocol_version(&config, &mode), MINIMUM_PIPELINE_VERSION);
+        let content = json!({"resolvedMode":"light","text":source.text().replace("3500", "5000")}).to_string();
         let server = Server::new(vec![(200, envelope(content))]).await;
         let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().unwrap();
         let error = rewrite_with_client_execution(&client, &config, "synthetic-provider-key", &mode, &source,
             &DictionarySnapshot::default(), CancellationToken::new(), &server.endpoint,
-            RewriteExecution::for_duration(Duration::from_secs(2))).await.unwrap_err();
-        assert_eq!(error.code, "rewrite_meaning_risk", "{provider}");
-        assert_eq!(server.seen.lock().unwrap().len(), 1, "legacy protocols do not silently gain a model-review rollout");
+            RewriteExecution::for_duration(Duration::from_secs(1))).await.unwrap_err();
+        assert_eq!(error.code, "rewrite_admission_rejected", "{provider}");
+        assert_eq!(server.seen.lock().unwrap().len(), 1, "inadmissible facts cannot proceed to review when the repair reserve is unavailable");
         assert_eq!(source, before);
+    }
+}
+
+#[tokio::test]
+async fn every_provider_and_layout_reviews_unqualified_ownership_and_omissions(){
+    // Scripted reviewer rejection verifies mandatory routing and single repair;
+    // it does not claim a real reviewer will detect every semantic error.
+    for (provider,model) in PROVIDERS {
+        for layout in ["light","structure","custom"] {
+            for bad in ["乙负责设计接口，甲负责整理文档。","甲负责设计接口。"] {
+                let (mut mode,mut source)=fixture();
+                source.items[0].text="甲负责设计接口，乙负责整理文档。".into();let original=source.clone();
+                mode.mode_id=layout.into();mode.base_mode=if layout=="structure"{BaseMode::Structure}else{BaseMode::Light};
+                mode.rules=if layout=="custom"{"使用完整句子。".into()}else{String::new()};
+                let rejected=json!({"decision":"reject","checks":{"coverage":"fail","facts":"fail","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]});
+                let draft=json!({"resolvedMode":mode.base_mode,"text":bad}).to_string();
+                let server=Server::new(vec![(200,envelope(draft.clone())),(200,envelope(rejected.to_string())),(200,envelope(draft))]).await;
+                let client=reqwest::Client::builder().no_proxy().build().unwrap();
+                let error=rewrite_with_client_execution(&client,&config(provider,model),"synthetic-provider-key",&mode,&source,
+                    &DictionarySnapshot::default(),CancellationToken::new(),&server.endpoint,
+                    RewriteExecution::for_duration(Duration::from_secs(4))).await.unwrap_err();
+                assert_eq!(error.code,"rewrite_semantic_rejected","{provider}/{layout}/{bad}");
+                assert_eq!(source,original);let requests=server.seen.lock().unwrap();assert_eq!(requests.len(),3);
+                let review:Value=serde_json::from_str(requests[1].1["messages"][1]["content"].as_str().unwrap()).unwrap();
+                assert_eq!(review["sourceText"],source.text());assert_eq!(review["draftText"],bad);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn frozen_dictionary_normalization_is_shared_by_all_providers_and_layouts(){
+    for (provider,model) in PROVIDERS {
+        for layout in ["auto","light","structure","custom"] {
+            let (mut mode,mut source)=fixture();source.items[0].text="用 github 查看更新。".into();let original=source.clone();
+            mode.mode_id=layout.into();mode.base_mode=match layout{"auto"=>BaseMode::Auto,"structure"=>BaseMode::Structure,_=>BaseMode::Light};
+            mode.rules=if layout=="custom"{"使用完整句子。".into()}else{String::new()};
+            let resolved=if mode.base_mode==BaseMode::Structure{BaseMode::Structure}else{BaseMode::Light};
+            let dictionary=DictionarySnapshot{version:7,entries:vec![crate::core::DictionaryEntry{id:"github".into(),term:"GitHub".into(),created_at:"now".into(),updated_at:"now".into()}]};
+            let server=Server::new(vec![(200,envelope(json!({"resolvedMode":resolved,"text":source.text()}).to_string())),(200,envelope(ACCEPT))]).await;
+            let client=reqwest::Client::builder().no_proxy().build().unwrap();
+            let result=rewrite_with_client_execution(&client,&config(provider,model),"synthetic-provider-key",&mode,&source,
+                &dictionary,CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4))).await.unwrap();
+            assert_eq!(result.blocks[0].text,"用 GitHub 查看更新。","{provider}/{layout}");assert_eq!(source,original);
+            let requests=server.seen.lock().unwrap();assert_eq!(requests.len(),2);
+            let generation:Value=serde_json::from_str(requests[0].1["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let review:Value=serde_json::from_str(requests[1].1["messages"][1]["content"].as_str().unwrap()).unwrap();
+            assert_eq!(generation["canonicalTerms"],json!(["GitHub"]));assert_eq!(review["draftText"],"用 GitHub 查看更新。");
+        }
     }
 }

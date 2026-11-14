@@ -28,7 +28,8 @@ fn checkpoint(cancel:&CancellationToken,deadline:Instant)->Result<(),CloudError>
     if cancel.is_cancelled(){Err(cancelled())}else if Instant::now()>=deadline{Err(timeout())}else{Ok(())}
 }
 fn safe_error(error:CloudError)->CloudError{
-    if error.stage=="semantic_review" {CloudError::new("invalid_output","rewrite","整理核对响应无效，识别稿仍保留")}
+    if error.forbids_automatic_rewrite_retry() {error}
+    else if error.stage=="semantic_review" {CloudError::new("invalid_output","rewrite","整理核对响应无效，识别稿仍保留")}
     else if error.code=="rewrite_meaning_risk" {CloudError::new("rewrite_admission_rejected","rewrite","整理稿未通过复核前检查，识别稿仍保留")}
     else {error}
 }
@@ -203,9 +204,11 @@ async fn correct_and_review(client:&reqwest::Client,config:&ProviderConfig,secre
         if !review.accepted() || local_repair::residue_hint(source,&corrected).is_some(){return Err(rejected());}
         Ok(corrected)
     }.await;
-    // A failed repair cannot replace the original semantic reason with a
-    // misleading success; cancellation/deadline always retain precedence.
-    result.map_err(|error|if matches!(error.code.as_str(),"cancelled"|"rewrite_timeout"){error}else{rejection})
+    // Content/repair failures retain the original fidelity rejection. Preserve
+    // terminal transport/configuration errors so the session cannot interpret
+    // a 401/429/refusal as permission to start another same-account attempt.
+    // Cancellation and the shared deadline remain authoritative.
+    result.map_err(|error|if error.forbids_automatic_rewrite_retry()||error.code=="rewrite_timeout"{error}else{rejection})
 }
 pub(super) async fn run_until(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError>{

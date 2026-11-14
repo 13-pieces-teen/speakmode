@@ -8,13 +8,22 @@ pub(super) struct CapturedInput {
     pub captured_at: Instant,
 }
 
+/// Clipboard takeover revokes delivery only. It may keep the original stop
+/// context, while version changes, retry, cancellation and explicit context
+/// disposal must never regain that capability through a later copy.
+pub(super) fn accepts_stop_context(session:&ActiveSession)->bool {
+    !session.cancel.is_cancelled() && session.reason==CreationReason::NormalInitial
+        && session.revision_intent_sequence==0
+        && (!session.original_delivery_revoked || session.manual_copy_preserves_context)
+}
+
 pub(super) fn freeze(session: &ActiveSession) -> Option<WritingContext> {
     if session.cancel.is_cancelled() { return None; }
     let explicit=selected_scene(&session.mode);
     let automatic=session.mode.mode_id=="auto" && session.mode.rules.is_empty();
     let language=session.prefs.app_writing.output_language;
     let legacy_none=explicit.is_none() && !automatic && !session.prefs.app_writing.input_context_enabled && language==DraftLanguage::AsSpoken;
-    let target_ready=!session.target_capture_pending && !session.original_delivery_revoked && session.reason==CreationReason::NormalInitial;
+    let target_ready=!session.target_capture_pending && accepts_stop_context(session);
     let application=session.target_application.as_deref().unwrap_or("");
     let input=if target_ready && session.prefs.app_writing.permits_input_context(application) {
         session.input_context.as_ref().filter(|input|
