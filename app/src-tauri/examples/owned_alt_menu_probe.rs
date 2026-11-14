@@ -257,7 +257,7 @@ mod probe {
         ensure!(!known_desktop_app_running()?, "quit SpeakMode yourself before the optional physical test; no microphone action attempted");
         let (tx,rx) = mpsc::channel();
         let mut service = match HotkeyService::start("alt_right", Duration::from_secs(1), move |event| {
-            if matches!(event,HotkeyEvent::Toggle) { let _ = tx.send(capture_foreground_anchor()); }
+            if matches!(event,HotkeyEvent::Toggle(_)) { let _ = tx.send(capture_foreground_anchor()); }
         }) {
             Ok(service) => service,
             Err(error) => {

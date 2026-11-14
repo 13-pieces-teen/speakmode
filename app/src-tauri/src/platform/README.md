@@ -54,7 +54,7 @@ idempotent. Failed-start/stopping services reject capture/register/resume/reset.
 Drop only requests stop and is not a release receipt. The nested vendored native
 thread now remains owned until join even if its five-second readiness wait fails.
 
-`HotkeyEvent` is Ready / Toggle / Captured / LifecycleReset / Unavailable.
+`HotkeyEvent` is Ready / Toggle(original intent Instant) / Captured / LifecycleReset / Unavailable.
 `replace_shortcut`, `set_capture`, `suspend`, `resume`, `reset`, and bounded
 `shutdown` are explicit. A timeout cancels the queued update under the same
 transaction lock that applies it, preventing a failed settings save from silently
@@ -84,6 +84,17 @@ finishes. Lock/suspend and shutdown do not request recovery or resume admission.
 A routine successful refresh emits no application lifecycle interrupt; a failed
 native reinstall still reports HooksUnavailable. This adds no synthetic input
 or alternate physical-event filter.
+
+In 0.2.43 observed keys carry the monotonic time captured at hook entry, before
+menu-mask work or queue delivery. A complete gesture forwards its original
+release time. Desktop toggles use one bounded FIFO consumer, while lifecycle
+interrupts retain their immediate atomic invalidation. An intent from an older
+lifecycle or before the current session/control completion cannot reopen a
+recorder. The session coordinator applies one rule to every configured shortcut:
+start when idle, cancel a second gesture within 500ms of start, otherwise stop
+and finalize. Starting counts as active for this rule. Processing and actual
+resource-release gates remain authoritative; accidental cancellation never
+enters stop-time target capture, final rewrite or delivery.
 
 ## Audio
 

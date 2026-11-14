@@ -283,8 +283,11 @@ fn observed_key_is_down(vk: u16, is_down: &impl Fn(u16) -> bool) -> bool {
 }
 
 fn emit_key(ctx: &HookContext, event: KeyEvent, origin: KeyOrigin) {
+    emit_key_at(ctx,event,origin,std::time::Instant::now());
+}
+fn emit_key_at(ctx: &HookContext, event: KeyEvent, origin: KeyOrigin, at: std::time::Instant) {
     if let Some(sender) = &ctx.observed_sender {
-        let _ = sender.send(ObservedEvent::Key { event, origin });
+        let _ = sender.send(ObservedEvent::Key { event, origin, at });
     } else {
         let _ = ctx.event_sender.send(event);
     }
@@ -636,6 +639,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
         return CallNextHookEx(None, code, wparam, lparam);
     }
 
+    let observed_at=std::time::Instant::now();
     let mut should_block = false;
     let mut needs_mask = false;
     let mut standalone_release:Option<(u16,KeyEvent)>=None;
@@ -705,7 +709,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                     }
 
                     if standalone {standalone_release=Some((vk_code,event));}
-                    else {emit_key(ctx,event,KeyOrigin::Physical);}
+                    else {emit_key_at(ctx,event,KeyOrigin::Physical,observed_at);}
                 }
 
                 // The hold ends once no Win/Alt modifier remains held; the
@@ -742,17 +746,17 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                         needs_mask = true;
                     }
 
-                    emit_key(ctx, KeyEvent {
+                    emit_key_at(ctx, KeyEvent {
                         modifiers: ctx.current_modifiers,
                         key: Some(key),
                         is_key_down,
                         changed_modifier: None,
-                    }, KeyOrigin::Physical);
+                    }, KeyOrigin::Physical, observed_at);
                 }else if ctx.observed_sender.is_some(){
                     // The app's tap recognizer must also cancel on real unmapped
                     // keys; injected/own inert keys were filtered above.
-                    emit_key(ctx,KeyEvent{modifiers:ctx.current_modifiers,key:None,is_key_down,
-                        changed_modifier:None},KeyOrigin::Physical);
+                    emit_key_at(ctx,KeyEvent{modifiers:ctx.current_modifiers,key:None,is_key_down,
+                        changed_modifier:None},KeyOrigin::Physical,observed_at);
                 }
             }
         }
@@ -772,7 +776,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
         if still_current&&replace_standalone_release(virtual_key){should_block=true;}
         // Even an injection failure must release the policy's physical hold and
         // reach the existing gesture observer. Failure retains original key-up.
-        HOOK_CONTEXT.with(|cell|{if let Some(ctx)=cell.borrow().as_ref(){emit_key(ctx,event,KeyOrigin::Physical);}});
+        HOOK_CONTEXT.with(|cell|{if let Some(ctx)=cell.borrow().as_ref(){emit_key_at(ctx,event,KeyOrigin::Physical,observed_at);}});
     }
 
     if should_block {
@@ -793,6 +797,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
         return CallNextHookEx(None, code, wparam, lparam);
     }
 
+    let observed_at=std::time::Instant::now();
     super::activity::observe(wparam.0 as u32, false);
 
     // Only button transitions matter; bail out early for moves and wheel
@@ -882,12 +887,12 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
                     needs_mask = true;
                 }
 
-                emit_key(ctx, KeyEvent {
+                emit_key_at(ctx, KeyEvent {
                     modifiers: ctx.current_modifiers,
                     key: Some(key),
                     is_key_down: is_down,
                     changed_modifier: None,
-                }, KeyOrigin::Physical);
+                }, KeyOrigin::Physical, observed_at);
             }
         }
     });
@@ -992,6 +997,19 @@ mod tests {
     use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
     #[test]
+    fn queued_physical_event_keeps_its_hook_time_instead_of_its_delivery_time() {
+        let (tx, _) = mpsc::channel();let (observed, rx) = mpsc::channel();
+        let ctx=HookContext {event_sender:tx,observed_sender:Some(observed),
+            current_modifiers:Modifiers::empty(),pressed_keys:HashMap::new(),blocking_hotkeys:None,
+            altgr_phantom_ctrl:false,menu_mask_sent:false,standalone_tap:None};
+        let original=Instant::now()-Duration::from_secs(5);
+        emit_key_at(&ctx,KeyEvent{modifiers:Modifiers::empty(),key:Some(Key::F8),
+            is_key_down:false,changed_modifier:None},KeyOrigin::Physical,original);
+        let ObservedEvent::Key{at,origin,..}=rx.try_recv().unwrap()else{panic!("expected key")};
+        assert_eq!(at,original);assert_eq!(origin,KeyOrigin::Physical);
+    }
+
+    #[test]
     fn mouse_state_polling_preserves_either_held_primary_button_even_when_swapped() {
         for observed in [0x01, 0x02] {
             assert!(observed_key_is_down(observed, &|vk| vk == 0x01));
@@ -1015,7 +1033,7 @@ mod tests {
         track_key(&mut ctx, 0x77, Key::F8, true);
         reconcile_released_keys(&mut ctx, |vk| vk == 0x77);
         let released = rx.try_iter().map(|event| match event {
-            ObservedEvent::Key { event, origin } => {
+            ObservedEvent::Key { event, origin, .. } => {
                 assert_eq!(origin, KeyOrigin::Reconciled);
                 assert!(!event.is_key_down);
                 event.key.unwrap()
@@ -1028,7 +1046,7 @@ mod tests {
         assert!(rx.try_recv().is_err());
         reconcile_released_keys(&mut ctx, |_| false);
         assert!(matches!(rx.try_recv().unwrap(), ObservedEvent::Key {
-            event: KeyEvent { key: Some(Key::F8), is_key_down: false, .. }, origin: KeyOrigin::Reconciled }));
+            event: KeyEvent { key: Some(Key::F8), is_key_down: false, .. }, origin: KeyOrigin::Reconciled, .. }));
         reconcile_released_keys(&mut ctx, |_| false);
         assert!(rx.try_recv().is_err());
     }

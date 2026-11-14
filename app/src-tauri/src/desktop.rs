@@ -3,7 +3,7 @@
 //! Native audio, focus and keyboard QA must be run on Windows; geometry tests do
 //! not stand in for WebView2, accessibility, delivery or microphone acceptance.
 use crate::engine::{ApiError, AppEvent, AppHub, CommandRequest, Result};
-use crate::platform::hotkeys::{HotkeyEvent, HotkeyService};
+use crate::platform::hotkeys::{HotkeyEvent, HotkeyIntent, HotkeyService, process_hotkey_queue};
 use serde_json::{Value, json};
 use std::{path::PathBuf, sync::{Arc, Mutex, Weak, atomic::{AtomicBool, AtomicU8, Ordering}}, time::Duration};
 use tauri::{AppHandle, Manager, State, WebviewWindow, WebviewWindowBuilder, WindowEvent, RunEvent,
@@ -627,12 +627,36 @@ fn start_hotkeys(app: AppHandle, state: Arc<DesktopState>, shortcut: String) {
     tauri::async_runtime::spawn_blocking(move || {
         let weak = Arc::downgrade(&state);
         let callback_app = app.clone();
+        let (toggle_tx,toggle_rx)=tokio::sync::mpsc::channel(32);
+        let queue_state=Arc::downgrade(&state);let queue_app=app.clone();
+        tauri::async_runtime::spawn(process_hotkey_queue(toggle_rx,move|intent| {
+            let weak=queue_state.clone();let handle=queue_app.clone();
+            async move {
+                let Some(state)=weak.upgrade()else{return;};
+                if state.exit.load(Ordering::Acquire)!=0{return;}
+                let before=state.hub.snapshot("recording").ok();
+                if let Err(error)=state.hub.dispatch_hotkey_intent(intent).await {
+                    reveal_desktop_error(&handle,&state,hotkey_error_scope(error,before.as_ref()));
+                }
+            }
+        }));
         // A callback runs on the hook thread. Only enqueue async work here: never
         // wait on HotkeyService ACK/shutdown from the very callback it must serve.
         let started = HotkeyService::start(&shortcut, Duration::from_secs(1), move |event| {
             let Some(state) = weak.upgrade() else { return; };
             if state.exit.load(Ordering::Acquire) != 0 { return; }
-            let hook_intent=std::time::Instant::now();
+            if let HotkeyEvent::Toggle(at)=&event {
+                let intent=HotkeyIntent{at:*at,lifecycle_epoch:state.hub.lifecycle_epoch.load(Ordering::SeqCst)};
+                if let Err(error)=toggle_tx.try_send(intent) {
+                    let error=match error {
+                        tokio::sync::mpsc::error::TrySendError::Full(_)=>native_error("requests_busy","快捷键操作过于频繁，请稍候再试"),
+                        tokio::sync::mpsc::error::TrySendError::Closed(_)=>native_error("shortcut_unavailable","快捷键处理未就绪，请退出重开应用"),
+                    };
+                    let handle=callback_app.clone();
+                    tauri::async_runtime::spawn(async move{reveal_desktop_error(&handle,&state,error);});
+                }
+                return;
+            }
             // Reserve in the physical hook callback, before async scheduling can
             // reorder Locked/Resumed events. This call is atomic-only, no ACK.
             let lifecycle_epoch = if matches!(&event, HotkeyEvent::LifecycleReset(_) | HotkeyEvent::Unavailable(_)) {
@@ -640,10 +664,8 @@ fn start_hotkeys(app: AppHandle, state: Arc<DesktopState>, shortcut: String) {
             } else { None };
             let handle = callback_app.clone();
             tauri::async_runtime::spawn(async move {
-                let is_toggle = matches!(&event, HotkeyEvent::Toggle);
-                let before = if is_toggle { state.hub.snapshot("recording").ok() } else { None };
                 let outcome = match event {
-                    HotkeyEvent::Toggle => state.hub.toggle_from_hotkey_at(hook_intent).await,
+                    HotkeyEvent::Toggle(_) => Ok(()), // Sent through the ordered queue above.
                     HotkeyEvent::LifecycleReset(reason) => state.hub.interrupt_session_at_epoch(&reason, lifecycle_epoch.unwrap()).await,
                     HotkeyEvent::Unavailable(_) => {
                         let result = state.hub.interrupt_session_at_epoch("HooksUnavailable", lifecycle_epoch.unwrap()).await;
@@ -654,7 +676,6 @@ fn start_hotkeys(app: AppHandle, state: Arc<DesktopState>, shortcut: String) {
                     HotkeyEvent::Captured(_) => Ok(()),
                 };
                 if let Err(error) = outcome {
-                    let error = if is_toggle { hotkey_error_scope(error, before.as_ref()) } else { error };
                     reveal_desktop_error(&handle, &state, error);
                 }
             });

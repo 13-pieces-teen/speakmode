@@ -113,13 +113,16 @@ pub struct LiveSession {
 }
 #[derive(Clone)]
 enum PendingCommit {Source(SessionSeed,SourceRevision),Ready(OutputRevision)}
+const ACCIDENTAL_HOTKEY_WINDOW:Duration=Duration::from_millis(500);
+#[derive(Debug,PartialEq)]
+enum HotkeyAction { Start, Stop(String,u64), Cancel(String,u64), Busy(String,u64), Ignore }
 pub(crate) struct ActiveSession {
     personalization:crate::core::personalization::PersonalizationConfig,
     personalization_commit:Option<Arc<CommitGuard>>,
     onboarding_lesson:Option<OnboardingLesson>,
     diagnostic_trace:Option<TraceHandle>,caption_render_token:Option<String>,
     pub id:String,pub generation:u64,phase:SessionPhase,prefs:Preferences,config:ProviderConfig,mode:ModeSnapshot,dictionary:DictionarySnapshot,
-    started_at:String,ended_at:Option<String>,capture_duration_ms:u64,
+    started_at:String,started_intent:Instant,finished_intent:Option<Instant>,ended_at:Option<String>,capture_duration_ms:u64,
     recording_limit_ms:u64,recording_limit_remaining_ms:Option<u64>,
     first_samples:bool,provider_ready:bool,level:f32,captions:Vec<CaptionItem>,error:Option<ApiError>,
     stop:Arc<AtomicBool>,cancel:CancellationToken,worker_released:bool,
@@ -181,7 +184,7 @@ impl ActiveSession {
         self.stop.store(true,Ordering::SeqCst);self.cancel.cancel();self.discard_input_context();if let Some(permit)=&self.delivery_permit{permit.cancel_before_injection();}
     }
     pub(crate) fn discard_deleted_content(&mut self){
-        self.phase=SessionPhase::Cancelled;self.error=None;self.discard_input_context();self.pending=None;self.cache=None;self.cache_complete=false;self.cache_created=None;self.source=None;self.output=None;self.captions.clear();
+        self.phase=SessionPhase::Cancelled;self.finished_intent=Some(Instant::now());self.error=None;self.discard_input_context();self.pending=None;self.cache=None;self.cache_complete=false;self.cache_created=None;self.source=None;self.output=None;self.captions.clear();
         if let Some(delivery)=self.delivery.as_mut(){if matches!(delivery.state,DeliveryState::Prepared|DeliveryState::Dispatched){delivery.state=DeliveryState::Unconfirmed;delivery.reason=Some("deletedBeforeReceipt".into());}}
     }
     pub(crate) fn view(&self)->LiveSession {
@@ -199,7 +202,7 @@ impl ActiveSession {
         // adoption. Actual resource leases remain closed until their owners exit.
         self.stop.store(true,Ordering::SeqCst);self.cancel.cancel();self.discard_input_context();
         if let Some(permit)=&self.delivery_permit{permit.cancel_before_injection();}
-        self.phase=SessionPhase::Ready;self.source=Some(detail.source.clone());self.output=Some(output);
+        self.phase=SessionPhase::Ready;self.finished_intent=Some(Instant::now());self.source=Some(detail.source.clone());self.output=Some(output);
         self.pending=None;self.error=None;self.cache=None;self.cache_complete=false;self.cache_created=None;
         self.delivery=None;self.delivery_failure_reason=None;self.delivery_permit=None;self.reason=CreationReason::History;self.original_delivery_revoked=true;
     }
@@ -335,7 +338,7 @@ impl AppHub {
             let id=Uuid::new_v4().to_string();
             i.park_retryable_failure();
             i.guards.insert(id.clone(),Arc::new(CommitGuard::new(id.clone(),generation)));
-            i.active=Some(ActiveSession{personalization:cache.personalization,personalization_commit:None,onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,input_context_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
+            i.active=Some(ActiveSession{personalization:cache.personalization,personalization_commit:None,onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),config:config.clone(),mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),started_intent:intent,finished_intent:None,ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,input_context_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
     async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
@@ -490,14 +493,14 @@ impl AppHub {
         if !completed{s.db_pending+=1;}
         // A successful Ready whose actor reply is still in flight is already
         // authoritative. Cancellation cannot erase it or its once-only Usage.
-        if completed&&s.phase!=SessionPhase::Ready{if let Some((_,PendingCommit::Ready(output)))=&s.pending{s.output=Some(output.clone());s.phase=SessionPhase::Ready;s.pending=None;s.error=None;}}
+        if completed&&s.phase!=SessionPhase::Ready{if let Some((_,PendingCommit::Ready(output)))=&s.pending{s.output=Some(output.clone());s.phase=SessionPhase::Ready;s.finished_intent=Some(Instant::now());s.pending=None;s.error=None;}}
         Ok((id,generation,guard,completed,attempt))
     }
     fn finish_cancel(&self,id:&str,generation:u64,result:Result<DbValue>)->Result<Value> {
         let completed=matches!(&result,Err(error) if error.code=="alreadyCompleted");
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){
             s.db_pending=s.db_pending.saturating_sub(1);s.cancel_pending=false;
-            if completed{if let Some((_,PendingCommit::Ready(output)))=&s.pending{s.output=Some(output.clone());s.phase=SessionPhase::Ready;s.pending=None;s.error=None;}}
+            if completed{if let Some((_,PendingCommit::Ready(output)))=&s.pending{s.output=Some(output.clone());s.phase=SessionPhase::Ready;s.finished_intent=Some(Instant::now());s.pending=None;s.error=None;}}
             else if result.is_ok(){self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"cancelled",None);s.discard_deleted_content();}
             else{let error=ApiError::new("cancel_cleanup_failed","storage","口述已停止，未能清理本机未完成内容；请再次放弃恢复").for_session(id,generation);s.phase=SessionPhase::Failed;s.error=Some(error);}
         }}self.publish_session();self.changed();
@@ -567,11 +570,51 @@ impl AppHub {
     pub async fn toggle_from_hotkey(self:&Arc<Self>)->Result<()> {
         self.toggle_from_hotkey_at(Instant::now()).await
     }
+    pub(crate) async fn dispatch_hotkey_intent(self:&Arc<Self>,intent:platform::hotkeys::HotkeyIntent)->Result<()> {
+        if self.lifecycle_epoch.load(Ordering::SeqCst)!=intent.lifecycle_epoch {return Ok(());}
+        self.toggle_from_hotkey_at(intent.at).await
+    }
+    fn hotkey_action_at(&self,intent:Instant)->Result<HotkeyAction> {
+        let i=self.inner.lock().unwrap();
+        if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","shortcut","请先结束快捷键录制"));}
+        let Some(s)=i.active.as_ref()else{return Ok(HotkeyAction::Start);};
+        if s.finished_intent.is_some_and(|finished|intent<finished){return Ok(HotkeyAction::Ignore);}
+        let Some(elapsed)=intent.checked_duration_since(s.started_intent)else{return Ok(HotkeyAction::Ignore);};
+        if !s.cancel.is_cancelled()&&matches!(s.phase,SessionPhase::Starting|SessionPhase::Recording) {
+            return Ok(if elapsed<=ACCIDENTAL_HOTKEY_WINDOW {HotkeyAction::Cancel(s.id.clone(),s.generation)}
+                else{HotkeyAction::Stop(s.id.clone(),s.generation)});
+        }
+        Ok(if s.busy(){HotkeyAction::Busy(s.id.clone(),s.generation)}else{HotkeyAction::Start})
+    }
+    fn hotkey_operation_finished(&self,id:&str,generation:u64) {
+        if let Some(s)=self.inner.lock().unwrap().active.as_mut().filter(|s|s.id==id&&s.generation==generation) {
+            s.finished_intent=Some(Instant::now());
+        }
+    }
     pub async fn toggle_from_hotkey_at(self:&Arc<Self>,intent:Instant)->Result<()> {
-        let current={let i=self.inner.lock().unwrap();if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","shortcut","请先结束快捷键录制"));}i.active.as_ref().map(|s|(s.phase,s.busy(),s.cancel.is_cancelled(),json!({"sessionId":s.id,"expectedGeneration":s.generation})))};
-        if let Some((phase,busy,cancelled,p))=current {
-            if !cancelled&&matches!(phase,SessionPhase::Starting|SessionPhase::Recording){self.stop_session_at(&p,intent).await.map_err(|e|e.for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()))?;return Ok(());}
-            if busy{return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候").for_session(p["sessionId"].as_str().unwrap(),p["expectedGeneration"].as_u64().unwrap()));}
+        match self.hotkey_action_at(intent)? {
+            HotkeyAction::Ignore=>return Ok(()),
+            HotkeyAction::Busy(id,generation)=>return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候").for_session(&id,generation)),
+            HotkeyAction::Stop(id,generation)=>{
+                let result=self.stop_session_at(&json!({"sessionId":id,"expectedGeneration":generation}),intent).await;
+                self.hotkey_operation_finished(&id,generation);result.map_err(|e|e.for_session(&id,generation))?;
+                return Ok(());
+            },
+            HotkeyAction::Cancel(id,generation)=>{
+                self.cancel_session_async(&json!({"sessionId":id,"expectedGeneration":generation})).await.map_err(|e|e.for_session(&id,generation))?;
+                let control=self.recorder_dismiss_control.lock().unwrap().clone();
+                if let Some(control)=control {
+                    let hidden_id=id.clone();
+                    let result=tokio::task::spawn_blocking(move||control(hidden_id,generation)).await
+                        .map_err(|_|ApiError::new("window_unavailable","window","录音已取消，浮层未能收起"))?;
+                    // A newer session may already own the surface. The native
+                    // callback rechecks identity before hiding it.
+                    if let Err(error)=result {if error.code!="stale_session"{return Err(error);}}
+                }
+                self.hotkey_operation_finished(&id,generation);
+                return Ok(());
+            },
+            HotkeyAction::Start=>{},
         }
         if self.onboarding_shortcut_check()? { return Ok(()); }
         self.start_session_at(intent,Origin::HotkeyHook).await.map(|_|())
@@ -638,7 +681,7 @@ impl AppHub {
         let error=error.for_session(id,generation);
         {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.worker_released=resources_released;
             if s.phase!=SessionPhase::Ready {s.discard_input_context();}
-            if !matches!(s.phase,SessionPhase::Cancelled|SessionPhase::Ready)&&!s.error.as_ref().is_some_and(|e|matches!(e.code.as_str(),"cancel_cleanup_failed"|"asr_retry_expired")){s.phase=if matches!(error.code.as_str(),"asr_finish_timeout"|"asr_disconnected"|"audio_incomplete"|"audio_capture_stalled"|"audio_capture_device_error"|"audio_capture_queue_overflow"|"audio_capture_malformed"|"recording_limit"|"cache_overflow"|"capture_overflow"|"missing_order"|"invalid_order"|"conflicting_order"|"conflicting_final"|"incomplete_source"|"asr_closed"|"asr_send_timeout"|"asr_receive_failed"|"invalid_final"|"invalid_asr_event")||(error.stage=="asr"&&s.first_samples){SessionPhase::Incomplete}else{SessionPhase::Failed};self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"failed",Some(&error.code));s.error=Some(error);}
+            if !matches!(s.phase,SessionPhase::Cancelled|SessionPhase::Ready)&&!s.error.as_ref().is_some_and(|e|matches!(e.code.as_str(),"cancel_cleanup_failed"|"asr_retry_expired")){s.phase=if matches!(error.code.as_str(),"asr_finish_timeout"|"asr_disconnected"|"audio_incomplete"|"audio_capture_stalled"|"audio_capture_device_error"|"audio_capture_queue_overflow"|"audio_capture_malformed"|"recording_limit"|"cache_overflow"|"capture_overflow"|"missing_order"|"invalid_order"|"conflicting_order"|"conflicting_final"|"incomplete_source"|"asr_closed"|"asr_send_timeout"|"asr_receive_failed"|"invalid_final"|"invalid_asr_event")||(error.stage=="asr"&&s.first_samples){SessionPhase::Incomplete}else{SessionPhase::Failed};s.finished_intent=Some(Instant::now());self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"failed",Some(&error.code));s.error=Some(error);}
         }}self.publish_session();self.changed();
     }
     fn valid_active(&self,id:&str,generation:u64)->bool {self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())}
@@ -936,7 +979,7 @@ impl AppHub {
     }
     fn output_receipt(&self,id:&str,generation:u64,pending_id:String,output:OutputRevision,guard:Arc<CommitGuard>,result:Result<DbValue>)->Result<()> {
         let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation){s.db_pending=s.db_pending.saturating_sub(1);
-            if result.is_ok()&&!guard.is_cancelled()&&!s.cancel.is_cancelled(){s.personalization_commit=None;s.pending=None;s.output=Some(output);s.phase=SessionPhase::Ready;s.cache=None;s.cache_complete=false;s.error=None;
+            if result.is_ok()&&!guard.is_cancelled()&&!s.cancel.is_cancelled(){s.personalization_commit=None;s.pending=None;s.output=Some(output);s.phase=SessionPhase::Ready;s.finished_intent=Some(Instant::now());s.cache=None;s.cache_complete=false;s.error=None;
                 self.diagnostics.mark(s.diagnostic_trace.as_ref(),Stage::ReadyCommitted);self.diagnostics.outcome(s.diagnostic_trace.as_ref(),"ready",None);
                 s.delivery_worker_released=!(s.reason==CreationReason::NormalInitial&&s.prefs.delivery_mode==DeliveryMode::Direct&&!s.cancel.is_cancelled());}}
         result.map_err(|mut error|{error=error.for_session(id,generation);error.pending_commit_id=Some(pending_id);error.commit_stage=Some("ready".into());error.can_retry_save=true;error.retry_kind=Some("save".into());error})?;Ok(())

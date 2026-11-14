@@ -1,6 +1,6 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.42**，前端 package 版本为 **0.4.34**。点击叉号取消后的快捷键恢复见[取消链路修复](experiments/hotkey-cancel-2026-11-14.md)，此前的按键残留处理见[0.2.41 记录](experiments/hotkey-repeat-2026-11-14.md)；识别未完整后的恢复列表见[恢复列表记录](experiments/recovery-next-recording-2026-11-13.md)。
+当前桌面源码版本为 **0.2.43**，前端 package 版本为 **0.4.34**。所有快捷键共用的开始/结束及快速连按取消规则见[快捷键切换逻辑](experiments/hotkey-toggle-2026-11-14.md)。此前的[取消后恢复](experiments/hotkey-cancel-2026-11-14.md)、[按键残留修复](experiments/hotkey-repeat-2026-11-14.md)和[恢复列表](experiments/recovery-next-recording-2026-11-13.md)继续保留。
 
 ## 环境准备
 
