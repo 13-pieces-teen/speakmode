@@ -17,8 +17,11 @@
 
 ## 验证
 
-- Windows MSVC 桌面库：1108 passed、0 failed、4 ignored。新增覆盖取消 IPC 等待 hook ACK、等待中 F8 不进入停止链路、ACK 后恢复下一条准入、恢复失败仍完成清理并报错、迟到取消不能隐藏新身份，以及清理重试成功后释放旧错误门禁。
+- Windows MSVC 桌面库：1109 passed、0 failed、4 ignored。新增覆盖取消 IPC 等待 hook ACK、等待中 F8 不进入停止链路、ACK 后恢复下一条准入、恢复失败仍完成清理并报错、迟到取消不能隐藏新身份，以及清理重试成功后释放旧错误门禁。
+- 按用户要求补充代码集成回归：连续十轮录音准入/取消，轮换 Starting、Recording、FinalizingAsr、Rewriting 阶段，实际经过 recorder 取消 IPC、隔离 SQLite 和 hotkey service 命令 ACK。模拟原生回执；真实处理 lease 释放前下一次 F8 仍被拒绝，lease drop 后下一条准入恢复。每轮重放所有旧取消 IPC 和旧 DB 收据，确认它们不取消新身份，也不重复恢复 hook；最终无来源会话或输入派发记录。
 - vendored handy-keys 的恢复请求测试覆盖请求与原生完成回执分离、失败与重试序号。全部键盘库测试及安装包构建结果记录在本机发行回执。
 - 回归使用合成事件/资源状态、隔离 SQLite 和本机 HTTP；不包含真实麦克风、云端识别、目标输入或物理 F8 的自动化验收。
 
-本机日志位于工作区 `output/validation/hotkey-cancel-tests-20261114-final.log`、`hotkey-cancel-vendor-tests-20261114.log` 和 `hotkey-cancel-package-20261114.log`。0.2.41 的实机反馈是本轮问题依据，不代表 0.2.42 已实机通过；升级后的连续取消/重录结果另行记录。
+本机日志位于工作区 `output/validation/hotkey-cancel-code-validation-20261114.log`、`hotkey-cancel-vendor-tests-20261114.log` 和 `hotkey-cancel-package-20261114.log`。安装包构建时桌面库为 1108 项通过，补充十轮回归后为 1109；后一次只修改测试与说明，生产源码保持一致。
+
+0.2.42 安装器已以保留数据的更新模式执行并返回 0，安装目录文件版本已确认。随后自动启动被用户 Esc 中断，用户指定改用代码验证；没有把仍运行 0.2.41 时的反馈计作 0.2.42 结果。连续物理取消/重录、真实云端与目标输入仍未验收。
