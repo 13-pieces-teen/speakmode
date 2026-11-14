@@ -38,6 +38,10 @@ impl ShortcutTap {
         self.trigger_key = None;
         self.held.clear();
     }
+    fn feed_observed(&mut self, event: KeyEvent, origin: handy_keys::KeyOrigin, now: Instant) -> bool {
+        if origin == handy_keys::KeyOrigin::Reconciled { self.reset(); false }
+        else { self.feed(event, now) }
+    }
     pub fn feed(&mut self, event: KeyEvent, now: Instant) -> bool {
         let was_held = event.key.is_some_and(|k| self.held.contains(&k));
         if let Some(key) = event.key {
@@ -80,6 +84,7 @@ impl ShortcutTap {
 }
 
 enum Command {
+    Refresh(UpdateAck),
     Replace(Hotkey, UpdateAck),
     Capture(bool, UpdateAck),
     Enable(bool, UpdateAck),
@@ -195,6 +200,21 @@ impl HotkeyService {
         self.require_running()?;
         self.control.send_timeout(Command::Reset, Duration::from_secs(1)).map_err(|_| PlatformError::Disconnected)
     }
+    pub fn refresh(&self) -> Result<()> { self.ack(Command::Refresh) }
+    #[cfg(test)]
+    pub(crate) fn test_refresh_service(refresh: impl Fn() -> std::result::Result<(), String> + Send + 'static) -> Self {
+        Self::start_worker(Duration::from_secs(1), move |rx, stopping, ready| {
+            ready.send(Ok(())).unwrap();
+            while !stopping.load(Ordering::SeqCst) {
+                match rx.recv_timeout(Duration::from_millis(5)) {
+                    Ok(Command::Refresh(ack)) => ack.apply(&refresh),
+                    Err(RecvTimeoutError::Timeout) => {},
+                    Err(RecvTimeoutError::Disconnected) => break,
+                    _ => panic!("unexpected test hotkey command"),
+                }
+            }
+        }).unwrap()
+    }
     fn ack(&self, make: impl FnOnce(UpdateAck) -> Command) -> Result<()> {
         self.require_running()?;
         let (tx, rx) = bounded(1);
@@ -259,6 +279,18 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
     while !stopping.load(Ordering::SeqCst) {
         while let Ok(command) = control.try_recv() {
             match command {
+                Command::Refresh(ack) => ack.apply(|| {
+                    if !enabled || capture || !hook_available { return Err("keyboard hook recovery is unavailable".into()); }
+                    let request = menu_mask.request_hook_refresh();
+                    let deadline = Instant::now() + Duration::from_millis(750);
+                    let succeeded = loop {
+                        if let Some(result) = menu_mask.hook_refresh_result(request) { break result; }
+                        if Instant::now() >= deadline { return Err("keyboard hook recovery timed out".into()); }
+                        thread::sleep(Duration::from_millis(5));
+                    };
+                    if !succeeded { return Err("keyboard hook reinstall failed".into()); }
+                    tap.reset(); recorded = None; menu_mask.reset(); Ok(())
+                }),
                 Command::Replace(shortcut, ack) => {
                     ack.apply(|| {
                         if hook_available {
@@ -294,7 +326,7 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
                 callback(HotkeyEvent::LifecycleReset(format!("{lifecycle:?}")));
                 if lifecycle == Lifecycle::HooksUnavailable { callback(HotkeyEvent::Unavailable("hook reinstall failed".into())); }
             },
-            Ok(ObservedEvent::Key { origin: KeyOrigin::Reconciled, .. }) => { tap.reset(); recorded = None;menu_mask.reset(); },
+            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Reconciled }) => { tap.feed_observed(event, KeyOrigin::Reconciled, Instant::now()); recorded = None;menu_mask.reset(); },
             Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical }) if capture => {
                 // Capture a complete gesture and keep recording Toggle disabled.
                 if event.is_key_down {
@@ -307,7 +339,7 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
                 }
             },
             Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical }) if enabled => {
-                if tap.feed(event, Instant::now()) && (tap.shortcut.key.is_some() || !unrelated_key_is_held()) { callback(HotkeyEvent::Toggle); }
+                if tap.feed_observed(event, KeyOrigin::Physical, Instant::now()) && (tap.shortcut.key.is_some() || !unrelated_key_is_held()) { callback(HotkeyEvent::Toggle); }
             },
             Ok(_) | Err(handy_keys::Error::Timeout) => {},
             Err(error) => { callback(HotkeyEvent::Unavailable(error.to_string())); break; },
@@ -344,6 +376,36 @@ mod tests {
         KeyEvent { modifiers, key: Some(value), is_key_down: down, changed_modifier: None }
     }
     fn tap() -> ShortcutTap { ShortcutTap::new("alt_right".parse().unwrap(), Duration::from_secs(1)) }
+    #[test]
+    fn f8_recovers_after_an_unrelated_key_release_is_lost_between_recordings() {
+        use handy_keys::KeyOrigin::{Physical, Reconciled};
+        let mut tap = ShortcutTap::new("f8".parse().unwrap(), Duration::from_secs(1));
+        let n = Instant::now();
+        // The first recording starts and stops normally.
+        for _ in 0..2 {
+            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
+            assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+        }
+        tap.feed_observed(key(Key::A, Modifiers::empty(), true), Physical, n);
+        // Another hook/desktop can consume A-up. Reconciliation cancels that
+        // old hold, without interpreting its release as a recording toggle.
+        assert!(!tap.feed_observed(key(Key::A, Modifiers::empty(), false), Reconciled, n));
+        for _ in 0..10 {
+            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
+            assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+        }
+    }
+    #[test]
+    fn a_reconciled_f8_release_cancels_the_hold_and_requires_a_fresh_physical_tap() {
+        use handy_keys::KeyOrigin::{Physical, Reconciled};
+        let mut tap = ShortcutTap::new("f8".parse().unwrap(), Duration::from_secs(1));
+        let n = Instant::now();
+        tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n);
+        assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Reconciled, n));
+        assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+        assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
+        assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+    }
     #[test] fn tap_requires_full_independent_release() {
         let mut t = tap(); let now = Instant::now();
         assert!(!t.feed(modifier(Modifiers::OPT_RIGHT, Modifiers::OPT_RIGHT, true), now));

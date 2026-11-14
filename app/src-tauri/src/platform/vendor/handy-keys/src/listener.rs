@@ -36,8 +36,38 @@ pub enum ObservedEvent { Key { event: KeyEvent, origin: KeyOrigin }, Lifecycle(L
 /// Only a completed standalone Alt/Win tap may replace its native release.
 /// Updating any policy advances an epoch so an older hold cannot cross an ACK.
 #[derive(Clone, Default)]
-pub struct StandaloneTapMaskControl { state: Arc<AtomicU64> }
+pub struct StandaloneTapMaskControl { state: Arc<AtomicU64>, refresh: Arc<HookRefresh> }
+#[derive(Default)]
+struct HookRefresh { requested: AtomicU64, completed: AtomicU64, succeeded: AtomicBool }
+#[cfg(test)]
+mod hook_refresh_tests {
+    use super::*;
+    #[test]
+    fn refresh_intent_requires_a_matching_native_completion_and_can_retry_failure() {
+        let control=StandaloneTapMaskControl::default();
+        let native=StandaloneTapMenuMask::new(control.clone());
+        assert_eq!(native.pending_hook_refresh(),None);
+        let first=control.request_hook_refresh();
+        assert_eq!(control.hook_refresh_result(first),None);
+        assert_eq!(native.pending_hook_refresh(),Some(first));
+        native.complete_hook_refresh(first,false);
+        assert_eq!(control.hook_refresh_result(first),Some(false));
+        let second=control.request_hook_refresh();assert!(second>first);
+        assert_eq!(control.hook_refresh_result(second),None);
+        assert_eq!(native.pending_hook_refresh(),Some(second));
+        native.complete_hook_refresh(second,true);
+        assert_eq!(control.hook_refresh_result(second),Some(true));
+        assert_eq!(native.pending_hook_refresh(),None);
+    }
+}
 impl StandaloneTapMaskControl {
+    /// Ask the native owner to replace both hooks. The receipt is separate from
+    /// queueing intent; a live worker does not prove Windows retained its hooks.
+    pub fn request_hook_refresh(&self) -> u64 { self.refresh.requested.fetch_add(1, Ordering::SeqCst) + 1 }
+    pub fn hook_refresh_result(&self, request: u64) -> Option<bool> {
+        (self.refresh.completed.load(Ordering::SeqCst) >= request)
+            .then(|| self.refresh.succeeded.load(Ordering::SeqCst))
+    }
     pub fn configure(&self, shortcut: Option<Hotkey>, maximum: Duration) {
         let modifiers = shortcut.filter(|shortcut| shortcut.key.is_none() &&
             !shortcut.modifiers.is_empty() &&
@@ -67,6 +97,14 @@ impl StandaloneTapMenuMask {
     pub fn new(control: StandaloneTapMaskControl) -> Self { Self { control, epoch: 0, started: None } }
     pub fn reset(&mut self) { self.started=None; self.control.reset(); }
     pub fn disable(&mut self) { self.started=None; self.control.disable(); }
+    pub(crate) fn pending_hook_refresh(&self) -> Option<u64> {
+        let request=self.control.refresh.requested.load(Ordering::SeqCst);
+        (request>self.control.refresh.completed.load(Ordering::SeqCst)).then_some(request)
+    }
+    pub(crate) fn complete_hook_refresh(&self, request: u64, succeeded: bool) {
+        self.control.refresh.succeeded.store(succeeded, Ordering::SeqCst);
+        self.control.refresh.completed.store(request, Ordering::SeqCst);
+    }
     /// Recheck immediately before native replacement if the service changed its policy.
     pub fn policy_is_current(&self) -> bool {
         self.epoch & 0x3ff != 0 && self.control.state.load(Ordering::Acquire)==self.epoch

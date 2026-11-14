@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::collections::HashMap;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -86,6 +87,7 @@ struct HookContext {
     event_sender: Sender<KeyEvent>,
     observed_sender: Option<Sender<ObservedEvent>>,
     current_modifiers: Modifiers,
+    pressed_keys: HashMap<u16, Key>,
     blocking_hotkeys: Option<BlockingHotkeys>,
     /// AltGr's phantom Left Ctrl is currently held. The hook drops the
     /// phantom's own events, but GetAsyncKeyState still reports LCtrl as
@@ -250,6 +252,34 @@ fn reconcile_modifiers(ctx: &mut HookContext) {
     if !ctx.current_modifiers.intersects(MENU_MODIFIERS) {
         ctx.menu_mask_sent = false;
     }
+}
+
+/// Run only after draining native messages, never inside a key hook: async
+/// state does not include the in-flight hook event. A lost key-up must cancel
+/// the gesture, not leave ShortcutTap's held set blocking every later F8 tap.
+/// Only release observed keys; synthetic paste chords must not add presses.
+fn reconcile_released_keys(ctx: &mut HookContext, is_down: impl Fn(u16) -> bool) {
+    let released = ctx.pressed_keys.iter().filter(|(vk, _)| !observed_key_is_down(**vk, &is_down))
+        .map(|(vk, key)| (*vk, *key)).collect::<Vec<_>>();
+    for (vk, key) in released {
+        ctx.pressed_keys.remove(&vk);
+        if let Some(mask) = ctx.standalone_tap.as_mut() { mask.reset(); }
+        emit_key(ctx, KeyEvent { modifiers: ctx.current_modifiers, key: Some(key),
+            is_key_down: false, changed_modifier: None }, KeyOrigin::Reconciled);
+    }
+}
+
+fn track_key(ctx: &mut HookContext, vk: u16, key: Key, down: bool) -> Key {
+    if down { *ctx.pressed_keys.entry(vk).or_insert(key) }
+    else { ctx.pressed_keys.remove(&vk).unwrap_or(key) }
+}
+
+fn observed_key_is_down(vk: u16, is_down: &impl Fn(u16) -> bool) -> bool {
+    // Async mouse state is physical. Keep primary-button holds until BOTH
+    // buttons are up, independent of swapping or remapping during a hold.
+    // A real mouse-up still removes its entry immediately in track_key.
+    if matches!(vk, 0x01 | 0x02) { is_down(0x01) || is_down(0x02) }
+    else { is_down(vk) }
 }
 
 fn emit_key(ctx: &HookContext, event: KeyEvent, origin: KeyOrigin) {
@@ -449,6 +479,7 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
                 event_sender: tx,
                 observed_sender: observed.then_some(observe_tx),
                 current_modifiers: Modifiers::empty(),
+                pressed_keys: HashMap::new(),
                 blocking_hotkeys: thread_blocking,
                 altgr_phantom_ctrl: false,
                 menu_mask_sent: false,
@@ -514,6 +545,11 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
             if outcome.quit {
                 break;
             }
+            HOOK_CONTEXT.with(|cell| {
+                if let Some(ctx) = cell.borrow_mut().as_mut() {
+                    reconcile_released_keys(ctx, |vk| unsafe { GetAsyncKeyState(i32::from(vk)) } as u16 & 0x8000 != 0);
+                }
+            });
             if outcome.reconcile {
                 reconcile_modifiers_in_context();
             }
@@ -521,18 +557,22 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
             // SendMessage (dispatched inside PeekMessageW, never seen by the
             // drain loop) -- WM_POWERBROADCAST always, WM_WTSSESSION_CHANGE
             // on builds that send rather than post it.
-            if outcome.reinstall_hooks || take_reinstall_request() {
+            let system_reinstall = outcome.reinstall_hooks || take_reinstall_request();
+            let requested = HOOK_CONTEXT.with(|cell| cell.borrow().as_ref()
+                .and_then(|ctx| ctx.standalone_tap.as_ref()).and_then(StandaloneTapMenuMask::pending_hook_refresh));
+            if system_reinstall || requested.is_some() {
                 super::activity::invalidate();
-                unsafe {
-                    if reinstall_hooks(&mut kb_hook, &mut mouse_hook) {
-                        // At most a few lines per unlock/resume, and it makes
-                        // the re-arm observable in the field.
-                        lifecycle_event(Lifecycle::HooksReinstalled);
-                    } else {
-                        // Keep the old hooks: they usually still work (the
-                        // reinstall is defensive hardening, not a repair).
-                        lifecycle_event(Lifecycle::HooksUnavailable);
-                    }
+                let succeeded = unsafe { reinstall_hooks(&mut kb_hook, &mut mouse_hook) };
+                if let Some(request) = requested {
+                    HOOK_CONTEXT.with(|cell| { if let Some(mask) = cell.borrow().as_ref()
+                        .and_then(|ctx| ctx.standalone_tap.as_ref()) { mask.complete_hook_refresh(request, succeeded); } });
+                }
+                if succeeded {
+                    // Routine recovery must not impersonate an unlock/resume
+                    // and interrupt a newer application task.
+                    if system_reinstall { lifecycle_event(Lifecycle::HooksReinstalled); }
+                } else {
+                    lifecycle_event(Lifecycle::HooksUnavailable);
                 }
             }
 
@@ -686,6 +726,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                 reconcile_modifiers(ctx);
 
                 if let Some(key) = map_key(vk_code, scan_code, is_extended) {
+                    let key = track_key(ctx, vk_code, key, is_key_down);
                     // Regular key event
                     should_block = should_block_hotkey(
                         &ctx.blocking_hotkeys,
@@ -786,8 +827,9 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             // event), so reconcile before reading them.
             reconcile_modifiers(ctx);
 
-            // Only report left/right clicks when modifiers are held (to avoid noise)
-            let has_modifiers = !ctx.current_modifiers.is_empty();
+            // The observer tracks complete holds. If Alt is released before
+            // the mouse button, its up must still balance the earlier down.
+            let has_modifiers = ctx.observed_sender.is_some() || !ctx.current_modifiers.is_empty();
 
             let (key, is_down) = match wparam.0 as u32 {
                 WM_LBUTTONDOWN if has_modifiers => (Some(Key::MouseLeft), true),
@@ -824,6 +866,12 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, wparam: WPARAM, lparam: LPA
             };
 
             if let Some(key) = key {
+                let vk = match key {
+                    Key::MouseLeft => 0x01, Key::MouseRight => 0x02,
+                    Key::MouseMiddle => 0x04, Key::MouseX1 => 0x05, Key::MouseX2 => 0x06,
+                    _ => unreachable!(),
+                };
+                let key = track_key(ctx, vk, key, is_down);
                 should_block =
                     should_block_hotkey(&ctx.blocking_hotkeys, ctx.current_modifiers, Some(key));
 
@@ -942,6 +990,60 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
     use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
+
+    #[test]
+    fn mouse_state_polling_preserves_either_held_primary_button_even_when_swapped() {
+        for observed in [0x01, 0x02] {
+            assert!(observed_key_is_down(observed, &|vk| vk == 0x01));
+            assert!(observed_key_is_down(observed, &|vk| vk == 0x02));
+            assert!(!observed_key_is_down(observed, &|_| false));
+        }
+        assert!(!observed_key_is_down(0x77, &|vk| vk == 0x01));
+        assert!(observed_key_is_down(0x77, &|vk| vk == 0x77));
+    }
+
+    #[test]
+    fn missed_regular_and_mouse_releases_emit_only_reconciled_events_once() {
+        let (tx, _) = mpsc::channel();
+        let (observed, rx) = mpsc::channel();
+        let mut ctx = HookContext { event_sender: tx, observed_sender: Some(observed),
+            current_modifiers: Modifiers::empty(), pressed_keys: HashMap::new(),
+            blocking_hotkeys: None, altgr_phantom_ctrl: false, menu_mask_sent: false,
+            standalone_tap: None };
+        track_key(&mut ctx, 0x41, Key::A, true);
+        track_key(&mut ctx, 0x01, Key::MouseLeft, true);
+        track_key(&mut ctx, 0x77, Key::F8, true);
+        reconcile_released_keys(&mut ctx, |vk| vk == 0x77);
+        let released = rx.try_iter().map(|event| match event {
+            ObservedEvent::Key { event, origin } => {
+                assert_eq!(origin, KeyOrigin::Reconciled);
+                assert!(!event.is_key_down);
+                event.key.unwrap()
+            },
+            _ => panic!("key cleanup must not interrupt the application lifecycle"),
+        }).collect::<std::collections::HashSet<_>>();
+        assert_eq!(released, [Key::A, Key::MouseLeft].into());
+        assert_eq!(ctx.pressed_keys.len(), 1, "actually-held F8 must remain held");
+        reconcile_released_keys(&mut ctx, |_| true);
+        assert!(rx.try_recv().is_err());
+        reconcile_released_keys(&mut ctx, |_| false);
+        assert!(matches!(rx.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::F8), is_key_down: false, .. }, origin: KeyOrigin::Reconciled }));
+        reconcile_released_keys(&mut ctx, |_| false);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn physical_release_balances_the_original_key_even_if_layout_mapping_changed() {
+        let (tx, _) = mpsc::channel();
+        let mut ctx = HookContext { event_sender: tx, observed_sender: None,
+            current_modifiers: Modifiers::empty(), pressed_keys: HashMap::new(),
+            blocking_hotkeys: None, altgr_phantom_ctrl: false, menu_mask_sent: false,
+            standalone_tap: None };
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Semicolon, true), Key::Semicolon);
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, false), Key::Semicolon);
+        assert!(ctx.pressed_keys.is_empty());
+    }
 
     fn clear_message_queue() {
         let mut msg = MSG::default();
@@ -1202,6 +1304,7 @@ mod tests {
             event_sender: tx,
             observed_sender: None,
             current_modifiers: Modifiers::CMD_LEFT,
+            pressed_keys: HashMap::new(),
             blocking_hotkeys: None,
             altgr_phantom_ctrl: false,
             menu_mask_sent: true,

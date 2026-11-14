@@ -843,6 +843,75 @@ async fn cancellation_cleanup_failure_is_not_reported_as_deleted_and_can_be_retr
     fault(&h, "DROP TRIGGER fail_cleanup;");
     assert_eq!(h.cancel_session(&identity("s")).unwrap()["status"], "cancelled");
     assert!(h.db.get_result("s").is_err()); assert_eq!(view(&h).state, SessionPhase::Cancelled);
+    assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy(), "successful cleanup must retire the old failure gate");
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn recorder_cancel_waits_for_hook_refresh_before_admitting_the_next_f8_recording() {
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);
+    let (entered,seen)=std::sync::mpsc::channel();
+    let (release,wait)=std::sync::mpsc::channel();let wait=Mutex::new(wait);
+    *h.hooks.lock().unwrap()=Some(platform::hotkeys::HotkeyService::test_refresh_service(move||{
+        entered.send(()).unwrap();wait.lock().unwrap().recv_timeout(Duration::from_secs(2)).unwrap();Ok(())
+    }));
+    let worker=h.clone();let task=tokio::spawn(async move{worker.command("recording",CommandRequest{name:"session.cancel".into(),payload:identity("s")}).await});
+    tokio::task::spawn_blocking(move||seen.recv_timeout(Duration::from_secs(2)).unwrap()).await.unwrap();
+    assert!(view(&h).cancel_pending);
+    assert_eq!(h.toggle_from_hotkey().await.unwrap_err().code,"session_busy");
+    assert_eq!(view(&h).state,SessionPhase::Recording,"a cancel in progress must not be turned into stop/finalization");
+    release.send(()).unwrap();assert_eq!(task.await.unwrap().unwrap()["status"],"cancelled");
+    assert_eq!(view(&h).state,SessionPhase::Cancelled);assert!(view(&h).worker_released);
+    assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy());
+    // Missing region deliberately stops before credentials, microphone or cloud.
+    let next=h.toggle_from_hotkey().await.unwrap_err();assert_ne!(next.code,"session_busy");
+    h.hooks.lock().unwrap().as_mut().unwrap().shutdown(Duration::from_secs(1)).unwrap();
+}
+
+#[tokio::test]
+async fn recorder_cancel_reports_failed_hook_refresh_after_still_completing_content_cleanup() {
+    let h=hub();install(&h,"s",SessionPhase::Recording,true);
+    *h.hooks.lock().unwrap()=Some(platform::hotkeys::HotkeyService::test_refresh_service(||Err("synthetic native refresh failure".into())));
+    let result=h.command("recording",CommandRequest{name:"session.cancel".into(),payload:identity("s")}).await;
+    assert_eq!(result.unwrap_err().code,"shortcut_unavailable");
+    assert_eq!(view(&h).state,SessionPhase::Cancelled);assert!(!view(&h).cancel_pending);
+    assert!(h.db.get_result("s").is_err());assert_eq!(usage_count(&h),0);
+    h.hooks.lock().unwrap().as_mut().unwrap().shutdown(Duration::from_secs(1)).unwrap();
+}
+
+#[tokio::test]
+async fn ten_recorder_cancels_release_next_hotkey_admission_and_reject_late_old_receipts() {
+    let h=hub();let refreshes=Arc::new(std::sync::atomic::AtomicUsize::new(0));let count=refreshes.clone();
+    *h.hooks.lock().unwrap()=Some(platform::hotkeys::HotkeyService::test_refresh_service(move||{
+        count.fetch_add(1,Ordering::SeqCst);Ok(())
+    }));
+    let mut config=h.db.snapshot().provider_config;let version=config.version;config.region=Some("beijing".into());
+    h.db.run(DbCommand::SaveProviderConfig{config,expected_version:version}).unwrap();h.inner.lock().unwrap().key_configured=true;
+    let mut previous=Vec::<(String,u64,Value)>::new();
+    for round in 0..10 {
+        let(id,generation,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+        let processing=h.processing_lease(&id,generation);
+        let phase=[SessionPhase::Starting,SessionPhase::Recording,SessionPhase::FinalizingAsr,SessionPhase::Rewriting][round%4];
+        h.inner.lock().unwrap().active.as_mut().unwrap().phase=phase;
+        // Old IPC retries and late DB receipts must not cancel the newer identity.
+        for (old_id,old_generation,old_request) in &previous {
+            assert_eq!(h.command("recording",CommandRequest{name:"session.cancel".into(),payload:old_request.clone()}).await.unwrap()["status"],"cancelled");
+            h.finish_cancel(old_id,*old_generation,Ok(DbValue::Unit)).unwrap();
+            assert!(h.valid_active(&id,generation));assert_eq!(view(&h).state,phase);
+        }
+        let request=json!({"sessionId":id,"expectedGeneration":generation,"requestId":format!("cancel-cycle-{round}")});
+        assert_eq!(h.command("recording",CommandRequest{name:"session.cancel".into(),payload:request.clone()}).await.unwrap()["status"],"cancelled");
+        assert_eq!(refreshes.load(Ordering::SeqCst),round+1,"each new cancellation needs one recovery receipt");
+        assert_eq!(view(&h).state,SessionPhase::Cancelled);assert!(!view(&h).cancel_pending);
+        assert_eq!(h.toggle_from_hotkey().await.unwrap_err().code,"session_busy","real worker ownership remains authoritative after UI cancellation");
+        drop(processing);
+        assert!(view(&h).worker_released);assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy());
+        previous.push((id,generation,request));
+    }
+    let(next,_,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+    assert!(!previous.iter().any(|(id,_,_)|id==&next));
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM sessions").unwrap(),0);
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+    h.hooks.lock().unwrap().as_mut().unwrap().shutdown(Duration::from_secs(1)).unwrap();
 }
 
 #[test]
@@ -1493,6 +1562,35 @@ fn current_delivery(h:&AppHub)->DeliveryAttempt{let id=h.inner.lock().unwrap().a
 fn delivery_native_calls(h:&AppHub)->Arc<Mutex<Vec<(String,bool)>>> {
     let calls=Arc::new(Mutex::new(Vec::new()));let sink=calls.clone();
     h.set_native_actions(Arc::new(move|name,value|{sink.lock().unwrap().push((name.into(),value));Ok(())}));calls
+}
+
+#[tokio::test]
+async fn completed_direct_delivery_allows_repeated_next_recordings_from_the_hotkey() {
+    let h=hub();delivery_native_calls(&h);
+    let mut config=h.db.snapshot().provider_config;let version=config.version;
+    config.region=Some("beijing".into());
+    h.db.run(DbCommand::SaveProviderConfig{config,expected_version:version}).unwrap();
+    h.inner.lock().unwrap().key_configured=true;
+    for outcome in [platform::delivery::DispatchOutcome::Unconfirmed,
+        platform::delivery::DispatchOutcome::Skipped,platform::delivery::DispatchOutcome::Failed] {
+        let(id,generation,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+        let processing=h.processing_lease(&id,generation);
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();
+            s.phase=SessionPhase::FinalizingAsr;s.target=Some(delivery_target_fixture());}
+        let mut captured=source(&id);captured.generation=generation;
+        h.checkpoint(&id,generation,captured).unwrap();
+        h.commit_output(&id,generation,output(&h,&id)).unwrap();
+        h.initial_delivery_with(&id,generation,|_|true,|_,_,_,gate|{
+            assert!(gate());
+            let input_events=if matches!(outcome,platform::delivery::DispatchOutcome::Unconfirmed){4}else{0};
+            platform::delivery::DispatchReceipt{outcome:outcome.clone(),clipboard_changed:false,input_events,
+                reason:None,reason_code:None}
+        });
+        drop(processing);
+        assert!(view(&h).worker_released);
+        assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy());
+    }
+    h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
 }
 
 #[tokio::test]
