@@ -40,7 +40,7 @@ async fn comparison_context_matches_normal_profile_off_route_for_every_no_host_s
 }
 
 #[tokio::test]
-async fn legacy_custom_comparison_uses_the_same_optional_transport_route_as_normal_dictation() {
+async fn custom_comparison_and_normal_dictation_share_full_review_with_optional_context() {
     use crate::cloud::rewrite::minimum_pipeline::tests::{Server,Reply};
     const ROUTING_ACCEPT:&str=r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
     let client=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().unwrap();
@@ -55,16 +55,15 @@ async fn legacy_custom_comparison_uses_the_same_optional_transport_route_as_norm
             let baseline=personalization::context_for_preferences(&mode,&prefs,&off);
             let personalized=personalization::context_for_preferences(&mode,&prefs,&personal).unwrap();
             assert_eq!(baseline.is_some(),input_context_enabled);
-            for (context,expected_calls) in [(baseline,if input_context_enabled{2}else{1}),(Some(personalized),2)] {
+            for context in [baseline,Some(personalized)] {
                 let personalized=context.as_ref().is_some_and(|context|context.personalization.is_some());
-                let response=if context.is_some(){json!({"resolvedMode":"light","text":input.text()})}
-                    else{json!({"resolvedMode":"light","blocks":[{"text":input.text(),"sourceRange":[0,1]}]})};
-                let mut replies=vec![Reply::new(response.to_string())];if expected_calls==2{replies.push(Reply::new(ROUTING_ACCEPT));}
+                let response=json!({"resolvedMode":"light","text":input.text()});
+                let replies=vec![Reply::new(response.to_string()),Reply::new(ROUTING_ACCEPT)];
                 let server=Server::new(replies).await;let dispatch=personalization::DispatchTracker::default();
                 let execution=dispatch.observe(rewrite::execution::RewriteExecution::for_duration(std::time::Duration::from_secs(3)),context.as_ref());
                 let result=rewrite::rewrite_with_client_optional_context(&client,&config,"synthetic",&mode,&input,&dictionary,
                     CancellationToken::new(),&server.endpoint,execution,context.as_ref()).await.unwrap();
-                assert_eq!(server.count(),expected_calls,"{mode_id} input={input_context_enabled} profile={personalized}");
+                assert_eq!(server.count(),2,"{mode_id} input={input_context_enabled} profile={personalized}");
                 assert_eq!(result.blocks.iter().map(|block|block.text.as_str()).collect::<Vec<_>>().join("\n"),input.text());
                 assert_eq!(result.blocks.iter().flat_map(|block|block.source_refs.clone()).collect::<Vec<_>>(),input.items.iter().map(|item|item.id.clone()).collect::<Vec<_>>());
                 assert_eq!(input,original);

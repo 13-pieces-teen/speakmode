@@ -42,6 +42,7 @@ pub fn prepare_with_writing_context(config: &ProviderConfig, mode: &ModeSnapshot
 pub(super) fn prepare_with_literal_policy(config:&ProviderConfig,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,protect_long:bool,context:Option<&crate::core::writing_context::WritingContext>,
     precise_literals:bool)->Result<MinimumRequest,CloudError> {
+    super::validate_automatic_capacity(source)?;
     if let Some(context)=context { context.validate().map_err(|_|CloudError::new("invalid_writing_context","rewrite","输入位置上下文无效"))?; }
     let english = super::language::enabled(&source.text());
     let prompt = if english { super::language::GENERATION } else { PROMPT };
@@ -57,12 +58,16 @@ pub(super) fn prepare_with_literal_policy(config:&ProviderConfig,mode:&ModeSnaps
     if let Some(terms)=&terms {
         let policy=if terms.protects_all_latin(){"不在标记外输出英文字母。"}
             else{"精确保护实验 precise-literals-v1：标记外的普通英文允许整理重复、卡顿和语法，但不得猜测或新增专名、合并明确逐个列举的字母。"};
-        body["messages"][0]["content"] = json!(format!("协议版本：{VERSION}\n{PROMPT}\n特殊括号标记是不可改动的原始专名、逐字引语或代码。所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。{policy}标记内的语气词是原话，不能去掉；本地逐字恢复后再核对全文。"));
+        body["messages"][0]["content"] = json!(format!("协议版本：{VERSION}\n{PROMPT}\n特殊括号标记是不可改动的原始专名、逐字引语或代码。除 retiredNameMarkers 中明确撤回的旧名标记外，所有不同标记必须逐字至少保留一次，放在原来的对象和限定关系里，不猜测其内容。retiredNameMarkers 只标识紧邻明确改口所撤回的那一个旧值；按对应新名完成改口，不保留已撤回旧值，不删除其他内容。{policy}标记内的语气词是原话，不能去掉；本地逐字恢复后再核对全文。"));
     }
     let mut data = json!({
         "sourceText":text,"baseMode":mode.base_mode,"formatRules":mode.rules,
         "canonicalTerms":if terms.is_some() { Vec::<String>::new() } else { super::terms::matching_terms(source,dictionary) }
     });
+    if let Some(terms)=&terms {
+        let retired=terms.retired_name_markers();
+        if !retired.is_empty(){data["retiredNameMarkers"]=json!(retired);}
+    }
     if english { data["sourceFragments"] = json!(source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>()); }
     body["messages"][1]["content"] = json!(serde_json::to_string(&data).expect("minimum edit data serialize"));
     if let Some(context)=context { super::writing_context::attach(&mut body,mode,source,context,super::writing_context::Stage::Generation)?; }

@@ -190,7 +190,7 @@ fn notation_occurrences(text:&str,runs:&[Run],tracked:&HashSet<&str>)->Vec<(Stri
     occurrences.sort_unstable_by_key(|(_,start,_)|*start);occurrences
 }
 pub(super) fn validate(source:&SourceRevision,blocks:&[OutputBlock])->Result<(),CloudError> {
-    let source_text=source.text();
+    let source_text=super::literal_corrections::effective_text(&source.text());
     let source_runs=runs(&source_text);
     let protected_runs=source_runs.iter().filter(|run|protected(run,&source_text)).collect::<Vec<_>>();
     let tracked=protected_runs.iter().map(|run|run.letters.as_str()).collect::<HashSet<_>>();

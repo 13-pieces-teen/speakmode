@@ -1,6 +1,28 @@
 use super::*;
 
 #[tokio::test]
+async fn corrective_generation_and_final_review_preserve_permanent_http_failures(){
+    let input="嗯，预算3500元，如果测试通过再上线。";
+    let bad="预算3500元，直接上线。";
+    let corrected="预算3500元，如果测试通过再上线。";
+    for final_review in [false,true] {
+        for (status,expected) in [(401,"authentication_failed"),(403,"authentication_failed"),
+            (429,"rate_limited"),(400,"rewrite_request_rejected"),(404,"rewrite_request_rejected"),(200,"rewrite_refused")] {
+            let terminal=if status==200{Reply::refused()}else{Reply::new("private provider failure").http_status(status)};
+            let mut replies=vec![Reply::draft(bad)];
+            if final_review{replies.push(Reply::draft(corrected));}
+            replies.push(terminal);
+            let server=Server::new(replies).await;
+            let out=test_run(&server,input,Duration::from_secs(4)).await;
+            let error=out.result.err().expect("terminal failure cannot become a successful draft");
+            assert_eq!(error.code,expected,"status={status}, final_review={final_review}");
+            assert!(error.forbids_automatic_rewrite_retry());assert!(!error.message.contains("private provider failure"));
+            assert!(out.trace.correction_attempted);assert_eq!(server.count(),if final_review{3}else{2});
+        }
+    }
+}
+
+#[tokio::test]
 async fn long_dictation_can_correct_missing_or_rewritten_literal_markers_before_full_review() {
     let input=format!("请保留 `userID` 和 SVID。{}","描述当前流程。".repeat(100));
     for bad in ["请保留接口。","请保留 userId 和 SVID。"] {

@@ -300,7 +300,7 @@ impl AppHub {
     }
     pub fn snapshot(&self,window:&str)->Result<Value> {
         let mut i=self.inner.lock().unwrap();
-        i.expire_audio_caches();
+        i.expire_audio_caches(&self.db);
         let cache=self.db.snapshot();
         let mut modes=cache.modes;
         if window=="recording" {for m in &mut modes{m.rules.clear();}return Ok(json!({"sequence":i.sequence,"session":i.active.as_ref().map(|s|s.view()),"modes":modes,"recorderCaptionsEnabled":cache.preferences.recorder_captions_enabled}));}

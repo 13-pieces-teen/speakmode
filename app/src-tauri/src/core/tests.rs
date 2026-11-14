@@ -536,6 +536,21 @@ fn temporary_ready_is_retained_during_next_recording_and_replaced_only_on_comple
     store.commit_ready(output("p2")).unwrap();assert_eq!(store.latest_temporary_result().unwrap().unwrap().session.seed.id,"p2");assert!(store.get_result("p1").is_err());store.clear_temporary_results();assert!(store.latest_temporary_result().unwrap().is_none());assert_eq!(store.usage_today("2026-10-04").unwrap().count,2);
 }
 #[test]
+fn recovery_cleanup_removes_only_the_matching_private_unfinished_checkpoint() {
+    let mut store=Store::in_memory().unwrap();
+    store.checkpoint_source(seed("private-failure",StoragePolicy::MemoryOnly),source("private-failure")).unwrap();
+    store.checkpoint_source(seed("saved-failure",StoragePolicy::History),source("saved-failure")).unwrap();
+    ready(&mut store,"private-ready",StoragePolicy::MemoryOnly);
+    store.discard_memory_checkpoint("private-failure",6);
+    assert!(store.get_result("private-failure").is_ok(),"an old generation cannot erase a newer source");
+    store.discard_memory_checkpoint("private-failure",7);
+    assert!(matches!(store.get_result("private-failure"),Err(StoreError::NotFound)));
+    store.discard_memory_checkpoint("saved-failure",7);store.discard_memory_checkpoint("private-ready",7);
+    assert!(store.get_result("saved-failure").is_ok());
+    assert!(store.get_result("private-ready").unwrap().output.is_some());
+    assert_eq!(store.latest_temporary_result().unwrap().unwrap().session.seed.id,"private-ready");
+}
+#[test]
 fn manual_edit_cas_rejects_stale_draft_and_does_not_modify_source_or_usage() {
     let mut store=Store::in_memory().unwrap();let detail=ready(&mut store,"s1",StoragePolicy::History);let initial=detail.output.unwrap();let mut blocks=initial.blocks.clone();blocks[0].text="手动修正，不要订机票。".into();
     let edited=store.edit_output("s1",&initial.id,blocks.clone(),"now").unwrap();assert!(matches!(store.edit_output("s1",&initial.id,blocks,"later"),Err(StoreError::Conflict{..})));assert_eq!(store.get_source("source-s1").unwrap(),source("s1"));assert!(edited.can_undo);assert_eq!(store.usage_today("2026-10-04").unwrap().count,1);

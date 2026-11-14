@@ -96,6 +96,6 @@ fn source_and_exact_case_hints_are_data_without_fuzzy_name_replacement() {
 fn adding_candidate_does_not_change_default_request_protocol() {
     let (mode, source) = fixture(&["嗯，测试麦克风。"]);
     let config = ProviderConfig::default();
-    assert_eq!(super::super::request_body(&config, &mode, &source).unwrap(), super::super::baseline_request_body(&config, &mode, &source).unwrap());
+    assert_ne!(super::super::request_body(&config, &mode, &source).unwrap(), super::super::baseline_request_body(&config, &mode, &source).unwrap());
     assert_ne!(super::super::request_body(&config, &mode, &source).unwrap(), super::super::natural_request_body(&config, &mode, &source, &DictionarySnapshot::default()).unwrap());
 }

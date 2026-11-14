@@ -82,8 +82,10 @@ pub(super) async fn request_content_with_execution(client: &Client, config: &Pro
     };
     checkpoint(cancel, deadline)?;
     if !response.status().is_success() {
-        let code = match response.status().as_u16() { 401 | 403 => "authentication_failed", 429 => "rate_limited", _ => "rewrite_service_error" };
-        return Err(CloudError::new(code, "rewrite", "整理服务未接受请求，识别稿仍保留"));
+        let code = match response.status().as_u16() { 401 | 403 => "authentication_failed", 429 => "rate_limited", 400..=499 => "rewrite_request_rejected", _ => "rewrite_service_error" };
+        let message=if code=="rewrite_request_rejected" {"整理请求被拒绝，请检查服务配置或模型。识别稿仍保留。"}
+            else {"整理服务未接受请求，识别稿仍保留"};
+        return Err(CloudError::new(code, "rewrite", message));
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(transport_error)? {

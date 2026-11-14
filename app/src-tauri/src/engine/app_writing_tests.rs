@@ -59,6 +59,93 @@ async fn same_browser_fields_select_distinct_scenes_with_same_source(){
         assert!(h.inner.lock().unwrap().active.as_ref().unwrap().input_context.is_none());
     }
 }
+
+fn email_profile(h:&AppHub) {
+    let config=PersonalizationConfig{enabled:true,active_profile_id:Some("email-profile".into()),
+        profiles:vec![PersonalProfile{id:"email-profile".into(),name:"邮件身份".into(),profession:"软件开发".into(),
+            domain:String::new(),description:String::new(),tasks:Vec::new(),audience:"同事".into(),
+            scenes:vec![AppWritingScene::Email],instructions:String::new()}],
+        scene_overrides:vec![ScenePreference{scene:AppWritingScene::Email,preferences:ExpressionStyle{tone:ExpressionTone::Formal,..Default::default()}}],
+        ..Default::default()};
+    let DbValue::Personalization(saved)=h.db.run(DbCommand::SavePersonalization{config,expected_version:1}).unwrap()else{panic!("profile receipt");};
+    h.inner.lock().unwrap().active.as_mut().unwrap().personalization=saved;
+}
+
+#[tokio::test]
+async fn original_source_copy_preserves_scene_context_and_profile_before_or_after_freeze(){
+    for (application,label,scene) in [("wechat.exe","",AppWritingScene::Chat),("outlook.exe","",AppWritingScene::Email),("msedge.exe","Email body",AppWritingScene::Email)] {
+        for copy_before_freeze in [true,false] {
+            let h=setup("auto",application,label);email_profile(&h);
+            let expected={let i=h.inner.lock().unwrap();app_writing::freeze(i.active.as_ref().unwrap()).unwrap()};
+            assert_eq!(expected.scene,scene);
+            if scene==AppWritingScene::Email{assert_eq!(expected.personalization.as_ref().unwrap().profile_id.as_deref(),Some("email-profile"));}
+            if copy_before_freeze {h.copy_current_recorder_with("recoverable.copy",&identity("s"),|_|Ok(())).unwrap();}
+            let worker=h.clone();let frozen=expected.clone();
+            h.finish_rewrite_with_context_policy("s".into(),7,move|_,_,source,_,_,context|async move {
+                assert_eq!(context,Some(frozen));
+                if !copy_before_freeze {worker.copy_current_recorder_with("recoverable.copy",&identity("s"),|_|Ok(())).unwrap();}
+                Ok(draft(&source))
+            },None::<RewriteWaitPolicy>,|h,id,generation|h.initial_delivery_with(id,generation,
+                |_|panic!("manual copy cannot inspect an input target"),|_,_,_,_|panic!("manual copy cannot inject"))).await;
+            let detail=h.db.get_result("s").unwrap();assert_eq!(detail.source,source("s"));
+            let receipt=detail.output.unwrap().writing_receipt.unwrap();
+            assert_eq!(receipt.scene,expected.scene);assert_eq!(receipt.context_used,expected.input.is_some());assert_eq!(receipt.personalization,expected.personalization);
+            assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn copy_during_stop_target_or_context_inspection_keeps_the_same_authorized_hints(){
+    for waiting_for_context in [false,true] {
+        let h=hub();install(&h,"s",SessionPhase::Recording,true);email_profile(&h);
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();s.prefs.app_writing.input_context_enabled=true;
+            s.captions.push(CaptionItem{id:"partial".into(),text:"已识别的文字".into(),revision:1,is_final:false,capture_order:0});}
+        h.begin_stop_target(&identity("s"),Instant::now()).unwrap();
+        let (started_tx,started_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
+        let worker=h.clone();let native=std::thread::spawn(move||{
+            let wait=||{started_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(5)).unwrap();};
+            worker.resolve_stop_target_with_context("s",7,
+                ||{if !waiting_for_context{wait();}Ok(Some(delivery_target_fixture()))},
+                |_|Some("msedge.exe".into()),
+                |_|{if waiting_for_context{wait();}Ok(InputContext{control_label:"Email body".into(),before_text:"SAME_AUTHORIZED_HOST".into(),..Default::default()})});
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        h.copy_current_recorder_with("recoverable.copy",&identity("s"),|_|Ok(())).unwrap();
+        release_tx.send(()).unwrap();native.join().unwrap();
+        let expected={let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();
+            assert!(!s.target_capture_pending&&!s.input_context_capture_pending);assert!(s.original_delivery_revoked);
+            app_writing::freeze(s).unwrap()};
+        assert_eq!(expected.scene,AppWritingScene::Email);assert_eq!(expected.input.as_ref().unwrap().before_text,"SAME_AUTHORIZED_HOST");
+        assert_eq!(expected.personalization.as_ref().unwrap().profile_id.as_deref(),Some("email-profile"));
+        checkpoint(&h,"s");complete(&h,move|context|assert_eq!(context,Some(expected))).await;
+        assert_eq!(view(&h).state,SessionPhase::Ready);
+    }
+}
+
+#[test]
+fn source_copy_cannot_reauthorize_context_after_revision_retry_failure_or_disposal(){
+    for invalidation in ["revision","retry","cancel","failure","discard"] {
+        let h=setup("auto","msedge.exe","Email body");
+        h.copy_current_recorder_with("recoverable.copy",&identity("s"),|_|Ok(())).unwrap();
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();assert!(app_writing::accepts_stop_context(s));
+            match invalidation {
+                "revision"=>{s.reserve_revision_intent();},
+                "retry"=>s.reason=CreationReason::Retry,
+                "cancel"=>{s.cancel.cancel();s.discard_input_context();},
+                "failure"=>{s.phase=SessionPhase::Failed;s.discard_input_context();},
+                "discard"=>s.discard_input_context(),_=>unreachable!(),
+            }
+            assert!(!app_writing::accepts_stop_context(s));s.target_capture_pending=true;
+        }
+        if invalidation=="revision"||invalidation=="retry"||invalidation=="discard" {
+            h.copy_current_recorder_with("recoverable.copy",&identity("s"),|_|Ok(())).unwrap();
+        }
+        h.resolve_stop_target_with_context("s",7,||Ok(Some(delivery_target_fixture())),|_|Some("msedge.exe".into()),|_|panic!("invalidated hints must not be read"));
+        let i=h.inner.lock().unwrap();let s=i.active.as_ref().unwrap();assert!(!app_writing::accepts_stop_context(s));
+        if let Some(context)=app_writing::freeze(s){assert!(context.input.is_none());assert_eq!(context.scene,AppWritingScene::General);}
+    }
+}
 #[tokio::test]
 async fn explicit_scene_beats_host_and_language_is_frozen(){
     let h=setup("document","msedge.exe","Send a message");

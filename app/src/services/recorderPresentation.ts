@@ -25,8 +25,12 @@ export function recorderPresentation(session:LiveSession|null,captionsEnabled=fa
   // Native startup also waits for ASR readiness. Microphone feedback starts
   // as soon as real samples arrive, including while the provider connects.
   const listening=(starting||recording)&&session.captureReady===true;
-  return {...view,state:starting||recording?'listening':'processing',label:listening?'正在聆听':starting||recording?'准备录音':'正在转成文字',
+  const stages:Record<string,string>={generation:'正在整理',review:'正在核对内容',repair:'正在修整表达',finalReview:'正在核对成稿',recoveryGeneration:'正在重新整理',recoveryReview:'正在核对重试结果',recoveryRepair:'正在修整重试结果',recoveryFinalReview:'正在核对最终成稿'};
+  const copySource=processing&&session.canCopyRecovery===true;
+  return {...view,state:starting||recording?'listening':'processing',label:listening?'正在聆听':starting||recording?'准备录音':phase==='rewriting'?(stages[session.processingStage??'']??'正在整理'):phase==='delivering'?'正在填入':'正在完成识别',
+   message:session.recordingLimitRemainingMs===0?'已到录音时长上限，正在完成已录内容；完成后请查看结果。':'',
    waveform:listening,canStop:starting||recording,close:phase==='delivering'?null:'cancel',
+   primary:copySource?'copyRecovery':null,showResult:copySource,
    showCaptions:(captionsEnabled||!!session.onboardingLesson)&&!session.rewriteFallback&&!starting};
  }
  if(phase==='failed'||phase==='incomplete')return {...view,state:'attention',label:phase==='incomplete'?'识别未完整':'这次口述需要处理',
@@ -36,6 +40,8 @@ export function recorderPresentation(session:LiveSession|null,captionsEnabled=fa
   const delivery=deliveryFeedback(session);
   if(['prepared','dispatched'].includes(session.deliveryState??'')||session.workerReleased!==true)
    return {...view,state:'processing',label:'正在完成',message:session.error??'',showCaptions:false};
+  if(session.recordingLimitRemainingMs===0&&!session.error)
+   return {...view,state:'settled',label:'本段已完成',message:'已到录音时长上限，结果已保留，请查看后复制。',close:'dismiss',showResult:true,primary:'openResult'};
   if(session.rewriteRecovery&&!delivery?.warning&&!session.error)return {...view,state:'settled',
    label:delivery?.title??'整理结果已保留',message:delivery?.message??'',close:'dismiss',showResult:true,primary:'openResult'};
   if(delivery?.warning||session.error||session.rewriteFallback){

@@ -15,6 +15,14 @@ const {recorderPresentation}=await import(pathToFileURL(out+'/recorder-presentat
 
 const tests=[],session=(state,deliveryState,deliveryFailureReason)=>({sessionId:'synthetic-result',generation:1,state,deliveryState,deliveryFailureReason,workerReleased:true});
 const test=async(name,run)=>{try{await run();tests.push({name,status:'PASS'});}catch(error){tests.push({name,status:'FAIL',error:String(error)});}};
+await test('Processing stages explain recognition, editing and review while keeping source copy available',()=>{
+ for(const [processingStage,label] of [['generation','正在整理'],['review','正在核对内容'],['repair','正在修整表达'],['finalReview','正在核对成稿'],['recoveryGeneration','正在重新整理']]){
+  const view=recorderPresentation({...session('rewriting'),processingStage,canCopyRecovery:true});
+  assert.equal(view.label,label);assert.equal(view.primary,'copyRecovery');assert.equal(view.showResult,true);assert.equal(view.close,'cancel');
+ }
+ assert.equal(recorderPresentation(session('finalizingAsr')).label,'正在完成识别');
+ const capped=recorderPresentation({...session('ready'),recordingLimitRemainingMs:0});assert.equal(capped.primary,'openResult');assert.match(capped.message,/时长上限/);
+});
 await test('Ready without receipt is not reported as pasted or failed',()=>{
  assert.equal(deliveryFeedback(null),null);
  assert.equal(deliveryFeedback(session('ready')),null);
@@ -207,6 +215,21 @@ const renderRecovery=(live)=>{
  setDesktop({session:live,command:async(name,payload)=>calls.push({name,payload}),refresh:async()=>calls.push({name:'state.snapshot'})});
  return {tree:SessionRecovery({onOpen:id=>opened.push(id)}),calls,opened};
 };
+await test('Pending cloud retry does not block an independent explicit source copy',async()=>{
+ const calls=[];let release;
+ const cloud=new Promise(resolve=>{release=resolve;});
+ setDesktop({session:{...session('failed'),error:'整理未完成',canRetryRewrite:true,canCopyRecovery:true},
+  command:async(name,payload)=>{calls.push({name,payload});if(name==='rewrite.retry')await cloud;return {automaticDeliveryRevoked:name==='recoverable.copy'};},
+  refresh:async()=>calls.push({name:'state.snapshot'})});
+ const tree=SessionRecovery({onOpen:()=>{}});
+ nodes(tree,node=>node.type==='button'&&node.props.children==='重试整理')[0].props.onClick();
+ await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls.map(call=>call.name),['rewrite.retry']);
+ nodes(tree,node=>node.type==='button'&&node.props.children==='复制已有文字')[0].props.onClick();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.deepEqual(calls.map(call=>call.name),['rewrite.retry','recoverable.copy','state.snapshot']);
+ assert.equal(calls[1].payload.sessionId,'synthetic-result');assert.equal(calls[1].payload.expectedGeneration,1);
+ release();await new Promise(resolve=>setImmediate(resolve));
+});
 await test('Main window stays quiet after normal delivery without clearing results, navigating, or retrying',()=>{
  for(const state of [undefined,'prepared','dispatched','unconfirmed','confirmed']){
   for(const extra of [{},{rewriteFallback:'timeout'}]){
@@ -256,7 +279,8 @@ await test('A real saved-result error remains visible even when the dispatch rec
 await test('Compact state mapping requires actual capture and never reports unconfirmed paste as success',()=>{
  assert.equal(recorderPresentation({...session('recording'),captureReady:false}).label,'准备录音');
  assert.equal(recorderPresentation({...session('recording'),captureReady:true}).label,'正在聆听');
- for(const phase of ['finalizingAsr','rewriting'])assert.equal(recorderPresentation(session(phase)).label,'正在转成文字');
+ assert.equal(recorderPresentation(session('finalizingAsr')).label,'正在完成识别');
+ assert.equal(recorderPresentation(session('rewriting')).label,'正在整理');
  const normal=recorderPresentation(session('ready','unconfirmed'));
  assert.equal(normal.state,'settled');assert.equal(normal.primary,null);assert.equal(normal.showResult,false);assert.notEqual(normal.label,'已填入');
 });

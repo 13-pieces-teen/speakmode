@@ -777,6 +777,15 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+    /// Recovery removal must release private checkpoints too. Completed temporary
+    /// results and persistent history are independent of the recovery list.
+    pub(crate) fn discard_memory_checkpoint(&mut self,session_id:&str,generation:u64) {
+        if self.memory_sessions.get(session_id).is_some_and(|memory|
+            memory.record.seed.generation==generation && memory.record.status!=StoredSessionStatus::Ready
+                && memory.record.current_output_id.is_none()) {
+            self.memory_sessions.remove(session_id);
+        }
+    }
     pub fn clear_temporary_results(&mut self) {self.memory_sessions.clear();self.latest_memory_ready=None;}
     fn validate_mode_snapshot(&self,snapshot:&ModeSnapshot) -> StoreResult<()> {
         if self.mode_snapshot(&snapshot.mode_id,Some(snapshot.revision))?!=*snapshot {return Err(invalid("Mode snapshot does not match its saved revision"));}

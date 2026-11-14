@@ -42,7 +42,7 @@ fn wire(mode: BaseMode, blocks: Value) -> String {
 #[test]
 fn request_uses_local_numeric_indexes_and_never_exposes_stable_source_ids() {
     let (mode, source) = budget_fixture(BaseMode::Light);
-    let body = request_body(&ProviderConfig::default(), &mode, &source).unwrap();
+    let body = baseline_request_body(&ProviderConfig::default(), &mode, &source).unwrap();
     let content = body["messages"][1]["content"].as_str().unwrap();
     let data: Value = serde_json::from_str(content).unwrap();
     assert_eq!(data["sourceCount"], 10);

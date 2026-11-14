@@ -20,6 +20,39 @@ async fn run_local(url:String,audio:mpsc::Receiver<AsrInput>,cancel:Cancellation
 }
 fn ignored()->Arc<dyn Fn(AsrProgress)+Send+Sync>{Arc::new(|_|{})}
 
+#[test]
+fn native_resampled_frames_satisfy_asr_tail_and_source_duration_contract() {
+    for hz in [8_000, 16_000, 32_000, 44_100, 48_000] {
+        for n in [0, 1, 2, 10, 100, 1023, 1024, 1025, 1599, 1600, 1601, 4096, 4396, 50_333] {
+            let frames = crate::platform::audio::synthetic_capture_for_test(hz, &vec![0.2; n]);
+            let mut sequence = AudioSequence::default();
+            let count = frames.len() as u64;
+            for frame in frames {
+                sequence.frame(frame.sequence, &frame.pcm16, frame.padding_samples)
+                    .unwrap_or_else(|error| panic!("hz={hz}, n={n}: {error:?}"));
+            }
+            sequence.finish(count).unwrap();
+            assert_eq!(sequence.real_samples, (n * 16_000 / hz) as u64, "hz={hz}, n={n}");
+        }
+    }
+}
+
+#[test]
+fn final_resampled_frame_at_limit_counts_source_audio_without_filter_delay() {
+    for hz in [8_000, 16_000, 32_000, 44_100, 48_000] {
+        // Seed the already validated prefix; exercise real resampling and native
+        // framing for the final 100 ms without synthesizing ten minutes of PCM.
+        let mut sequence = AudioSequence { real_samples: 16_000 * 600 - 1600, ..Default::default() };
+        let frames = crate::platform::audio::synthetic_capture_for_test(hz, &vec![0.2; hz / 10]);
+        assert_eq!(frames.len(), 1, "hz={hz}");
+        let frame = &frames[0];
+        sequence.frame(frame.sequence, &frame.pcm16, frame.padding_samples).unwrap();
+        assert_eq!(sequence.real_samples, 16_000 * 600, "hz={hz}");
+        sequence.finish(1).unwrap();
+        assert_eq!(sequence.frame(1, &[1], 0).unwrap_err().code, "audio_frame_limit");
+    }
+}
+
 #[tokio::test]
 async fn frozen_dictionary_is_sent_once_as_corpus_context_without_replacing_provider_words() {
     let mut store=crate::core::Store::in_memory().unwrap();

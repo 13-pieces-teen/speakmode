@@ -362,12 +362,7 @@ fn capture_worker(device_id: Option<String>, conditioning_mode: ConditioningMode
             resampler.push(&chunk.samples, |frame| emit_frame(frame, 0, &frames, &mut sequence, &mut error, &mut conditioner));
             recycle_chunk(chunk, &recycle);
         }
-        let actual_output = captured as usize * OUTPUT_HZ / config.sample_rate.0 as usize + resampler.output_delay_samples();
-        // Preserve ALL finish emissions; expose only actual synthetic tail.
-        resampler.finish(|frame| {
-            let meaningful = actual_output.saturating_sub(sequence as usize * FRAME_SAMPLES).min(FRAME_SAMPLES);
-            emit_frame(frame, FRAME_SAMPLES - meaningful, &frames, &mut sequence, &mut error, &mut conditioner);
-        });
+        finish_capture_frames(&mut resampler, &frames, &mut sequence, &mut error, &mut conditioner);
         if let Some(value) = resampler.error() { error = Some(value.into()); }
     }
     let final_fault = fault.load(Ordering::SeqCst);
@@ -387,14 +382,15 @@ fn account_received_chunk(chunk: &RawChunk, queued: &AtomicUsize, captured: &mut
 
 fn emit_frame(frame: &[f32], padding_samples: usize, output: &Sender<AudioFrame>, sequence: &mut u64, error: &mut Option<String>, conditioner: &mut AudioConditioner) {
     if error.is_some() { return; }
-    if frame.len() > FRAME_SAMPLES || padding_samples > frame.len() {
+    if frame.is_empty() || frame.len() > FRAME_SAMPLES || padding_samples >= frame.len() {
         *error = Some("malformed microphone frame".into()); return;
     }
     // Worker-only scratch: no new heap allocation or work in the WASAPI callback.
     // Preserve network frame size, sequence and synthetic tail accounting.
     let mut conditioned = [0.0_f32; FRAME_SAMPLES];
-    conditioned[..frame.len()].copy_from_slice(frame);
-    conditioner.process(&mut conditioned[..frame.len() - padding_samples]);
+    let real_samples = frame.len() - padding_samples;
+    conditioned[..real_samples].copy_from_slice(&frame[..real_samples]);
+    conditioner.process(&mut conditioned[..real_samples]);
     let pcm16 = conditioned[..frame.len()].iter().map(|value| quantize(*value)).collect();
     match output.try_send(AudioFrame { sequence: *sequence, pcm16, padding_samples }) {
         Ok(()) => *sequence += 1,
@@ -404,6 +400,33 @@ fn emit_frame(frame: &[f32], padding_samples: usize, output: &Sender<AudioFrame>
         // that consequence as a proven native queue overflow.
         Err(crossbeam_channel::TrySendError::Disconnected(_)) => *error = Some(OUTPUT_CONSUMER_DISCONNECTED_ERROR.into()),
     }
+}
+
+fn finish_capture_frames(resampler: &mut FrameResampler, output: &Sender<AudioFrame>, sequence: &mut u64,
+    error: &mut Option<String>, conditioner: &mut AudioConditioner) {
+    let actual_output = resampler.source_output_samples();
+    resampler.finish(|frame| {
+        let meaningful = actual_output.saturating_sub(*sequence as usize * FRAME_SAMPLES).min(FRAME_SAMPLES);
+        emit_frame(frame, FRAME_SAMPLES - meaningful, output, sequence, error, conditioner);
+    });
+}
+
+/// Exercises the native frame producer without a microphone or native owner.
+#[cfg(test)]
+pub(crate) fn synthetic_capture_for_test(input_rate: usize, input: &[f32]) -> Vec<AudioFrame> {
+    let capacity = (input.len() * OUTPUT_HZ / input_rate).div_ceil(FRAME_SAMPLES) + 1;
+    let (tx, rx) = bounded(capacity);
+    let mut resampler = FrameResampler::new(input_rate, OUTPUT_HZ, Duration::from_millis(100));
+    let mut conditioner = AudioConditioner::new(ConditioningMode::Bypass);
+    let mut sequence = 0;
+    let mut error = None;
+    for chunk in input.chunks(137) {
+        resampler.push(chunk, |frame| emit_frame(frame, 0, &tx, &mut sequence, &mut error, &mut conditioner));
+    }
+    finish_capture_frames(&mut resampler, &tx, &mut sequence, &mut error, &mut conditioner);
+    assert!(resampler.error().is_none(), "resampler failed: {:?}", resampler.error());
+    assert!(error.is_none(), "frame production failed: {error:?}");
+    rx.try_iter().collect()
 }
 
 fn build_stream(device: &cpal::Device, config: &cpal::StreamConfig, format: cpal::SampleFormat,
@@ -931,6 +954,23 @@ mod tests {
         assert_eq!(sent.padding_samples, FRAME_SAMPLES - 7);
         assert_eq!(sent.pcm16, frame.iter().map(|v| quantize(*v)).collect::<Vec<_>>());
         assert_eq!(conditioner.summary().real_samples, 7);
+    }
+    #[test] fn synthetic_padding_is_zero_and_an_empty_tail_is_never_emitted() {
+        let (tx, rx) = bounded(2);
+        let mut sequence = 0;
+        let mut error = None;
+        let mut conditioner = AudioConditioner::new(ConditioningMode::Bypass);
+        // A producer's scratch data beyond the declared source duration cannot
+        // leak onto the wire as padding, even when that memory is nonzero.
+        emit_frame(&[0.2; FRAME_SAMPLES], FRAME_SAMPLES - 7, &tx, &mut sequence, &mut error, &mut conditioner);
+        let frame = rx.try_recv().unwrap();
+        assert!(error.is_none());
+        assert!(frame.pcm16[..7].iter().all(|&v| v != 0));
+        assert!(frame.pcm16[7..].iter().all(|&v| v == 0));
+        emit_frame(&[0.0; FRAME_SAMPLES], FRAME_SAMPLES, &tx, &mut sequence, &mut error, &mut conditioner);
+        assert_eq!(sequence, 1);
+        assert_eq!(error.as_deref(), Some("malformed microphone frame"));
+        assert!(rx.try_recv().is_err());
     }
     #[test] fn conditioned_stop_tail_retains_every_real_sample_and_network_frame() {
         let (tx, rx) = bounded(4); let mut seq = 0; let mut error = None;

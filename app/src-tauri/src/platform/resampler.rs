@@ -1,8 +1,8 @@
 // Extracted from cjpais/Handy, MIT, commit
 // 73ab851c2b6242283759a4c101b60f0ece132f08,
 // src-tauri/src/audio_toolkit/audio/resampler.rs.
-// Narrow SpeakMode changes expose failures and delay so missing audio cannot
-// silently be labelled complete. Original tests are retained below.
+// SpeakMode compensates FFT delay and drains the last source samples before
+// framing. Filter latency and zero padding never extend the source duration.
 use rubato::{FftFixedIn, Resampler};
 use std::time::Duration;
 
@@ -17,10 +17,11 @@ pub struct FrameResampler {
     pending: Vec<f32>,
     in_hz: usize,
     out_hz: usize,
-    /// Samples in/out of the inner resampler; `finish()` uses the pair to
-    /// know how much real audio (~10-30ms) its delay line still holds.
+    /// Original source samples, excluding any zeros fed during tail draining.
     in_count: usize,
-    out_count: usize,
+    delay_remaining: usize,
+    real_output_samples: usize,
+    finished: bool,
     fault: Option<String>,
 }
 
@@ -37,6 +38,7 @@ impl FrameResampler {
                 .expect("Failed to create resampler")
         });
 
+        let delay_remaining = resampler.as_ref().map_or(0, |r| r.output_delay());
         Self {
             resampler,
             chunk_in,
@@ -46,17 +48,22 @@ impl FrameResampler {
             in_hz,
             out_hz,
             in_count: 0,
-            out_count: 0,
+            delay_remaining,
+            real_output_samples: 0,
+            finished: false,
             fault: None,
         }
     }
 
     pub fn push(&mut self, mut src: &[f32], mut emit: impl FnMut(&[f32])) {
+        // finish is a terminal boundary; reset is required before reuse.
+        if self.finished || self.fault.is_some() { return; }
+        self.in_count += src.len();
         if self.resampler.is_none() {
+            self.real_output_samples += src.len();
             self.emit_frames(src, &mut emit);
             return;
         }
-        self.in_count += src.len();
 
         while !src.is_empty() {
             let space = self.chunk_in - self.in_buf.len();
@@ -75,8 +82,7 @@ impl FrameResampler {
                   Ok(out) => {
                     // let duration = start.elapsed();
                     // log::debug!("Resampler took: {:?}", duration);
-                    self.out_count += out[0].len();
-                    self.emit_frames(&out[0], &mut emit);
+                    self.accept_resampled(&out[0], &mut emit);
                   },
                   Err(error) => self.fault = Some(error.to_string()),
                 }
@@ -86,6 +92,8 @@ impl FrameResampler {
     }
 
     pub fn finish(&mut self, mut emit: impl FnMut(&[f32])) {
+        if self.finished { return; }
+        self.finished = true;
         if self.resampler.is_some() {
             // Process any remaining input samples (padded internally).
             if !self.in_buf.is_empty() {
@@ -96,8 +104,7 @@ impl FrameResampler {
                     .process_partial(Some(&[&self.in_buf[..]]), None);
                 match result {
                   Ok(out) => {
-                    self.out_count += out[0].len();
-                    self.emit_frames(&out[0], &mut emit);
+                    self.accept_resampled(&out[0], &mut emit);
                   },
                   Err(error) => self.fault = Some(error.to_string()),
                 }
@@ -107,14 +114,19 @@ impl FrameResampler {
                 self.in_buf.clear();
             }
 
-            // Output lags input by output_delay() samples, so all real audio
-            // has emerged only once in*ratio + delay samples are out. Feed
-            // zero chunks until then, trimming the synthetic remainder.
-            if self.in_count > 0 {
+            // Drain the delay line after removing its leading latency. Merely
+            // clipping the old output would discard the last spoken samples.
+            // An awkward sample-rate ratio may need many input chunks before
+            // one FFT block is ready, so derive the bound from its delay.
+            if self.in_count > 0 && self.fault.is_none() {
                 let delay = self.resampler.as_ref().unwrap().output_delay();
-                let expected = self.in_count * self.out_hz / self.in_hz + delay;
+                let expected = self.source_output_samples();
+                // Up to two FFT blocks may be needed: one to complete buffered
+                // input, and another to recover the delayed end of that block.
+                let max_rounds = ((delay * 4 + 4) * self.in_hz)
+                    .div_ceil(self.out_hz).div_ceil(self.chunk_in) + 2;
                 let mut rounds = 0;
-                while self.out_count < expected && rounds < 8 {
+                while self.real_output_samples < expected && rounds < max_rounds {
                     rounds += 1;
                     let result = self
                         .resampler
@@ -123,12 +135,13 @@ impl FrameResampler {
                         .process_partial::<&[f32]>(None, None);
                     match result {
                         Ok(out) => {
-                            let take = (expected - self.out_count).min(out[0].len());
-                            self.out_count += take;
-                            self.emit_frames(&out[0][..take], &mut emit);
+                            self.accept_resampled(&out[0], &mut emit);
                         }
                         Err(error) => { self.fault = Some(error.to_string()); break; },
                     }
+                }
+                if self.fault.is_none() && self.real_output_samples != self.source_output_samples() {
+                    self.fault = Some("resampler tail did not reach source duration".into());
                 }
             }
         }
@@ -150,7 +163,9 @@ impl FrameResampler {
         self.in_buf.clear();
         self.pending.clear();
         self.in_count = 0;
-        self.out_count = 0;
+        self.delay_remaining = self.resampler.as_ref().map_or(0, |r| r.output_delay());
+        self.real_output_samples = 0;
+        self.finished = false;
         self.fault = None;
         if let Some(ref mut resampler) = self.resampler {
             resampler.reset();
@@ -158,8 +173,19 @@ impl FrameResampler {
     }
 
     pub fn error(&self) -> Option<&str> { self.fault.as_deref() }
-    pub fn output_delay_samples(&self) -> usize {
-        self.resampler.as_ref().map_or(0, |r| r.output_delay())
+    /// Exact source duration at the output rate, excluding FFT latency and
+    /// frame padding. Flooring loses less than one output sample, never a frame.
+    pub fn source_output_samples(&self) -> usize {
+        self.in_count * self.out_hz / self.in_hz
+    }
+
+    fn accept_resampled(&mut self, data: &[f32], emit: &mut impl FnMut(&[f32])) {
+        let skip = self.delay_remaining.min(data.len());
+        self.delay_remaining -= skip;
+        let data = &data[skip..];
+        let take = self.source_output_samples().saturating_sub(self.real_output_samples).min(data.len());
+        self.real_output_samples += take;
+        self.emit_frames(&data[..take], emit);
     }
 
     fn emit_frames(&mut self, mut data: &[f32], emit: &mut impl FnMut(&[f32])) {
@@ -306,7 +332,7 @@ mod tests {
     }
 
     /// Push silence ending in a 200-sample 0.5 burst, then assert finish()
-    /// recovers the burst and emits floor(input*ratio) + output_delay samples,
+    /// recovers the burst and emits floor(input*ratio) source samples,
     /// padded to whole 480-sample frames.
     fn assert_tail_burst_flushed(in_hz: usize, input_len: usize, expected_out: usize) {
         let mut rs = FrameResampler::new(in_hz, 16000, Duration::from_millis(30));
@@ -328,21 +354,21 @@ mod tests {
     #[test]
     fn finish_flushes_resampler_delay() {
         // Exact chunks keep in_buf empty, so the burst survives only via the
-        // delay-line drain. 4096 in -> 1365 real out + 171 delay -> 1920 framed.
-        assert_tail_burst_flushed(48000, 4 * RESAMPLER_CHUNK_SIZE, 1920);
+        // delay-line drain. 4096 in -> 1365 real out -> 1440 framed.
+        assert_tail_burst_flushed(48000, 4 * RESAMPLER_CHUNK_SIZE, 1440);
     }
 
     #[test]
     fn finish_flushes_resampler_delay_44100() {
         // fft_size_in (1323) exceeds the 1024 chunk, so the drain must survive
-        // a zero-output round. 4096 in -> 1486 real out + 240 delay -> 1920.
+        // a zero-output round. 4096 in -> 1486 real out -> 1920 framed.
         assert_tail_burst_flushed(44100, 4 * RESAMPLER_CHUNK_SIZE, 1920);
     }
 
     #[test]
     fn finish_flushes_unaligned_tail() {
         // Ends mid-chunk: partial-chunk path plus delay drain together.
-        // 4396 in -> 1465 real out + 171 delay -> 1920 framed.
+        // 4396 in -> 1465 real out -> 1920 framed.
         assert_tail_burst_flushed(48000, 4 * RESAMPLER_CHUNK_SIZE + 300, 1920);
     }
 
@@ -355,10 +381,8 @@ mod tests {
         rs.push(&[0.5f32; 100], |_| {});
         rs.finish(|_| {});
 
-        // One fresh chunk yields ~341 output samples — below one frame, so
-        // nothing should be emitted yet. If finish() left its padded tail in
-        // in_buf, that tail is re-processed first, the output crosses the
-        // 480-sample frame boundary, and a stale frame is emitted here.
+        // A finished stream cannot be appended to without reset. In particular,
+        // leftover zero padding cannot leak into an accidental later push.
         let mut emitted = 0usize;
         rs.push(&[0.25f32; RESAMPLER_CHUNK_SIZE], |frame| {
             emitted += frame.len()
@@ -367,5 +391,50 @@ mod tests {
             emitted, 0,
             "stale resampler tail from finish() leaked into the next session"
         );
+    }
+
+    #[test]
+    fn compensated_output_matches_source_duration_for_short_and_unaligned_inputs() {
+        for hz in [8_000, 16_000, 32_000, 44_100, 48_000, 96_001] {
+            for n in [0, 1, 2, 10, 100, 1023, 1024, 1025, 1599, 1600, 1601, 4096, 4396, 50_333] {
+                let mut r = FrameResampler::new(hz, 16_000, Duration::from_millis(100));
+                let mut out = Vec::new();
+                // Hardware callback boundaries must not change the result.
+                for chunk in vec![0.2; n].chunks(137) {
+                    r.push(chunk, |frame| out.extend_from_slice(frame));
+                }
+                r.finish(|frame| out.extend_from_slice(frame));
+                let real = n * 16_000 / hz;
+                assert!(r.error().is_none(), "hz={hz}, n={n}: {:?}", r.error());
+                assert_eq!(r.real_output_samples, real, "hz={hz}, n={n}");
+                assert_eq!(out.len(), real.div_ceil(1600) * 1600, "hz={hz}, n={n}");
+                assert!(out[real..].iter().all(|&v| v == 0.0), "padding must be zero: hz={hz}, n={n}");
+                let before = out.len();
+                r.finish(|frame| out.extend_from_slice(frame));
+                assert_eq!(out.len(), before, "finish must be idempotent");
+            }
+        }
+    }
+
+    #[test]
+    fn delay_compensation_keeps_first_and_last_speech_at_their_source_positions() {
+        for hz in [8_000, 16_000, 32_000, 44_100, 48_000, 96_001] {
+            let n = hz / 2 + 333;
+            let burst = hz / 50; // 20 ms of speech at both ends, silence between.
+            let mut input = vec![0.0; n];
+            input[..burst].fill(0.5);
+            input[n - burst..].fill(-0.5);
+            let mut r = FrameResampler::new(hz, 16_000, Duration::from_millis(100));
+            let mut out = Vec::new();
+            r.push(&input, |frame| out.extend_from_slice(frame));
+            r.finish(|frame| out.extend_from_slice(frame));
+            let real = n * 16_000 / hz;
+            assert!(r.error().is_none(), "hz={hz}: {:?}", r.error());
+            // After compensation these must be at the beginning/end of real
+            // audio, not in leading latency or trimmed synthetic output.
+            assert!(out[..160].iter().any(|&v| v > 0.4), "first speech lost or delayed: hz={hz}");
+            assert!(out[real - 160..real].iter().any(|&v| v < -0.4), "last speech lost: hz={hz}");
+            assert!(out[real..].iter().all(|&v| v == 0.0));
+        }
     }
 }

@@ -12,6 +12,26 @@ const DATE: &str = "2026-10-04";
 const WAIT: Duration = Duration::from_secs(6);
 
 #[tokio::test]
+async fn private_recovery_cleanup_survives_full_job_queues_and_releases_its_owner_count() {
+    let h=Harness::new(options());
+    checkpoint(&h.db,"private-failure",StoragePolicy::MemoryOnly,&guard("private-failure")).await;
+    checkpoint(&h.db,"busy-history",StoragePolicy::History,&guard("busy-history")).await;
+    let lock=write_lock(&h.file);
+    let writing=h.db.submit(DbCommand::Ready{output:output("busy-history")},Some(guard("busy-history")),DbPriority::Normal).unwrap();
+    let normal=queue_behind_active(&h.db).await;
+    let critical=h.db.submit(DbCommand::Preferences,None,DbPriority::Critical).unwrap();
+    assert!(matches!(h.db.submit(DbCommand::Preferences,None,DbPriority::Normal),Err(StoreError::Busy)));
+    h.db.release_memory_checkpoint("private-failure",7);
+    h.db.release_memory_checkpoint("private-failure",7);
+    lock.execute_batch("ROLLBACK;").unwrap();drop(lock);
+    wait(&writing).await.unwrap();wait(&normal).await.unwrap();wait(&critical).await.unwrap();
+    until(||h.db.outstanding()==0).await;
+    assert!(matches!(invoke(&h.db,DbCommand::GetResult{session_id:"private-failure".into()},None).await,Err(StoreError::NotFound)));
+    assert!(as_detail(invoke(&h.db,DbCommand::GetResult{session_id:"busy-history".into()},None).await.unwrap()).output.is_some());
+    stop(&h.db).await;
+}
+
+#[tokio::test]
 async fn background_statistics_failure_is_visible_without_waiting_on_its_ticket_and_survives_restart(){
     let file=DbPath::new();let db=DbClient::open_with_options(&file.0,options()).unwrap();
     invoke(&db,DbCommand::TestExecuteBatch{sql:"CREATE TRIGGER reject_stats BEFORE INSERT ON personalization_events BEGIN SELECT RAISE(ABORT,'fixture'); END;".into()},None).await.unwrap();

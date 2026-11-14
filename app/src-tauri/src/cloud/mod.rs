@@ -20,6 +20,19 @@ impl CloudError {
     pub fn new(code: &str, stage: &str, message: &str) -> Self {
         Self { code: code.into(), stage: stage.into(), message: message.into() }
     }
+
+    /// A fresh automatic attempt with the same account cannot resolve these
+    /// failures. This is not a prohibition on a later explicit user retry after
+    /// fixing credentials/configuration or waiting for a rate limit to clear.
+    /// Keep this policy shared by nested correction and session recovery so a
+    /// wrapper cannot turn a terminal transport error into a content rejection.
+    pub(crate) fn forbids_automatic_rewrite_retry(&self) -> bool {
+        matches!(self.stage.as_str(), "credentials" | "configuration" | "rewrite_capacity")
+            || self.code.starts_with("stale_")
+            || matches!(self.code.as_str(), "cancelled" | "source_incomplete" | "invalid_source"
+                | "rewrite_source_too_long" | "authentication_failed" | "rate_limited"
+                | "invalid_request" | "rewrite_request_rejected" | "rewrite_refused")
+    }
 }
 
 pub struct Endpoints { pub asr: String, pub rewrite: String }
