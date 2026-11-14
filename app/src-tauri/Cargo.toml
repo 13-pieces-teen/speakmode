@@ -1,6 +1,6 @@
 [package]
 name = "speakmode"
-version = "0.2.43"
+version = "0.2.44"
 edition = "2024"
 publish = false
 description = "SpeakMode Windows voice input"

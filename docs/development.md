@@ -1,6 +1,6 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.43**，前端 package 版本为 **0.4.34**。所有快捷键共用的开始/结束及快速连按取消规则见[快捷键切换逻辑](experiments/hotkey-toggle-2026-11-14.md)。此前的[取消后恢复](experiments/hotkey-cancel-2026-11-14.md)、[按键残留修复](experiments/hotkey-repeat-2026-11-14.md)和[恢复列表](experiments/recovery-next-recording-2026-11-13.md)继续保留。
+当前桌面源码版本为 **0.2.44**，前端 package 版本为 **0.4.35**。本次[语音链路修复](experiments/voice-logic-fixes-2026-11-14.md)及[发布说明](releases/v0.2.44.md)记录录音收尾、整理复核和恢复行为。所有快捷键共用的开始/结束及快速连按取消规则见[快捷键切换逻辑](experiments/hotkey-toggle-2026-11-14.md)。此前的[取消后恢复](experiments/hotkey-cancel-2026-11-14.md)、[按键残留修复](experiments/hotkey-repeat-2026-11-14.md)和[恢复列表](experiments/recovery-next-recording-2026-11-13.md)继续保留。
 
 ## 环境准备
 
