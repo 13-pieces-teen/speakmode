@@ -12,10 +12,20 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 #[derive(Debug, Clone)]
 pub enum HotkeyEvent {
     Ready,
-    Toggle,
+    Toggle(Instant),
     Captured(String),
     LifecycleReset(String),
     Unavailable(String),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HotkeyIntent { pub at: Instant, pub lifecycle_epoch: u64 }
+
+/// One consumer preserves physical gesture order even when startup or stop
+/// inspection yields. Intent time is retained instead of using dequeue time.
+pub(crate) async fn process_hotkey_queue<F, Fut>(mut queue: tokio::sync::mpsc::Receiver<HotkeyIntent>, mut dispatch: F)
+where F: FnMut(HotkeyIntent) -> Fut, Fut: std::future::Future<Output=()> {
+    while let Some(intent)=queue.recv().await { dispatch(intent).await; }
 }
 
 /// A full gesture, not key-down. Reconciled releases must call reset instead.
@@ -326,8 +336,8 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
                 callback(HotkeyEvent::LifecycleReset(format!("{lifecycle:?}")));
                 if lifecycle == Lifecycle::HooksUnavailable { callback(HotkeyEvent::Unavailable("hook reinstall failed".into())); }
             },
-            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Reconciled }) => { tap.feed_observed(event, KeyOrigin::Reconciled, Instant::now()); recorded = None;menu_mask.reset(); },
-            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical }) if capture => {
+            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Reconciled, at }) => { tap.feed_observed(event, KeyOrigin::Reconciled, at); recorded = None;menu_mask.reset(); },
+            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical, .. }) if capture => {
                 // Capture a complete gesture and keep recording Toggle disabled.
                 if event.is_key_down {
                     if let Ok(value) = event.as_hotkey() { recorded = Some(value); }
@@ -338,8 +348,8 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
                     }
                 }
             },
-            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical }) if enabled => {
-                if tap.feed_observed(event, KeyOrigin::Physical, Instant::now()) && (tap.shortcut.key.is_some() || !unrelated_key_is_held()) { callback(HotkeyEvent::Toggle); }
+            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical, at }) if enabled => {
+                if tap.feed_observed(event, KeyOrigin::Physical, at) && (tap.shortcut.key.is_some() || !unrelated_key_is_held()) { callback(HotkeyEvent::Toggle(at)); }
             },
             Ok(_) | Err(handy_keys::Error::Timeout) => {},
             Err(error) => { callback(HotkeyEvent::Unavailable(error.to_string())); break; },
@@ -376,6 +386,25 @@ mod tests {
         KeyEvent { modifiers, key: Some(value), is_key_down: down, changed_modifier: None }
     }
     fn tap() -> ShortcutTap { ShortcutTap::new("alt_right".parse().unwrap(), Duration::from_secs(1)) }
+    #[test]
+    fn all_configured_shortcuts_emit_one_toggle_per_complete_gesture() {
+        use handy_keys::Modifiers as M;
+        let cases=[
+            ("f8",vec![key(Key::F8,M::empty(),true),key(Key::F8,M::empty(),false)]),
+            ("f9",vec![key(Key::F9,M::empty(),true),key(Key::F9,M::empty(),false)]),
+            ("ctrl+k",vec![modifier(M::CTRL_LEFT,M::CTRL_LEFT,true),key(Key::K,M::CTRL_LEFT,true),key(Key::K,M::CTRL_LEFT,false),modifier(M::empty(),M::CTRL_LEFT,false)]),
+            ("alt_right",vec![modifier(M::OPT_RIGHT,M::OPT_RIGHT,true),modifier(M::empty(),M::OPT_RIGHT,false)]),
+            ("shift_right",vec![modifier(M::SHIFT_RIGHT,M::SHIFT_RIGHT,true),modifier(M::empty(),M::SHIFT_RIGHT,false)]),
+        ];
+        let start=Instant::now();
+        for (shortcut,events) in cases {
+            let mut tap=ShortcutTap::new(shortcut.parse().unwrap(),Duration::from_secs(1));
+            for round in 0..3 {
+                let toggles=events.iter().enumerate().filter(|(index,event)|tap.feed(**event,start+Duration::from_millis(round*200+*index as u64*10))).count();
+                assert_eq!(toggles,1,"{shortcut}, round {round}");
+            }
+        }
+    }
     #[test]
     fn f8_recovers_after_an_unrelated_key_release_is_lost_between_recordings() {
         use handy_keys::KeyOrigin::{Physical, Reconciled};

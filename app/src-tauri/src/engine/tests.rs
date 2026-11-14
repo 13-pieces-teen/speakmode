@@ -28,6 +28,8 @@ mod recorder_controls_tests;
 mod personalization_tests;
 #[path="typeless_import_tests.rs"]
 mod typeless_import_tests;
+#[path="hotkey_toggle_tests.rs"]
+mod hotkey_toggle_tests;
 
 
 trait TestDb {
@@ -97,7 +99,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         onboarding_lesson:None,
         diagnostic_trace:None,caption_render_token:None,
         id: id.into(), generation: 7, phase, prefs, config, mode, dictionary:hub.db.snapshot().dictionary,
-        started_at: "2026-10-04T10:00:00+08:00".into(),
+        started_at: "2026-10-04T10:00:00+08:00".into(),started_intent:Instant::now()-Duration::from_secs(2),finished_intent:None,
         ended_at: Some("2026-10-04T10:00:12+08:00".into()), capture_duration_ms: 12_000, recording_limit_ms:RECORDING_LIMIT_MS, recording_limit_remaining_ms:None,
         first_samples: true, provider_ready: true, level: 0.0, captions: vec![], error: None,
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,

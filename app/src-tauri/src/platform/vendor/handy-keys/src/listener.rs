@@ -30,7 +30,7 @@ pub enum KeyOrigin { Physical, Reconciled }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lifecycle { Locked, Suspended, Resumed, Connected, HooksReinstalled, HooksUnavailable }
 #[derive(Debug, Clone, Copy)]
-pub enum ObservedEvent { Key { event: KeyEvent, origin: KeyOrigin }, Lifecycle(Lifecycle) }
+pub enum ObservedEvent { Key { event: KeyEvent, origin: KeyOrigin, at: Instant }, Lifecycle(Lifecycle) }
 
 /// Narrow observer policy: physical downs and native chords remain untouched.
 /// Only a completed standalone Alt/Win tap may replace its native release.
