@@ -1496,6 +1496,35 @@ fn delivery_native_calls(h:&AppHub)->Arc<Mutex<Vec<(String,bool)>>> {
 }
 
 #[tokio::test]
+async fn completed_direct_delivery_allows_repeated_next_recordings_from_the_hotkey() {
+    let h=hub();delivery_native_calls(&h);
+    let mut config=h.db.snapshot().provider_config;let version=config.version;
+    config.region=Some("beijing".into());
+    h.db.run(DbCommand::SaveProviderConfig{config,expected_version:version}).unwrap();
+    h.inner.lock().unwrap().key_configured=true;
+    for outcome in [platform::delivery::DispatchOutcome::Unconfirmed,
+        platform::delivery::DispatchOutcome::Skipped,platform::delivery::DispatchOutcome::Failed] {
+        let(id,generation,_,_,_,_)=h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+        let processing=h.processing_lease(&id,generation);
+        {let mut i=h.inner.lock().unwrap();let s=i.active.as_mut().unwrap();
+            s.phase=SessionPhase::FinalizingAsr;s.target=Some(delivery_target_fixture());}
+        let mut captured=source(&id);captured.generation=generation;
+        h.checkpoint(&id,generation,captured).unwrap();
+        h.commit_output(&id,generation,output(&h,&id)).unwrap();
+        h.initial_delivery_with(&id,generation,|_|true,|_,_,_,gate|{
+            assert!(gate());
+            let input_events=if matches!(outcome,platform::delivery::DispatchOutcome::Unconfirmed){4}else{0};
+            platform::delivery::DispatchReceipt{outcome:outcome.clone(),clipboard_changed:false,input_events,
+                reason:None,reason_code:None}
+        });
+        drop(processing);
+        assert!(view(&h).worker_released);
+        assert!(!h.inner.lock().unwrap().active.as_ref().unwrap().busy());
+    }
+    h.prepare_start_state(Instant::now(),Origin::HotkeyHook).unwrap();
+}
+
+#[tokio::test]
 async fn source_fallback_keeps_notice_visible_after_one_paste_without_retrying() {
     for fallback in [None,Some(RewriteFallbackReason::MeaningRisk),Some(RewriteFallbackReason::Timeout)] {
         let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);checkpoint(&h,"s");

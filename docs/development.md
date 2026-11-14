@@ -1,6 +1,6 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.40**，前端 package 版本为 **0.4.34**。识别未完整后继续录音及恢复列表的逻辑见[本轮修复记录](experiments/recovery-next-recording-2026-11-13.md)。
+当前桌面源码版本为 **0.2.41**，前端 package 版本为 **0.4.34**。快捷键重复唤起修复见[修复记录](experiments/hotkey-repeat-2026-11-14.md)；识别未完整后继续录音及恢复列表的逻辑见[恢复列表记录](experiments/recovery-next-recording-2026-11-13.md)。
 
 ## 环境准备
 
