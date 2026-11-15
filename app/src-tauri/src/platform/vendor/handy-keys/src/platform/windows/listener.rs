@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -35,6 +36,9 @@ use crate::types::{Key, KeyEvent, Modifiers};
 use super::keycode::{is_altgr_phantom_ctrl, map_key, vk_to_modifier};
 
 const HOOK_LOOP_TIMEOUT_MS: u32 = 10;
+// A single async-state sample is not proof of a missed physical release.
+// Require separated up samples before cancelling an observed key's hold.
+const RELEASE_CONFIRMATION_WINDOW: Duration = Duration::from_millis(30);
 
 /// Modifiers whose lone press-and-release makes the shell activate a menu:
 /// Win opens the Start menu, Alt focuses the active window's menu bar.
@@ -88,6 +92,10 @@ struct HookContext {
     observed_sender: Option<Sender<ObservedEvent>>,
     current_modifiers: Modifiers,
     pressed_keys: HashMap<u16, Key>,
+    release_candidates: HashMap<u16, Instant>,
+    // Keep the original mapping after compensation until a physical up.
+    // Consumers quarantine this hold; repeats must not create a fresh press.
+    reconciled_keys: HashMap<u16, Key>,
     blocking_hotkeys: Option<BlockingHotkeys>,
     /// AltGr's phantom Left Ctrl is currently held. The hook drops the
     /// phantom's own events, but GetAsyncKeyState still reports LCtrl as
@@ -259,19 +267,61 @@ fn reconcile_modifiers(ctx: &mut HookContext) {
 /// the gesture, not leave ShortcutTap's held set blocking every later F8 tap.
 /// Only release observed keys; synthetic paste chords must not add presses.
 fn reconcile_released_keys(ctx: &mut HookContext, is_down: impl Fn(u16) -> bool) {
-    let released = ctx.pressed_keys.iter().filter(|(vk, _)| !observed_key_is_down(**vk, &is_down))
-        .map(|(vk, key)| (*vk, *key)).collect::<Vec<_>>();
+    reconcile_released_keys_at(ctx, is_down, Instant::now());
+}
+
+fn reconcile_released_keys_at(ctx: &mut HookContext, is_down: impl Fn(u16) -> bool, now: Instant) {
+    let mut released = Vec::new();
+    for (&vk, &key) in &ctx.pressed_keys {
+        if observed_key_is_down(vk, &is_down) {
+            ctx.release_candidates.remove(&vk);
+            continue;
+        }
+        let first_up = ctx.release_candidates.entry(vk).or_insert(now);
+        if now.checked_duration_since(*first_up).is_some_and(|elapsed| elapsed >= RELEASE_CONFIRMATION_WINDOW) {
+            released.push((vk, key));
+        }
+    }
     for (vk, key) in released {
         ctx.pressed_keys.remove(&vk);
+        ctx.release_candidates.remove(&vk);
+        ctx.reconciled_keys.insert(vk, key);
         if let Some(mask) = ctx.standalone_tap.as_mut() { mask.reset(); }
-        emit_key(ctx, KeyEvent { modifiers: ctx.current_modifiers, key: Some(key),
-            is_key_down: false, changed_modifier: None }, KeyOrigin::Reconciled);
+        emit_key_at(ctx, KeyEvent { modifiers: ctx.current_modifiers, key: Some(key),
+            is_key_down: false, changed_modifier: None }, KeyOrigin::Reconciled, now);
     }
 }
 
 fn track_key(ctx: &mut HookContext, vk: u16, key: Key, down: bool) -> Key {
-    if down { *ctx.pressed_keys.entry(vk).or_insert(key) }
-    else { ctx.pressed_keys.remove(&vk).unwrap_or(key) }
+    // A real edge, including autorepeat, supersedes an older async sample.
+    // Keep the original down mapping until the matching physical release.
+    if matches!(vk, 0x01 | 0x02) {
+        // Primary-button polling uses an OR of both physical buttons. An edge
+        // on either one invalidates both old samples, including after a swap.
+        ctx.release_candidates.remove(&0x01);
+        ctx.release_candidates.remove(&0x02);
+    } else {
+        ctx.release_candidates.remove(&vk);
+    }
+    if down {
+        if let Some(original) = ctx.reconciled_keys.get(&vk) { return *original; }
+        *ctx.pressed_keys.entry(vk).or_insert(key)
+    } else {
+        let original = tracked_key(ctx, vk).unwrap_or(key);
+        ctx.pressed_keys.remove(&vk);
+        ctx.reconciled_keys.remove(&vk);
+        original
+    }
+}
+
+fn tracked_key(ctx: &HookContext, vk: u16) -> Option<Key> {
+    ctx.pressed_keys.get(&vk).or_else(|| ctx.reconciled_keys.get(&vk)).copied()
+}
+
+fn key_for_event(ctx: &HookContext, vk: u16, current_mapping: impl FnOnce() -> Option<Key>) -> Option<Key> {
+    // A layout change may leave this event unmapped. A matching down still
+    // owns its original Key until physical up, including after compensation.
+    tracked_key(ctx, vk).or_else(current_mapping)
 }
 
 fn observed_key_is_down(vk: u16, is_down: &impl Fn(u16) -> bool) -> bool {
@@ -483,6 +533,8 @@ fn spawn_internal(blocking_hotkeys: Option<BlockingHotkeys>, observed: bool,
                 observed_sender: observed.then_some(observe_tx),
                 current_modifiers: Modifiers::empty(),
                 pressed_keys: HashMap::new(),
+                release_candidates: HashMap::new(),
+                reconciled_keys: HashMap::new(),
                 blocking_hotkeys: thread_blocking,
                 altgr_phantom_ctrl: false,
                 menu_mask_sent: false,
@@ -729,7 +781,7 @@ unsafe extern "system" fn keyboard_hook_proc(code: i32, wparam: WPARAM, lparam: 
                 // so reconciling there would fight the toggle logic above.)
                 reconcile_modifiers(ctx);
 
-                if let Some(key) = map_key(vk_code, scan_code, is_extended) {
+                if let Some(key) = key_for_event(ctx, vk_code, || map_key(vk_code, scan_code, is_extended)) {
                     let key = track_key(ctx, vk_code, key, is_key_down);
                     // Regular key event
                     should_block = should_block_hotkey(
@@ -1000,7 +1052,7 @@ mod tests {
     fn queued_physical_event_keeps_its_hook_time_instead_of_its_delivery_time() {
         let (tx, _) = mpsc::channel();let (observed, rx) = mpsc::channel();
         let ctx=HookContext {event_sender:tx,observed_sender:Some(observed),
-            current_modifiers:Modifiers::empty(),pressed_keys:HashMap::new(),blocking_hotkeys:None,
+            current_modifiers:Modifiers::empty(),pressed_keys:HashMap::new(),release_candidates:HashMap::new(),reconciled_keys:HashMap::new(),blocking_hotkeys:None,
             altgr_phantom_ctrl:false,menu_mask_sent:false,standalone_tap:None};
         let original=Instant::now()-Duration::from_secs(5);
         emit_key_at(&ctx,KeyEvent{modifiers:Modifiers::empty(),key:Some(Key::F8),
@@ -1026,12 +1078,20 @@ mod tests {
         let (observed, rx) = mpsc::channel();
         let mut ctx = HookContext { event_sender: tx, observed_sender: Some(observed),
             current_modifiers: Modifiers::empty(), pressed_keys: HashMap::new(),
+            release_candidates: HashMap::new(),
+            reconciled_keys: HashMap::new(),
             blocking_hotkeys: None, altgr_phantom_ctrl: false, menu_mask_sent: false,
             standalone_tap: None };
         track_key(&mut ctx, 0x41, Key::A, true);
         track_key(&mut ctx, 0x01, Key::MouseLeft, true);
         track_key(&mut ctx, 0x77, Key::F8, true);
-        reconcile_released_keys(&mut ctx, |vk| vk == 0x77);
+        let start = Instant::now();
+        reconcile_released_keys_at(&mut ctx, |vk| vk == 0x77, start);
+        assert!(rx.try_recv().is_err(), "one async up sample must not cancel a physical hold");
+        assert_eq!(ctx.pressed_keys.len(), 3);
+        reconcile_released_keys_at(&mut ctx, |vk| vk == 0x77, start + RELEASE_CONFIRMATION_WINDOW - Duration::from_millis(1));
+        assert!(rx.try_recv().is_err());
+        reconcile_released_keys_at(&mut ctx, |vk| vk == 0x77, start + RELEASE_CONFIRMATION_WINDOW);
         let released = rx.try_iter().map(|event| match event {
             ObservedEvent::Key { event, origin, .. } => {
                 assert_eq!(origin, KeyOrigin::Reconciled);
@@ -1042,13 +1102,16 @@ mod tests {
         }).collect::<std::collections::HashSet<_>>();
         assert_eq!(released, [Key::A, Key::MouseLeft].into());
         assert_eq!(ctx.pressed_keys.len(), 1, "actually-held F8 must remain held");
-        reconcile_released_keys(&mut ctx, |_| true);
+        reconcile_released_keys_at(&mut ctx, |_| true, start + Duration::from_millis(40));
         assert!(rx.try_recv().is_err());
-        reconcile_released_keys(&mut ctx, |_| false);
+        reconcile_released_keys_at(&mut ctx, |_| false, start + Duration::from_millis(50));
+        assert!(rx.try_recv().is_err());
+        reconcile_released_keys_at(&mut ctx, |_| false, start + Duration::from_millis(50) + RELEASE_CONFIRMATION_WINDOW);
         assert!(matches!(rx.try_recv().unwrap(), ObservedEvent::Key {
             event: KeyEvent { key: Some(Key::F8), is_key_down: false, .. }, origin: KeyOrigin::Reconciled, .. }));
-        reconcile_released_keys(&mut ctx, |_| false);
+        reconcile_released_keys_at(&mut ctx, |_| false, start + Duration::from_millis(100));
         assert!(rx.try_recv().is_err());
+        assert!(ctx.release_candidates.is_empty());
     }
 
     #[test]
@@ -1056,11 +1119,173 @@ mod tests {
         let (tx, _) = mpsc::channel();
         let mut ctx = HookContext { event_sender: tx, observed_sender: None,
             current_modifiers: Modifiers::empty(), pressed_keys: HashMap::new(),
+            release_candidates: HashMap::new(),
+            reconciled_keys: HashMap::new(),
             blocking_hotkeys: None, altgr_phantom_ctrl: false, menu_mask_sent: false,
             standalone_tap: None };
         assert_eq!(track_key(&mut ctx, 0xba, Key::Semicolon, true), Key::Semicolon);
         assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, false), Key::Semicolon);
         assert!(ctx.pressed_keys.is_empty());
+    }
+
+    fn release_test_context() -> (HookContext, mpsc::Receiver<ObservedEvent>) {
+        let (event_sender, _) = mpsc::channel();
+        let (observed_sender, observed) = mpsc::channel();
+        (HookContext {
+            event_sender, observed_sender: Some(observed_sender),
+            current_modifiers: Modifiers::empty(), pressed_keys: HashMap::new(),
+            release_candidates: HashMap::new(), reconciled_keys: HashMap::new(), blocking_hotkeys: None,
+            altgr_phantom_ctrl: false, menu_mask_sent: false, standalone_tap: None,
+        }, observed)
+    }
+
+    #[test]
+    fn transient_up_sample_is_cancelled_by_positive_state_and_cannot_age_into_release() {
+        let (mut ctx, events) = release_test_context();
+        let start = Instant::now();
+        track_key(&mut ctx, 0x77, Key::F8, true);
+        reconcile_released_keys_at(&mut ctx, |_| false, start);
+        reconcile_released_keys_at(&mut ctx, |_| true, start + Duration::from_millis(10));
+        assert!(ctx.release_candidates.is_empty());
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+        assert!(events.try_recv().is_err(), "a later negative sample starts a new confirmation window");
+        assert!(ctx.pressed_keys.contains_key(&0x77));
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+        assert!(matches!(events.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::F8), is_key_down: false, .. }, origin: KeyOrigin::Reconciled, ..
+        }));
+    }
+
+    #[test]
+    fn physical_repeat_supersedes_pending_release_without_changing_original_key_mapping() {
+        let (mut ctx, events) = release_test_context();
+        let start = Instant::now();
+        track_key(&mut ctx, 0xba, Key::Semicolon, true);
+        reconcile_released_keys_at(&mut ctx, |_| false, start);
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, true), Key::Semicolon);
+        assert!(ctx.release_candidates.is_empty());
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+        assert!(events.try_recv().is_err(), "an up candidate must not survive a newer physical repeat");
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+        assert!(matches!(events.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::Semicolon), is_key_down: false, .. }, origin: KeyOrigin::Reconciled, ..
+        }));
+    }
+
+    #[test]
+    fn real_up_clears_pending_confirmation_and_allows_an_independent_later_press() {
+        let (mut ctx, events) = release_test_context();
+        let start = Instant::now();
+        track_key(&mut ctx, 0xba, Key::Semicolon, true);
+        reconcile_released_keys_at(&mut ctx, |_| false, start);
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, false), Key::Semicolon);
+        assert!(ctx.pressed_keys.is_empty() && ctx.release_candidates.is_empty());
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+        assert!(events.try_recv().is_err(), "a real release must not later produce a duplicate compensation");
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, true), Key::Quote);
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+        assert!(events.try_recv().is_err(), "a new physical press must not inherit an older up candidate");
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Semicolon, false), Key::Quote);
+        assert!(ctx.release_candidates.is_empty());
+    }
+
+    #[test]
+    fn each_key_has_its_own_release_confirmation_window() {
+        let (mut ctx, events) = release_test_context();
+        let start = Instant::now();
+        track_key(&mut ctx, 0x41, Key::A, true);
+        track_key(&mut ctx, 0x77, Key::F8, true);
+        reconcile_released_keys_at(&mut ctx, |vk| vk == 0x77, start);
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+        assert!(matches!(events.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::A), .. }, origin: KeyOrigin::Reconciled, ..
+        }));
+        assert!(events.try_recv().is_err());
+        assert!(ctx.pressed_keys.contains_key(&0x77));
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+        assert!(matches!(events.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::F8), .. }, origin: KeyOrigin::Reconciled, ..
+        }));
+    }
+
+    #[test]
+    fn either_primary_mouse_button_still_cancels_pending_swapped_button_release() {
+        let (mut ctx, events) = release_test_context();
+        let start = Instant::now();
+        track_key(&mut ctx, 0x01, Key::MouseLeft, true);
+        reconcile_released_keys_at(&mut ctx, |_| false, start);
+        reconcile_released_keys_at(&mut ctx, |vk| vk == 0x02, start + RELEASE_CONFIRMATION_WINDOW);
+        assert!(ctx.release_candidates.is_empty());
+        assert!(ctx.pressed_keys.contains_key(&0x01));
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+        assert!(events.try_recv().is_err());
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 3);
+        assert!(matches!(events.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::MouseLeft), is_key_down: false, .. }, origin: KeyOrigin::Reconciled, ..
+        }));
+    }
+
+    #[test]
+    fn primary_mouse_edges_clear_both_buttons_pending_negative_samples() {
+        for edge_vk in [0x01, 0x02] {
+            for down in [true, false] {
+                let (mut ctx, events) = release_test_context();
+                let start = Instant::now();
+                track_key(&mut ctx, 0x01, Key::MouseLeft, true);
+                track_key(&mut ctx, 0x02, Key::MouseRight, true);
+                reconcile_released_keys_at(&mut ctx, |_| false, start);
+                assert_eq!(ctx.release_candidates.len(), 2);
+                let key = if edge_vk == 0x01 { Key::MouseLeft } else { Key::MouseRight };
+                track_key(&mut ctx, edge_vk, key, down);
+                assert!(ctx.release_candidates.is_empty(), "either primary edge invalidates both OR-predicate samples");
+                reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+                assert!(events.try_recv().is_err(), "negative samples from before the physical edge cannot age into release");
+                reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+                assert_eq!(events.try_iter().count(), if down { 2 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    fn compensated_hold_keeps_original_mapping_through_repeat_until_physical_up() {
+        let (mut ctx, events) = release_test_context();
+        let start = Instant::now();
+        track_key(&mut ctx, 0xba, Key::Semicolon, true);
+        reconcile_released_keys_at(&mut ctx, |_| false, start);
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+        assert!(matches!(events.try_recv().unwrap(), ObservedEvent::Key {
+            event: KeyEvent { key: Some(Key::Semicolon), is_key_down: false, .. }, origin: KeyOrigin::Reconciled, ..
+        }));
+        assert!(ctx.pressed_keys.is_empty() && ctx.release_candidates.is_empty());
+        assert_eq!(ctx.reconciled_keys.get(&0xba), Some(&Key::Semicolon));
+        assert_eq!(key_for_event(&ctx, 0xba, || Some(Key::Quote)), Some(Key::Semicolon));
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, true), Key::Semicolon);
+        assert!(ctx.pressed_keys.is_empty(), "a repeat must not rearm a compensated physical hold");
+        reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW * 2);
+        assert!(events.try_recv().is_err(), "each physical hold is compensated at most once");
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, false), Key::Semicolon);
+        assert!(ctx.reconciled_keys.is_empty() && ctx.pressed_keys.is_empty());
+        assert_eq!(key_for_event(&ctx, 0xba, || Some(Key::Quote)), Some(Key::Quote));
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, true), Key::Quote);
+        assert_eq!(track_key(&mut ctx, 0xba, Key::Quote, false), Key::Quote);
+    }
+
+    #[test]
+    fn missing_current_mapping_still_balances_a_tracked_or_compensated_key() {
+        for compensated in [false, true] {
+            let (mut ctx, _) = release_test_context();
+            let start = Instant::now();
+            track_key(&mut ctx, 0xba, Key::Semicolon, true);
+            if compensated {
+                reconcile_released_keys_at(&mut ctx, |_| false, start);
+                reconcile_released_keys_at(&mut ctx, |_| false, start + RELEASE_CONFIRMATION_WINDOW);
+            }
+            let original = key_for_event(&ctx, 0xba, || None).expect("the native up must reach track_key even after its current mapping disappears");
+            assert_eq!(original, Key::Semicolon);
+            assert_eq!(track_key(&mut ctx, 0xba, original, false), Key::Semicolon);
+            assert!(ctx.pressed_keys.is_empty() && ctx.reconciled_keys.is_empty() && ctx.release_candidates.is_empty());
+            assert_eq!(key_for_event(&ctx, 0xba, || None), None);
+        }
     }
 
     fn clear_message_queue() {
@@ -1323,6 +1548,8 @@ mod tests {
             observed_sender: None,
             current_modifiers: Modifiers::CMD_LEFT,
             pressed_keys: HashMap::new(),
+            release_candidates: HashMap::new(),
+            reconciled_keys: HashMap::new(),
             blocking_hotkeys: None,
             altgr_phantom_ctrl: false,
             menu_mask_sent: true,

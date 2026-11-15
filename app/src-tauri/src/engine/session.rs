@@ -369,13 +369,59 @@ impl AppHub {
         // caret while recording does not invalidate the final delivery.
         if !self.valid_active(&id,generation){return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));}
         let secrets=match credentials::read_session(&config){Ok(keys)=>keys,Err(e)=>{let error=ApiError::from(e).for_session(&id,generation);self.fail(&id,generation,error.clone(),true);return Err(error);}};
-        {let mut i=self.inner.lock().unwrap();let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled())else{return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));};s.worker_released=false;}
-        self.publish_session();
-        let practice=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.onboarding_lesson.is_some());
-        if !practice { let _=self.native_action("recording",true); }
         let hub=Arc::clone(self);let job_id=id.clone();
-        tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secrets).await;});
+        self.start_prepared_recording(&id,generation,preflight,move|preflight| {
+            tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secrets).await;});
+        }).await?;
         Ok(json!({"sessionId":id,"generation":generation,"state":"starting"}))
+    }
+    /// Keep startup ownership until the recorder is visible. A failed window
+    /// must never leave an invisible microphone/cloud task running. The native
+    /// UI acknowledgement may wait, so keep it off the Tokio executor while
+    /// the ordered hotkey consumer still awaits this operation.
+    async fn start_prepared_recording(self:&Arc<Self>,id:&str,generation:u64,preflight:ProcessingLease,
+        launch:impl FnOnce(ProcessingLease)+Send+'static)->Result<()> {
+        let hub=Arc::clone(self);let job_id=id.to_owned();
+        // The UI operation owns startup even if its caller/reply disappears.
+        // Cancellation alone cannot impersonate a finished native callback.
+        match tokio::spawn(async move {hub.complete_prepared_recording(&job_id,generation,preflight,launch).await}).await {
+            Ok(result)=>result,
+            Err(_)=>{let error=ApiError::new("window_unavailable","window","录音窗口未能启动，请重试").for_session(id,generation);
+                self.fail(id,generation,error.clone(),true);Err(error)}
+        }
+    }
+    async fn complete_prepared_recording(self:&Arc<Self>,id:&str,generation:u64,preflight:ProcessingLease,
+        launch:impl FnOnce(ProcessingLease)+Send)->Result<()> {
+        self.publish_session();
+        let practice=self.inner.lock().unwrap().active.as_ref().is_some_and(|s|s.id==id&&s.generation==generation&&s.onboarding_lesson.is_some());
+        let current=||!self.quitting.load(Ordering::SeqCst)&&self.capture_available.load(Ordering::SeqCst)&&self.valid_active(id,generation);
+        let cancelled=||ApiError::new("cancelled","session","录音启动已取消").for_session(id,generation);
+        if !current(){let error=cancelled();self.fail(id,generation,error.clone(),true);return Err(error);}
+        if !practice {
+            let hub=Arc::clone(self);let show_id=id.to_owned();
+            let shown=tokio::task::spawn_blocking(move|| {
+                if hub.quitting.load(Ordering::SeqCst)||!hub.capture_available.load(Ordering::SeqCst)||!hub.valid_active(&show_id,generation) {
+                    return Err(ApiError::new("cancelled","session","录音启动已取消"));
+                }
+                hub.native_action("recording",true)
+            }).await.unwrap_or_else(|_|Err(ApiError::new("window_unavailable","window","录音窗口未能启动，请重试")));
+            if let Err(error)=shown {
+                let error=error.for_session(id,generation);self.fail(id,generation,error.clone(),true);return Err(error);
+            }
+        }
+        let admitted={let mut i=self.inner.lock().unwrap();
+            if self.quitting.load(Ordering::SeqCst)||!self.capture_available.load(Ordering::SeqCst){false}
+            else if let Some(s)=i.active.as_mut().filter(|s|s.id==id&&s.generation==generation&&!s.cancel.is_cancelled()){s.worker_released=false;true}
+            else{false}};
+        if !admitted {
+            // Cancellation/exit may have won while ShowWindow was queued.
+            // The preflight lease still blocks a new recording, so hiding this
+            // late surface cannot close a newer session's recorder.
+            if !practice {let hub=Arc::clone(self);let _=tokio::task::spawn_blocking(move||hub.native_action("recording",false)).await;}
+            let error=cancelled();self.fail(id,generation,error.clone(),true);return Err(error);
+        }
+        launch(preflight);
+        Ok(())
     }
     fn begin_stop_target(&self,p:&Value,intent:Instant)->Result<Option<(String,u64)>> {
         let target={let mut i=self.inner.lock().unwrap();let s=matching(&mut i,p)?;

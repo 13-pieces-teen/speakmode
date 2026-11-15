@@ -30,6 +30,8 @@ mod personalization_tests;
 mod typeless_import_tests;
 #[path="hotkey_toggle_tests.rs"]
 mod hotkey_toggle_tests;
+#[path="startup_visibility_tests.rs"]
+mod startup_visibility_tests;
 #[path="capture_bridge_tests.rs"]
 mod capture_bridge_tests;
 
