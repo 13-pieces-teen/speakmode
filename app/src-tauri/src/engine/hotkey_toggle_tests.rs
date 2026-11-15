@@ -3,6 +3,34 @@
 use super::*;
 use crate::platform::hotkeys::{HotkeyIntent,process_hotkey_queue};
 
+#[tokio::test]
+async fn a_short_physical_f8_press_drives_cancel_before_key_up_and_hold_repeat_cannot_restart() {
+    use crate::platform::hotkeys::ShortcutTap;
+    use handy_keys::{Key,KeyEvent,Modifiers};
+    let event=|down|KeyEvent{key:Some(Key::F8),modifiers:Modifiers::empty(),is_key_down:down,changed_modifier:None};
+    for interval_ms in [50,500] {
+        let h=hub();configured(&h);let hides=hide_spy(&h);let start=Instant::now();
+        let mut tap=ShortcutTap::new("f8".parse().unwrap(),Duration::from_secs(1));
+        assert!(tap.feed(event(true),start));
+        let(id,generation,_,_,_,_)=h.prepare_start_state(start,Origin::HotkeyHook).unwrap();
+        let processing=h.processing_lease(&id,generation);
+        assert!(!tap.feed(event(false),start+Duration::from_millis(1)));
+        let second=start+Duration::from_millis(interval_ms);
+        assert!(tap.feed(event(true),second));
+        h.dispatch_hotkey_intent(HotkeyIntent{at:second,lifecycle_epoch:0}).await.unwrap();
+        assert_eq!(view(&h).state,SessionPhase::Cancelled);assert_eq!(hides.load(Ordering::SeqCst),1);
+        // Cancellation refresh occurs before the second press is released.
+        tap.reset();drop(processing);
+        for ms in [1000,2000,5000] {
+            assert!(!tap.feed(event(true),start+Duration::from_millis(ms)));
+            assert_eq!(view(&h).state,SessionPhase::Cancelled);
+        }
+        assert!(!tap.feed(event(false),start+Duration::from_secs(6)));
+        assert!(tap.feed(event(true),start+Duration::from_secs(7)));
+        assert_eq!(h.hotkey_action_at(start+Duration::from_secs(7)).unwrap(),HotkeyAction::Start);
+    }
+}
+
 fn configured(h:&AppHub) {
     let mut config=h.db.snapshot().provider_config;let version=config.version;config.region=Some("beijing".into());
     h.db.run(DbCommand::SaveProviderConfig{config,expected_version:version}).unwrap();

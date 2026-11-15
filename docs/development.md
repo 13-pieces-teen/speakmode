@@ -1,6 +1,8 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.44**，前端 package 版本为 **0.4.35**。本次[语音链路修复](experiments/voice-logic-fixes-2026-11-14.md)及[发布说明](releases/v0.2.44.md)记录录音收尾、整理复核和恢复行为。所有快捷键共用的开始/结束及快速连按取消规则见[快捷键切换逻辑](experiments/hotkey-toggle-2026-11-14.md)。此前的[取消后恢复](experiments/hotkey-cancel-2026-11-14.md)、[按键残留修复](experiments/hotkey-repeat-2026-11-14.md)和[恢复列表](experiments/recovery-next-recording-2026-11-13.md)继续保留。
+当前桌面源码版本为 **0.2.45**，前端 package 版本为 **0.4.35**。本次[短按唤起修复](experiments/hotkey-short-press-2026-11-15.md)及[发布说明](releases/v0.2.45.md)记录普通按键即时触发与浮层启动回执；此前[语音链路修复](experiments/voice-logic-fixes-2026-11-14.md)、[取消后恢复](experiments/hotkey-cancel-2026-11-14.md)、[按键残留修复](experiments/hotkey-repeat-2026-11-14.md)和[恢复列表](experiments/recovery-next-recording-2026-11-13.md)继续保留。
+
+F8 等普通触发键按下即响应，单独修饰键仍按完整手势处理；所有快捷键共用的开始/结束及 500ms 快速连按取消规则保留。[0.2.43 快捷键切换记录](experiments/hotkey-toggle-2026-11-14.md)中的释放时序仅用于历史对照。
 
 ## 环境准备
 

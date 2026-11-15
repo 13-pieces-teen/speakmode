@@ -212,6 +212,9 @@ fn refresh_mode_entry(app: &AppHandle, state: &Arc<DesktopState>) {
 fn begin_exit(app: &AppHandle, state: &Arc<DesktopState>) -> bool {
     let previous = state.exit.load(Ordering::Acquire);
     if !matches!(previous, 0 | 3) || state.exit.compare_exchange(previous, 1, Ordering::AcqRel, Ordering::Acquire).is_err() { return false; }
+    // Close admission at the request boundary, before cleanup can wait for a
+    // late hook owner. An in-flight recorder ACK must not start capture now.
+    state.hub.reserve_lifecycle_epoch();
     refresh_mode_entry(app, state);true
 }
 async fn cleanup_resources(state: &DesktopState) -> Result<()> {
@@ -491,10 +494,31 @@ mod win {
     }
 }
 
+/// A recorder operation which has entered Win32 still owns its eventual
+/// visibility change after the generic UI dispatch deadline. Keep waiting for
+/// that real receipt; queued work can instead be cancelled before it starts.
+fn recorder_visibility_ack(dispatch: impl FnOnce(Box<dyn FnOnce()->Result<()>+Send>)->Result<()>,
+    work: impl FnOnce()->Result<()>+Send+'static)->Result<()> {
+    let ticket=Arc::new(AtomicU8::new(0)); // queued / started / cancelled
+    let run_ticket=Arc::clone(&ticket);let(done,receipt)=std::sync::mpsc::sync_channel(1);
+    let result=dispatch(Box::new(move|| {
+        if run_ticket.compare_exchange(0,1,Ordering::AcqRel,Ordering::Acquire).is_err() {
+            return Err(native_error("window_timeout","窗口操作已取消，请重试"));
+        }
+        let result=work();let _=done.send(result.clone());result
+    }));
+    if result.is_err()&&ticket.compare_exchange(0,2,Ordering::AcqRel,Ordering::Acquire).is_err() {
+        // An already-started ShowWindow cannot be cancelled by a timeout.
+        // Do not release startup or admit another session before it finishes.
+        return receipt.recv().unwrap_or(result);
+    }
+    result
+}
 fn recorder_visibility(app: &AppHandle, state: &Arc<DesktopState>, visible: bool) -> Result<()> {
     let window = app.get_webview_window("recording").ok_or_else(|| window_error("missing recorder"))?;
     let state2 = Arc::clone(state);
-    on_ui(app, state, move || {
+    recorder_visibility_ack(|work|on_ui(app,state,work),move || {
+        if visible&&state2.exit.load(Ordering::Acquire)!=0 {return Err(native_error("app_exiting","正在退出，录音窗口不会启动"));}
         #[cfg(windows)] { win::visible(&window, &state2, visible) }
         #[cfg(not(windows))] { let _ = (window, state2, visible); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
     })
@@ -998,6 +1022,36 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn cancelled_queued_recorder_visibility_cannot_change_a_later_surface() {
+        let queued=Arc::new(Mutex::new(None));let saved=queued.clone();
+        let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let count=calls.clone();
+        let error=recorder_visibility_ack(move|work| {
+            *saved.lock().unwrap()=Some(work);Err(native_error("window_timeout","synthetic queued timeout"))
+        },move||{count.fetch_add(1,Ordering::SeqCst);Ok(())}).unwrap_err();
+        assert_eq!(error.code,"window_timeout");
+        let work=queued.lock().unwrap().take().unwrap();assert_eq!(work().unwrap_err().code,"window_timeout");
+        assert_eq!(calls.load(Ordering::SeqCst),0);
+    }
+    #[test] fn started_recorder_visibility_keeps_ownership_past_ui_dispatch_timeout() {
+        for failed in [false,true] {
+            let(entered,seen)=std::sync::mpsc::sync_channel(1);let(release,wait)=std::sync::mpsc::sync_channel(1);
+            let(finished,result)=std::sync::mpsc::sync_channel(1);
+            let owner=std::thread::spawn(move|| {
+                let outcome=recorder_visibility_ack(move|work| {
+                    std::thread::spawn(move||{let _=work();});seen.recv_timeout(Duration::from_secs(5)).unwrap();
+                    Err(native_error("window_timeout","synthetic started timeout"))
+                },move|| {
+                    entered.send(()).unwrap();wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                    if failed{Err(native_error("window_unavailable","synthetic native failure"))}else{Ok(())}
+                });
+                finished.send(outcome).unwrap();
+            });
+            assert!(matches!(result.try_recv(),Err(std::sync::mpsc::TryRecvError::Empty)));
+            release.send(()).unwrap();let outcome=result.recv_timeout(Duration::from_secs(5)).unwrap();
+            if failed{assert_eq!(outcome.unwrap_err().code,"window_unavailable");}else{outcome.unwrap();}
+            owner.join().unwrap();
+        }
+    }
     #[test] fn profile_override_rejects_roots_relative_paths_and_traversal_without_creating_them() {
         assert!(resolve_profile_directory(std::path::Path::new("relative/runtime")).is_err());
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).canonicalize().unwrap();

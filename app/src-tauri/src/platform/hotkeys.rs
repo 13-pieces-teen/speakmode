@@ -28,11 +28,11 @@ where F: FnMut(HotkeyIntent) -> Fut, Fut: std::future::Future<Output=()> {
     while let Some(intent)=queue.recv().await { dispatch(intent).await; }
 }
 
-/// A full gesture, not key-down. Reconciled releases must call reset instead.
+/// Key shortcuts fire on a fresh physical down; modifier-only shortcuts wait
+/// for an independent tap so Alt/Win combinations retain their native meaning.
 pub struct ShortcutTap {
     shortcut: Hotkey,
     started: Option<Instant>,
-    trigger_key: Option<Key>,
     cancelled: bool,
     held: HashSet<Key>,
     maximum: Duration,
@@ -40,17 +40,34 @@ pub struct ShortcutTap {
 
 impl ShortcutTap {
     pub fn new(shortcut: Hotkey, maximum: Duration) -> Self {
-        Self { shortcut, started: None, trigger_key: None, cancelled: false, held: HashSet::new(), maximum }
+        Self { shortcut, started: None, cancelled: false, held: HashSet::new(), maximum }
     }
     pub fn reset(&mut self) {
         self.started = None;
         self.cancelled = false;
-        self.trigger_key = None;
-        self.held.clear();
+        // Policy changes and cancel-driven hook refresh can happen while the
+        // trigger is still held. Only a real release may re-arm that key.
     }
     fn feed_observed(&mut self, event: KeyEvent, origin: handy_keys::KeyOrigin, now: Instant) -> bool {
-        if origin == handy_keys::KeyOrigin::Reconciled { self.reset(); false }
-        else { self.feed(event, now) }
+        if origin == handy_keys::KeyOrigin::Reconciled {
+            if let Some(key) = event.key {
+                // A confirmed missing release of another key must not clear
+                // the trigger latch. For the trigger itself, keep the latch
+                // until physical up: a subsequent down could be autorepeat.
+                if !event.is_key_down && Some(key) != self.shortcut.key { self.held.remove(&key); }
+            }
+            // Native Alt/Win menu masking cancels on compensation too; its
+            // modifier-only gesture must not outlive that cancellation.
+            if event.changed_modifier.is_some() || self.shortcut.key.is_none() { self.reset(); }
+            return false;
+        }
+        self.feed(event, now)
+    }
+    fn observe_without_trigger(&mut self, event: KeyEvent) {
+        self.reset();
+        if let Some(key) = event.key {
+            if event.is_key_down { self.held.insert(key); } else { self.held.remove(&key); }
+        }
     }
     pub fn feed(&mut self, event: KeyEvent, now: Instant) -> bool {
         let was_held = event.key.is_some_and(|k| self.held.contains(&k));
@@ -59,21 +76,8 @@ impl ShortcutTap {
         }
         let match_mods = self.shortcut.modifiers.matches(event.modifiers);
         if self.shortcut.key.is_some() {
-            if event.key == self.shortcut.key {
-                if event.is_key_down && !was_held && self.started.is_none() && match_mods {
-                    self.started = Some(now);
-                    self.trigger_key = event.key;
-                    self.cancelled = self.held.len() != 1;
-                } else if !event.is_key_down && self.trigger_key == event.key {
-                    let valid = self.started.take().is_some_and(|start| now.duration_since(start) <= self.maximum)
-                        && !self.cancelled && match_mods;
-                    self.trigger_key = None;
-                    self.cancelled = false;
-                    return valid;
-                }
-            } else if self.started.is_some() && (event.changed_modifier.is_none() || !match_mods) {
-                self.cancelled = true;
-            }
+            return event.key == self.shortcut.key && event.is_key_down && !was_held
+                && match_mods && self.held.len() == 1;
         } else if event.changed_modifier.is_some() {
             if event.is_key_down && match_mods && self.started.is_none() {
                 self.started = Some(now);
@@ -304,7 +308,7 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
                 Command::Replace(shortcut, ack) => {
                     ack.apply(|| {
                         if hook_available {
-                            tap = ShortcutTap::new(shortcut, maximum);
+                            tap.shortcut = shortcut; tap.reset();
                             menu_mask.configure((enabled&&!capture).then_some(shortcut),maximum);
                             Ok(())
                         }
@@ -339,6 +343,7 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
             Ok(ObservedEvent::Key { event, origin: KeyOrigin::Reconciled, at }) => { tap.feed_observed(event, KeyOrigin::Reconciled, at); recorded = None;menu_mask.reset(); },
             Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical, .. }) if capture => {
                 // Capture a complete gesture and keep recording Toggle disabled.
+                tap.observe_without_trigger(event);
                 if event.is_key_down {
                     if let Ok(value) = event.as_hotkey() { recorded = Some(value); }
                 } else if event.modifiers.is_empty() && event.key.is_none() ||
@@ -351,7 +356,8 @@ fn run(shortcut: Hotkey, maximum: Duration, control: Receiver<Command>, stopping
             Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical, at }) if enabled => {
                 if tap.feed_observed(event, KeyOrigin::Physical, at) && (tap.shortcut.key.is_some() || !unrelated_key_is_held()) { callback(HotkeyEvent::Toggle(at)); }
             },
-            Ok(_) | Err(handy_keys::Error::Timeout) => {},
+            Ok(ObservedEvent::Key { event, origin: KeyOrigin::Physical, .. }) => tap.observe_without_trigger(event),
+            Err(handy_keys::Error::Timeout) => {},
             Err(error) => { callback(HotkeyEvent::Unavailable(error.to_string())); break; },
         }
     }
@@ -387,7 +393,7 @@ mod tests {
     }
     fn tap() -> ShortcutTap { ShortcutTap::new("alt_right".parse().unwrap(), Duration::from_secs(1)) }
     #[test]
-    fn all_configured_shortcuts_emit_one_toggle_per_complete_gesture() {
+    fn all_configured_shortcuts_emit_one_toggle_per_press_and_release() {
         use handy_keys::Modifiers as M;
         let cases=[
             ("f8",vec![key(Key::F8,M::empty(),true),key(Key::F8,M::empty(),false)]),
@@ -412,28 +418,98 @@ mod tests {
         let n = Instant::now();
         // The first recording starts and stops normally.
         for _ in 0..2 {
-            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
-            assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+            assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
+            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
         }
         tap.feed_observed(key(Key::A, Modifiers::empty(), true), Physical, n);
         // Another hook/desktop can consume A-up. Reconciliation cancels that
         // old hold, without interpreting its release as a recording toggle.
         assert!(!tap.feed_observed(key(Key::A, Modifiers::empty(), false), Reconciled, n));
         for _ in 0..10 {
-            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
-            assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+            assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
+            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
         }
     }
     #[test]
-    fn a_reconciled_f8_release_cancels_the_hold_and_requires_a_fresh_physical_tap() {
+    fn a_reconciled_trigger_release_blocks_repeats_until_a_physical_release() {
         use handy_keys::KeyOrigin::{Physical, Reconciled};
         let mut tap = ShortcutTap::new("f8".parse().unwrap(), Duration::from_secs(1));
         let n = Instant::now();
-        tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n);
+        assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
         assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Reconciled, n));
+        for ms in [30,500,1500,5000] {
+            assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n+Duration::from_millis(ms)));
+        }
         assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
-        assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
-        assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+        assert!(tap.feed_observed(key(Key::F8, Modifiers::empty(), true), Physical, n));
+        assert!(!tap.feed_observed(key(Key::F8, Modifiers::empty(), false), Physical, n));
+    }
+    #[test]
+    fn ordinary_keys_start_immediately_and_holds_of_any_length_emit_only_once() {
+        let n=Instant::now();
+        for shortcut in ["f8","f9","ctrl+k"] {
+            let parsed:Hotkey=shortcut.parse().unwrap();let trigger=parsed.key.unwrap();let mods=parsed.modifiers;
+            let mut tap=ShortcutTap::new(parsed,Duration::from_secs(1));
+            assert!(tap.feed(key(trigger,mods,true),n),"{shortcut} fires at down");
+            for ms in [1,30,500,1001,1500,10_000] {
+                assert!(!tap.feed(key(trigger,mods,true),n+Duration::from_millis(ms)),"{shortcut} repeat {ms}");
+            }
+            assert!(!tap.feed(key(trigger,mods,false),n+Duration::from_secs(11)));
+            assert!(tap.feed(key(trigger,mods,true),n+Duration::from_secs(12)));
+        }
+    }
+    #[test]
+    fn unrelated_reconciliation_and_cancel_refresh_do_not_rearm_a_held_trigger() {
+        use handy_keys::KeyOrigin::{Physical,Reconciled};
+        let mut tap=ShortcutTap::new("f8".parse().unwrap(),Duration::from_secs(1));let n=Instant::now();
+        assert!(tap.feed_observed(key(Key::F8,Modifiers::empty(),true),Physical,n));
+        tap.feed_observed(key(Key::A,Modifiers::empty(),true),Physical,n);
+        tap.feed_observed(key(Key::A,Modifiers::empty(),false),Reconciled,n);
+        assert!(tap.held.contains(&Key::F8));assert!(!tap.held.contains(&Key::A));
+        // A rapid second key-down cancels the recording before its key-up.
+        // Hook refresh, policy replacement and capture ACKs must retain this latch.
+        for _ in 0..3 {
+            tap.reset();
+            assert!(!tap.feed_observed(key(Key::F8,Modifiers::empty(),true),Physical,n));
+        }
+        assert!(!tap.feed_observed(key(Key::F8,Modifiers::empty(),false),Physical,n));
+        assert!(tap.feed_observed(key(Key::F8,Modifiers::empty(),true),Physical,n));
+    }
+    #[test]
+    fn an_invalid_chord_cannot_become_a_valid_press_on_autorepeat() {
+        let n=Instant::now();
+        let mut tap=ShortcutTap::new("f8".parse().unwrap(),Duration::from_secs(1));
+        tap.feed(key(Key::A,Modifiers::empty(),true),n);
+        assert!(!tap.feed(key(Key::F8,Modifiers::empty(),true),n));
+        tap.feed(key(Key::A,Modifiers::empty(),false),n);
+        assert!(!tap.feed(key(Key::F8,Modifiers::empty(),true),n));
+        assert!(!tap.feed(key(Key::F8,Modifiers::empty(),false),n));
+        assert!(tap.feed(key(Key::F8,Modifiers::empty(),true),n));
+        let mut tap=ShortcutTap::new("ctrl+k".parse().unwrap(),Duration::from_secs(1));
+        assert!(!tap.feed(key(Key::K,Modifiers::empty(),true),n));
+        tap.feed(modifier(Modifiers::CTRL_LEFT,Modifiers::CTRL_LEFT,true),n);
+        assert!(!tap.feed(key(Key::K,Modifiers::CTRL_LEFT,true),n));
+        tap.feed(key(Key::K,Modifiers::CTRL_LEFT,false),n);
+        assert!(tap.feed(key(Key::K,Modifiers::CTRL_LEFT,true),n));
+    }
+    #[test]
+    fn disabled_and_capture_events_keep_repeat_latches_balanced_across_enable() {
+        let n=Instant::now();let mut tap=ShortcutTap::new("f8".parse().unwrap(),Duration::from_secs(1));
+        tap.observe_without_trigger(key(Key::F8,Modifiers::empty(),true));
+        tap.reset();
+        assert!(!tap.feed(key(Key::F8,Modifiers::empty(),true),n));
+        assert!(!tap.feed(key(Key::F8,Modifiers::empty(),false),n));
+        assert!(tap.feed(key(Key::F8,Modifiers::empty(),true),n));
+        tap.observe_without_trigger(key(Key::F8,Modifiers::empty(),false));
+        tap.reset();
+        assert!(tap.feed(key(Key::F8,Modifiers::empty(),true),n));
+    }
+    #[test]
+    fn modifier_only_gestures_do_not_outlive_native_menu_mask_reconciliation() {
+        let n=Instant::now();let mut tap=tap();
+        assert!(!tap.feed(modifier(Modifiers::OPT_RIGHT,Modifiers::OPT_RIGHT,true),n));
+        assert!(!tap.feed_observed(key(Key::A,Modifiers::OPT_RIGHT,false),handy_keys::KeyOrigin::Reconciled,n));
+        assert!(!tap.feed(modifier(Modifiers::empty(),Modifiers::OPT_RIGHT,false),n));
     }
     #[test] fn tap_requires_full_independent_release() {
         let mut t = tap(); let now = Instant::now();
@@ -624,12 +700,12 @@ mod tests {
         t.feed(modifier(Modifiers::OPT_RIGHT, Modifiers::OPT_RIGHT, true), n + Duration::from_millis(900));
         assert!(!t.feed(modifier(Modifiers::empty(), Modifiers::OPT_RIGHT, false), n + Duration::from_millis(1200)));
     }
-    #[test] fn configurable_chord_toggles_once_on_release() {
+    #[test] fn configurable_chord_toggles_once_on_down_not_repeat_or_release() {
         let mut t = ShortcutTap::new("ctrl+k".parse().unwrap(), Duration::from_secs(1)); let n = Instant::now();
         t.feed(modifier(Modifiers::CTRL_LEFT, Modifiers::CTRL_LEFT, true), n);
+        assert!(t.feed(key(Key::K, Modifiers::CTRL_LEFT, true), n));
         assert!(!t.feed(key(Key::K, Modifiers::CTRL_LEFT, true), n));
-        assert!(!t.feed(key(Key::K, Modifiers::CTRL_LEFT, true), n));
-        assert!(t.feed(key(Key::K, Modifiers::CTRL_LEFT, false), n));
+        assert!(!t.feed(key(Key::K, Modifiers::CTRL_LEFT, false), n));
         assert!(!t.feed(key(Key::K, Modifiers::CTRL_LEFT, false), n));
     }
     #[test] fn timed_out_preference_update_cannot_apply_later() {
