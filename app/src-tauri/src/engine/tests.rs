@@ -32,6 +32,8 @@ mod typeless_import_tests;
 mod hotkey_toggle_tests;
 #[path="startup_visibility_tests.rs"]
 mod startup_visibility_tests;
+#[path="hotkey_start_queue_tests.rs"]
+mod hotkey_start_queue_tests;
 #[path="capture_bridge_tests.rs"]
 mod capture_bridge_tests;
 
