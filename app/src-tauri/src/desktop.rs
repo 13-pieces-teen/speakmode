@@ -87,6 +87,14 @@ fn error_matches_current_session(error: &ApiError, snapshot: &Value) -> bool {
         _ => false,
     }
 }
+fn hotkey_start_error_is_current(error: &ApiError, snapshot: &Value) -> bool {
+    let session=&snapshot["session"];
+    !matches!(error.code.as_str(), "cancelled" | "stale_session")
+        && session["cancelPending"]!=true
+        && matches!(session["state"].as_str(),Some("failed"|"incomplete"))
+        && session["errorCode"].as_str()==Some(error.code.as_str())
+        && error_matches_current_session(error, snapshot)
+}
 
 fn native_error(code: &str, message: &str) -> ApiError { ApiError::new(code, "native", message) }
 fn window_error(_: impl std::fmt::Display) -> ApiError { native_error("window_unavailable", "窗口操作未完成，请从托盘打开主面板") }
@@ -185,6 +193,19 @@ fn reveal_desktop_error(app: &AppHandle, state: &Arc<DesktopState>, error: ApiEr
         let visible = state2.recorder.lock().map(|recorder| recorder.visible).unwrap_or(true);
         let capturing = matches!(session["state"].as_str(), Some("starting" | "recording"));
         if reveal_error_without_recorder(&presented, visible, state2.exit.load(Ordering::Acquire), capturing) { show_main(&handle)?; }
+        Ok(())
+    });
+}
+fn reveal_hotkey_start_error(app: &AppHandle, state: &Arc<DesktopState>, error: ApiError) {
+    let handle=app.clone();let state2=Arc::clone(state);
+    let _=on_ui(app,state,move|| {
+        // Recheck on the actual UI execution, not when the background report
+        // was queued. A second press may already have cancelled this same ID.
+        let snapshot=state2.hub.snapshot("recording")?;
+        if !hotkey_start_error_is_current(&error,&snapshot){return Ok(());}
+        publish_error(&state2,error.clone());
+        let visible=state2.recorder.lock().map(|recorder|recorder.visible).unwrap_or(true);
+        if reveal_error_without_recorder(&error,visible,state2.exit.load(Ordering::Acquire),false){show_main(&handle)?;}
         Ok(())
     });
 }
@@ -519,9 +540,17 @@ fn recorder_visibility(app: &AppHandle, state: &Arc<DesktopState>, visible: bool
     let state2 = Arc::clone(state);
     recorder_visibility_ack(|work|on_ui(app,state,work),move || {
         if visible&&state2.exit.load(Ordering::Acquire)!=0 {return Err(native_error("app_exiting","正在退出，录音窗口不会启动"));}
+        if visible&&!recorder_start_may_show(&state2.hub.snapshot("recording")?) {
+            return Err(native_error("cancelled","录音启动已取消"));
+        }
         #[cfg(windows)] { win::visible(&window, &state2, visible) }
         #[cfg(not(windows))] { let _ = (window, state2, visible); Err(native_error("unsupported_platform", "MVP 需要 Windows")) }
     })
+}
+fn recorder_start_may_show(snapshot:&Value)->bool {
+    let session=&snapshot["session"];
+    session["cancelPending"]!=true
+        &&matches!(session["state"].as_str(),Some("starting"|"recording"|"finalizingASR"))
 }
 fn recorder_session_is_current(snapshot: &Value, id: &str, generation: u64) -> bool {
     let session=&snapshot["session"];
@@ -659,7 +688,19 @@ fn start_hotkeys(app: AppHandle, state: Arc<DesktopState>, shortcut: String) {
                 let Some(state)=weak.upgrade()else{return;};
                 if state.exit.load(Ordering::Acquire)!=0{return;}
                 let before=state.hub.snapshot("recording").ok();
-                if let Err(error)=state.hub.dispatch_hotkey_intent(intent).await {
+                let start_app=handle.clone();let start_state=Arc::downgrade(&state);
+                let result=state.hub.dispatch_hotkey_intent_with_start_error(intent,move|error| {
+                    let Some(state)=start_state.upgrade()else{return;};
+                    // Startup no longer holds the FIFO while waiting on native
+                    // UI. Report its eventual failure without blocking that
+                    // queue, or reviving a cancelled/replaced session's error.
+                    tauri::async_runtime::spawn_blocking(move|| {
+                        if state.exit.load(Ordering::Acquire)!=0{return;}
+                        let Ok(snapshot)=state.hub.snapshot("recording")else{return;};
+                        if hotkey_start_error_is_current(&error,&snapshot){reveal_hotkey_start_error(&start_app,&state,error);}
+                    });
+                }).await;
+                if let Err(error)=result {
                     reveal_desktop_error(&handle,&state,hotkey_error_scope(error,before.as_ref()));
                 }
             }
@@ -1022,6 +1063,33 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn a_queued_start_surface_cannot_show_after_the_second_press_cancels() {
+        for phase in ["starting","recording","finalizingASR"] {
+            let mut snapshot=live(phase,"first",7);
+            assert!(recorder_start_may_show(&snapshot),"normal stop must still drain: {phase}");
+            snapshot["session"]["cancelPending"]=json!(true);
+            assert!(!recorder_start_may_show(&snapshot));
+        }
+        for phase in ["cancelled","failed","incomplete","ready"] {
+            assert!(!recorder_start_may_show(&live(phase,"first",7)));
+        }
+        assert!(!recorder_start_may_show(&Value::Null));
+    }
+    #[test] fn background_hotkey_start_errors_cannot_reappear_after_cancel_or_replacement() {
+        let mut current=live("failed","first",7);current["session"]["errorCode"]=json!("window_unavailable");
+        let failure=native_error("window_unavailable","synthetic window failure").for_session("first",7);
+        assert!(hotkey_start_error_is_current(&failure,&current));
+        assert!(!hotkey_start_error_is_current(&failure,&live("starting","second",8)));
+        assert!(!hotkey_start_error_is_current(&failure,&live("cancelled","first",7)));
+        let mut pending=current.clone();pending["session"]["cancelPending"]=json!(true);
+        assert!(!hotkey_start_error_is_current(&failure,&pending));
+        let mut changed=current.clone();changed["session"]["errorCode"]=json!("cancel_cleanup_failed");
+        assert!(!hotkey_start_error_is_current(&failure,&changed));
+        for code in ["cancelled","stale_session"] {
+            let expected=native_error(code,"synthetic expected cancellation").for_session("first",7);
+            assert!(!hotkey_start_error_is_current(&expected,&current));
+        }
+    }
     #[test] fn cancelled_queued_recorder_visibility_cannot_change_a_later_surface() {
         let queued=Arc::new(Mutex::new(None));let saved=queued.clone();
         let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let count=calls.clone();

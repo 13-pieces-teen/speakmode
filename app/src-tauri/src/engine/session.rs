@@ -227,11 +227,16 @@ impl ActiveSession {
         self.worker_released&&self.delivery_worker_released&&self.processing_worker_released
             &&!self.target_capture_pending&&!self.input_context_capture_pending&&self.db_pending==0&&!self.cancel_pending
     }
+    pub(super) fn cancellation_dismissible(&self)->bool {self.cancel_pending&&self.cancel.is_cancelled()}
 }
 
 /// Dropping an async task also releases its ownership. Cancelling its token
 /// alone must never announce that an ASR/LLM worker has already stopped.
 struct ProcessingLease {hub:Arc<AppHub>,id:String,generation:u64,trace:Option<TraceHandle>}
+struct PreparedStart {
+    id:String,generation:u64,config:ProviderConfig,prefs:Preferences,mode:ModeSnapshot,
+    dictionary:DictionarySnapshot,preflight:ProcessingLease,
+}
 impl Drop for ProcessingLease {
     fn drop(&mut self){
         {let mut i=self.hub.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==self.id&&s.generation==self.generation){s.processing_worker_released=true;}}
@@ -360,19 +365,48 @@ impl AppHub {
             i.active=Some(ActiveSession{personalization:cache.personalization,personalization_commit:None,onboarding_lesson:lesson,diagnostic_trace:self.diagnostics.begin(&id,generation,origin,intent,&config,&mode),caption_render_token:None,id:id.clone(),generation,phase:SessionPhase::Starting,prefs:prefs.clone(),original_config:config.clone(),config:config.clone(),processing_stage:None,mode:mode.clone(),dictionary:dictionary.clone(),started_at:now(),started_intent:intent,finished_intent:None,ended_at:None,capture_duration_ms:0,recording_limit_ms,recording_limit_remaining_ms:None,first_samples:false,provider_ready:false,level:0.0,captions:Vec::new(),error:None,stop:Arc::new(AtomicBool::new(false)),cancel:CancellationToken::new(),worker_released:true,source:None,output:None,pending:None,cache:None,cache_complete:false,cache_created:None,target:None,target_application:None,writing_scene:None,input_context_frozen:false,input_context:None,input_context_status:if prefs.app_writing.input_context_enabled {InputContextStatus::Pending}else{InputContextStatus::Disabled},target_capture_pending:false,input_context_capture_pending:false,target_capture_failure_reason:None,delivery_failure_reason:None,delivery:None,reason:CreationReason::NormalInitial,asr_attempt_id:None,delivery_permit:None,delivery_worker_released:true,original_delivery_revoked:false,manual_copy_preserves_context:false,revision_intent_sequence:0,revision_receipt_sequence:0,processing_worker_released:false,db_pending:0,cancel_pending:false});
             Ok((id,generation,config,prefs,mode,dictionary))
     }
-    async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
+    fn prepare_start_operation(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<PreparedStart> {
         let (id,generation,config,prefs,mode,dictionary)=self.prepare_start_state(intent,origin)?;
         self.schedule_retained_expiry();
         self.publish("recovery.changed",Value::Null);
         let preflight=self.processing_lease(&id,generation);
-        // Input position is frozen at the stop intent, so browsing or moving the
-        // caret while recording does not invalidate the final delivery.
-        if !self.valid_active(&id,generation){return Err(ApiError::new("cancelled","session","口述已取消").for_session(&id,generation));}
-        let secrets=match credentials::read_session(&config){Ok(keys)=>keys,Err(e)=>{let error=ApiError::from(e).for_session(&id,generation);self.fail(&id,generation,error.clone(),true);return Err(error);}};
-        let hub=Arc::clone(self);let job_id=id.clone();
-        self.start_prepared_recording(&id,generation,preflight,move|preflight| {
-            tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(job_id,generation,config,prefs,mode,dictionary,secrets).await;});
-        }).await?;
+        Ok(PreparedStart{id,generation,config,prefs,mode,dictionary,preflight})
+    }
+    async fn start_session_at(self:&Arc<Self>,intent:Instant,origin:Origin)->Result<Value> {
+        let prepared=self.prepare_start_operation(intent,origin)?;let id=prepared.id.clone();let generation=prepared.generation;
+        // UI callers await the full result, but losing their reply must not
+        // drop ownership while a native credential/window operation still runs.
+        let hub=Arc::clone(self);
+        match tokio::spawn(async move{hub.complete_prepared_start(prepared).await}).await {
+            Ok(result)=>result,
+            Err(_)=>{let error=ApiError::new("startup_interrupted","session","录音启动未完成，请重试").for_session(&id,generation);
+                self.fail(&id,generation,error.clone(),true);Err(error)}
+        }
+    }
+    async fn complete_prepared_start(self:&Arc<Self>,prepared:PreparedStart)->Result<Value> {
+        let hub=Arc::clone(self);let id=prepared.id.clone();let generation=prepared.generation;
+        let config=prepared.config.clone();let prefs=prepared.prefs.clone();let mode=prepared.mode.clone();let dictionary=prepared.dictionary.clone();
+        self.complete_prepared_start_with(prepared,|config|credentials::read_session(&config),move|preflight,secrets| {
+            tokio::spawn(async move {let _processing=preflight;hub.record_pipeline(id,generation,config,prefs,mode,dictionary,secrets).await;});
+        }).await
+    }
+    /// Only native credentials and final pipeline launch are substitutable in
+    /// tests. Admission, cancellation, window ACK and ownership stay production.
+    async fn complete_prepared_start_with(self:&Arc<Self>,prepared:PreparedStart,
+        read:impl FnOnce(ProviderConfig)->std::result::Result<credentials::SessionCredentials,CloudError>+Send+'static,
+        launch:impl FnOnce(ProcessingLease,credentials::SessionCredentials)+Send+'static)->Result<Value> {
+        let PreparedStart{id,generation,config,preflight,..}=prepared;
+        let current=||!self.quitting.load(Ordering::SeqCst)&&self.capture_available.load(Ordering::SeqCst)&&self.valid_active(&id,generation);
+        let cancelled=||ApiError::new("cancelled","session","录音启动已取消").for_session(&id,generation);
+        if !current(){let error=cancelled();self.fail(&id,generation,error.clone(),true);return Err(error);}
+        let keys=tokio::task::spawn_blocking(move||read(config)).await
+            .unwrap_or_else(|_|Err(CloudError::new("credential_unavailable","credentials","无法读取录音所需凭据，请重试")));
+        // A rapid second key-down may cancel while credential I/O is pending.
+        // Keep its real owner, but never proceed to the window or microphone.
+        if !current(){let error=cancelled();self.fail(&id,generation,error.clone(),true);return Err(error);}
+        let secrets=match keys {Ok(keys)=>keys,Err(error)=>{let error=ApiError::from(error).for_session(&id,generation);
+            self.fail(&id,generation,error.clone(),true);return Err(error);}};
+        self.start_prepared_recording(&id,generation,preflight,move|preflight|launch(preflight,secrets)).await?;
         Ok(json!({"sessionId":id,"generation":generation,"state":"starting"}))
     }
     /// Keep startup ownership until the recorder is visible. A failed window
@@ -583,7 +617,10 @@ impl AppHub {
         let value=self.finish_cancel(&id,generation,result)?;refreshed?;Ok(value)
     }
     pub async fn cancel_session_async(self:&Arc<Self>,p:&Value)->Result<Value> {
-        let(id,generation,guard,completed,attempt)=self.begin_cancel(p)?;self.publish_session();
+        let cancellation=self.begin_cancel(p)?;self.publish_session();self.complete_cancel_async(cancellation).await
+    }
+    async fn complete_cancel_async(self:&Arc<Self>,cancellation:(String,u64,Arc<CommitGuard>,bool,Option<String>))->Result<Value> {
+        let(id,generation,guard,completed,attempt)=cancellation;
         if completed{if let Some(attempt)=attempt{let _=self.db_write(DbCommand::TransitionDelivery{attempt_id:attempt,expected:DeliveryState::Prepared,next:DeliveryState::Skipped,reason:Some("cancelledBeforeInjection".into())},guard,DbPriority::Critical).await;}return Ok(json!({"status":"alreadyCompleted"}));}
         let result=self.db_write(DbCommand::CancelUnfinished{session_id:id.clone()},guard,DbPriority::Critical).await;
         let refreshed=if result.is_ok(){let hub=Arc::clone(self);tokio::task::spawn_blocking(move||hub.refresh_hotkeys_after_cancel()).await
@@ -635,16 +672,52 @@ impl AppHub {
     pub async fn toggle_from_hotkey(self:&Arc<Self>)->Result<()> {
         self.toggle_from_hotkey_at(Instant::now()).await
     }
+    #[cfg(test)]
     pub(crate) async fn dispatch_hotkey_intent(self:&Arc<Self>,intent:platform::hotkeys::HotkeyIntent)->Result<()> {
         if self.lifecycle_epoch.load(Ordering::SeqCst)!=intent.lifecycle_epoch {return Ok(());}
         self.toggle_from_hotkey_at(intent.at).await
+    }
+    pub(crate) async fn dispatch_hotkey_intent_with_start_error(self:&Arc<Self>,intent:platform::hotkeys::HotkeyIntent,
+        on_start_error:impl FnOnce(ApiError)+Send+'static)->Result<()> {
+        self.dispatch_hotkey_intent_with_start_worker(intent,on_start_error,|hub,prepared|async move {
+            hub.complete_prepared_start(prepared).await
+        }).await
+    }
+    async fn dispatch_hotkey_intent_with_start_worker<F,Fut>(self:&Arc<Self>,intent:platform::hotkeys::HotkeyIntent,
+        on_start_error:impl FnOnce(ApiError)+Send+'static,start:F)->Result<()>
+        where F:FnOnce(Arc<AppHub>,PreparedStart)->Fut+Send+'static,Fut:Future<Output=Result<Value>>+Send+'static {
+        if self.lifecycle_epoch.load(Ordering::SeqCst)!=intent.lifecycle_epoch {return Ok(());}
+        // Classify once against the session installed by the preceding intent.
+        // Start admission is synchronous; only credential/window I/O detaches.
+        let action=self.hotkey_action_at(intent.at)?;
+        self.apply_hotkey_action(action,intent.at,||async move {
+            let prepared=self.prepare_start_operation(intent.at,Origin::HotkeyHook)?;
+            let id=prepared.id.clone();let generation=prepared.generation;let hub=Arc::clone(self);
+            tokio::spawn(async move {
+                let worker=Arc::clone(&hub);
+                let result=tokio::spawn(async move{start(worker,prepared).await}).await
+                    .unwrap_or_else(|_|Err(ApiError::new("startup_interrupted","session","录音启动未完成，请重试")));
+                if let Err(error)=result {
+                    let error=error.for_session(&id,generation);hub.fail(&id,generation,error.clone(),true);on_start_error(error);
+                }
+            });
+            Ok(())
+        }).await
     }
     fn hotkey_action_at(&self,intent:Instant)->Result<HotkeyAction> {
         let i=self.inner.lock().unwrap();
         if i.shortcut_capture.is_some(){return Err(ApiError::new("capture_busy","shortcut","请先结束快捷键录制"));}
         let Some(s)=i.active.as_ref()else{return Ok(HotkeyAction::Start);};
-        if s.finished_intent.is_some_and(|finished|intent<finished){return Ok(HotkeyAction::Ignore);}
         let Some(elapsed)=intent.checked_duration_since(s.started_intent)else{return Ok(HotkeyAction::Ignore);};
+        // A failed credential/window startup still belongs to the same rapid
+        // double press. It must cancel, rather than silently retry/reopen it.
+        // Explicit stop/cancel and sessions with content retain old-event gates.
+        if elapsed<=ACCIDENTAL_HOTKEY_WINDOW&&!s.cancel.is_cancelled()&&!s.stop.load(Ordering::SeqCst)
+            &&matches!(s.reason,CreationReason::NormalInitial)&&matches!(s.phase,SessionPhase::Failed|SessionPhase::Incomplete)
+            &&s.source.is_none()&&s.output.is_none()&&s.pending.is_none() {
+            return Ok(HotkeyAction::Cancel(s.id.clone(),s.generation));
+        }
+        if s.finished_intent.is_some_and(|finished|intent<finished){return Ok(HotkeyAction::Ignore);}
         if !s.cancel.is_cancelled()&&matches!(s.phase,SessionPhase::Starting|SessionPhase::Recording) {
             return Ok(if elapsed<=ACCIDENTAL_HOTKEY_WINDOW {HotkeyAction::Cancel(s.id.clone(),s.generation)}
                 else{HotkeyAction::Stop(s.id.clone(),s.generation)});
@@ -657,7 +730,12 @@ impl AppHub {
         }
     }
     pub async fn toggle_from_hotkey_at(self:&Arc<Self>,intent:Instant)->Result<()> {
-        match self.hotkey_action_at(intent)? {
+        let action=self.hotkey_action_at(intent)?;
+        self.apply_hotkey_action(action,intent,||async move{self.start_session_at(intent,Origin::HotkeyHook).await.map(|_|())}).await
+    }
+    async fn apply_hotkey_action<F,Fut>(self:&Arc<Self>,action:HotkeyAction,intent:Instant,start:F)->Result<()>
+        where F:FnOnce()->Fut+Send,Fut:Future<Output=Result<()>>+Send {
+        match action {
             HotkeyAction::Ignore=>return Ok(()),
             HotkeyAction::Busy(id,generation)=>return Err(ApiError::new("session_busy","session","正在处理或释放上一条口述，请稍候").for_session(&id,generation)),
             HotkeyAction::Stop(id,generation)=>{
@@ -666,23 +744,27 @@ impl AppHub {
                 return Ok(());
             },
             HotkeyAction::Cancel(id,generation)=>{
-                self.cancel_session_async(&json!({"sessionId":id,"expectedGeneration":generation})).await.map_err(|e|e.for_session(&id,generation))?;
+                let cancellation=self.begin_cancel(&json!({"sessionId":id,"expectedGeneration":generation}));
+                if cancellation.is_ok(){self.publish_session();}
+                let cleanup=async {self.complete_cancel_async(cancellation?).await.map_err(|e|e.for_session(&id,generation))};
                 let control=self.recorder_dismiss_control.lock().unwrap().clone();
-                if let Some(control)=control {
-                    let hidden_id=id.clone();
-                    let result=tokio::task::spawn_blocking(move||control(hidden_id,generation)).await
-                        .map_err(|_|ApiError::new("window_unavailable","window","录音已取消，浮层未能收起"))?;
-                    // A newer session may already own the surface. The native
-                    // callback rechecks identity before hiding it.
-                    if let Err(error)=result {if error.code!="stale_session"{return Err(error);}}
-                }
+                let dismiss=async {if let Some(control)=control {
+                        let hidden_id=id.clone();
+                        tokio::task::spawn_blocking(move||control(hidden_id,generation)).await
+                            .unwrap_or_else(|_|Err(ApiError::new("window_unavailable","window","录音已取消，浮层未能收起")))
+                    }else{Ok(())}};
+                let(cancelled,hidden)=tokio::join!(cleanup,dismiss);
                 self.hotkey_operation_finished(&id,generation);
+                cancelled?;
+                // A newer session may already own the surface. The native
+                // callback rechecks identity before hiding it.
+                if let Err(error)=hidden {if error.code!="stale_session"{return Err(error.for_session(&id,generation));}}
                 return Ok(());
             },
             HotkeyAction::Start=>{},
         }
         if self.onboarding_shortcut_check()? { return Ok(()); }
-        self.start_session_at(intent,Origin::HotkeyHook).await.map(|_|())
+        start().await
     }
     pub async fn interrupt_session(self:&Arc<Self>,reason:&str)->Result<()> {
         let epoch=self.reserve_lifecycle_epoch();self.interrupt_session_at_epoch(reason,epoch).await
