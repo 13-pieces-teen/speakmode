@@ -55,9 +55,12 @@ const componentSource=await readFile(root+'/app/src/components/HistoryDetail.tsx
 const stubsPath=out+'/component-stubs.mjs';
 await writeFile(stubsPath,`
 let cursor=0,slots=[],effects=[],dirty=false,desktop,actions;
-const navigation={register:()=>{},request:action=>action()};
+let guard=null;
+const navigation={register:value=>{guard=value;},request:action=>action()};
+export const currentGuard=()=>guard;
+export const unmount=()=>{for(const slot of slots)slot?.cleanup?.();};
 export const setEnvironment=(d,a)=>{desktop=d;actions=a;};
-export const resetHooks=()=>{cursor=0;slots=[];effects=[];dirty=false;};
+export const resetHooks=()=>{cursor=0;slots=[];effects=[];dirty=false;guard=null;};
 export const beginRender=()=>{cursor=0;dirty=false;effects=[];};
 export const flushEffects=()=>{for(const effect of effects)effect();return dirty;};
 export const useState=initial=>{const index=cursor++;if(!(index in slots))slots[index]=typeof initial==='function'?initial():initial;return [slots[index],value=>{const next=typeof value==='function'?value(slots[index]):value;if(next!==slots[index]){slots[index]=next;dirty=true;}}];};
@@ -68,6 +71,7 @@ export const useId=()=>{const index=cursor++;return slots[index]??(slots[index]=
 export const useDesktop=()=>desktop,useDictations=()=>actions,useModes=()=>({findMode:()=>null});
 export const useNavigationGuard=()=>navigation;
 export const focusInView=()=>{},errorMessage=error=>String(error),isPersonalMode=()=>false;
+export const toModeId=value=>value,fromCandidate=value=>value;
 export const characterDiff=(source,current)=>({source:[{text:source,changed:false}],current:[{text:current,changed:false}]});
 export const Button='button',TextArea='textarea',Select={Root:'selectRoot',Trigger:'selectTrigger',Content:'selectContent',Item:'selectItem'};
 export const ModeBadge='modeBadge',ModeSelector='modeSelector',RecordText='recordText',CopyAction='copyAction';
@@ -136,6 +140,66 @@ await test('Confirmed insertion sends only explicit source/target ranges bound t
  const env=setup();let tree=env.open();select(tree,'选择识别来源').props.onValueChange('source-1');tree=env.render();select(tree,'选择恢复目标').props.onValueChange('block-1');tree=env.render();textarea(tree,'选择当前文本中的插入或替换位置').props.onPointerUp(selectEvent(0,0));tree=env.render();restoreButton(tree).props.onClick();await new Promise(resolve=>setImmediate(resolve));
  assert.equal(env.calls.length,1);assert.equal(env.calls[0].record.revision,'output-r1');assert.deepEqual(env.calls[0].patch,{blockId:'block-1',start:0,end:0,sourceSelections:[{itemId:'source-1',start:0,end:2}]});
  assert.equal(restoreButton(env.render()),undefined);
+});
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const recoveryButton=tree=>find(tree,node=>node.type==='button'&&node.props.children==='核对整理候选');
+function setupRecovery(review){
+ const env=setup(),record=env.getRecord(),calls=[];
+ env.setRecord({...record,revision:'',sourceState:'unprocessed',current:record.source,detail:{...record.detail,session:{generation:7},output:null}});
+ const desktop={available:true,session:{sessionId:record.id,generation:7,state:'failed',workerReleased:true,sourceRevisionId:record.sourceRevisionId,recoveryCandidateId:'rejected-draft-1'}};
+ const candidate=runId=>({native:{id:runId,sessionId:record.id,sourceRevisionId:record.sourceRevisionId},texts:['今天不要发邀请。'],baseRevision:'',reviewIssues:['valuesChanged'],mode:'结构',resolved:'结构'});
+ const actions={
+  reviewRecovery:async(value,generation,recoveryCandidateId,runId)=>{calls.push({name:'review',record:value,generation,recoveryCandidateId,runId});return review?await review({value,generation,recoveryCandidateId,runId,candidate}):candidate(runId);},
+  generate:async()=>{throw Error('Recovery must not regenerate');},
+  adopt:async(value,next,reviewedText)=>{calls.push({name:'adopt',record:value,candidate:next,reviewedText});},
+  cancelCandidate:async(id,runId)=>{calls.push({name:'cancel',id,runId});},
+ };
+ hooks.setEnvironment(desktop,actions);
+ return {...env,calls,desktop};
+}
+await test('Recovery review is available only for the exact released failed complete source without output',()=>{
+ const env=setupRecovery();assert(recoveryButton(env.render()));
+ for(const change of [{generation:8},{sessionId:'other-session'},{sourceRevisionId:'other-source'},{recoveryCandidateId:null},{workerReleased:false},{state:'rewriting'}]){
+  const previous=env.desktop.session;env.desktop.session={...previous,...change};assert.equal(recoveryButton(env.render()),undefined);env.desktop.session=previous;
+ }
+ const record=env.getRecord();env.setRecord({...record,detail:{...record.detail,source:{...record.detail.source,complete:false}}});assert.equal(recoveryButton(env.render()),undefined);
+ env.setRecord({...record,revision:'new-output',detail:{...record.detail,output:{id:'new-output',blocks:[]}}});assert.equal(recoveryButton(env.render()),undefined);assert.deepEqual(env.calls,[]);
+});
+await test('Recovery import compares against source, permits editing, and adopts only on explicit confirmation',async()=>{
+ const env=setupRecovery();recoveryButton(env.render()).props.onClick();await tick();let tree=env.render();
+ assert.equal(env.calls.length,1);assert.equal(env.calls[0].name,'review');assert.equal(env.calls[0].generation,7);assert.equal(env.calls[0].recoveryCandidateId,'rejected-draft-1');
+ const comparison=find(tree,node=>node.type==='candidateComparison');assert.equal(comparison.props.baseline,'不要\n\n今天');assert.equal(comparison.props.generated,'今天不要发邀请。');
+ assert.equal(hooks.currentGuard().dirty,true);comparison.props.onChange('今天不要发邀请，先核对。');tree=env.render();
+ find(tree,node=>node.type==='button'&&node.props.children==='保存这个版本').props.onClick();await tick();tree=env.render();
+ assert.equal(env.calls[1].name,'adopt');assert.equal(env.calls[1].record.revision,'');assert.equal(env.calls[1].reviewedText,'今天不要发邀请，先核对。');assert.equal(env.calls[1].candidate.native.id,env.calls[0].runId);assert.equal(find(tree,node=>node.type==='candidateComparison'),undefined);
+});
+await test('Recovery import is single-flight and navigation cleanup cancels its exact candidate run',async()=>{
+ let resolve;const pending=new Promise(done=>{resolve=done;});const env=setupRecovery(async({runId,candidate})=>{await pending;return candidate(runId);});
+ const button=recoveryButton(env.render());button.props.onClick();button.props.onClick();env.render();assert.equal(env.calls.length,1);assert.equal(hooks.currentGuard().pending,true);
+ hooks.unmount();resolve();await tick();assert(env.calls.filter(call=>call.name==='cancel').every(call=>call.runId===env.calls[0].runId));assert(!env.calls.some(call=>call.name==='adopt'));
+});
+await test('Recovery changes during import discard the stale response and cancel only its run',async()=>{
+ let resolve;const pending=new Promise(done=>{resolve=done;});const env=setupRecovery(async({runId,candidate})=>{await pending;return candidate(runId);});
+ recoveryButton(env.render()).props.onClick();env.desktop.session={...env.desktop.session,generation:8,recoveryCandidateId:'rejected-draft-2'};env.render();resolve();await tick();
+ assert.equal(find(env.render(),node=>node.type==='candidateComparison'),undefined);assert.deepEqual(env.calls.filter(call=>call.name==='cancel').map(call=>call.runId),[env.calls[0].runId]);
+});
+await test('An imported recovery candidate can be discarded and reopened without generating',async()=>{
+ const env=setupRecovery();recoveryButton(env.render()).props.onClick();await tick();env.render();hooks.currentGuard().discard();await tick();
+ assert.equal(env.calls[1].name,'cancel');assert.equal(env.calls[1].runId,env.calls[0].runId);recoveryButton(env.render()).props.onClick();await tick();env.render();assert.equal(env.calls[2].name,'review');assert.notEqual(env.calls[2].runId,env.calls[0].runId);
+});
+await test('A recovery response with the wrong source is rejected before comparison or adoption',async()=>{
+ const env=setupRecovery(async({runId,candidate})=>{const next=candidate(runId);return {...next,native:{...next.native,sourceRevisionId:'other-source'}};});
+ recoveryButton(env.render()).props.onClick();await tick();const tree=env.render();assert.equal(find(tree,node=>node.type==='candidateComparison'),undefined);assert(find(tree,node=>node.props?.role==='alert'));assert.equal(env.calls[1].name,'cancel');assert(!env.calls.some(call=>call.name==='adopt'));
+});
+const actionsSource=await readFile(root+'/app/src/hooks/useDictations.ts','utf8');
+const actionsPath=out+'/dictation-actions-check.mjs';
+await writeFile(actionsPath,ts.transpileModule(actionsSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext},transformers:{before:[replaceImports]}}).outputText);
+const {useDictations:realActions}=await import(pathToFileURL(actionsPath));
+await test('Recovery action sends only the retained candidate identity to the import command',async()=>{
+ const calls=[],native={id:'review-run',blocks:[]};
+ hooks.setEnvironment({command:async(name,payload)=>{calls.push({name,payload});return native;},refresh:async()=>{throw Error('Import must not refresh or adopt');}},{});
+ assert.equal(await realActions().reviewRecovery({id:'session-r1',sourceRevisionId:'source-r1'},7,'rejected-draft-1','review-run'),native);
+ assert.deepEqual(calls,[{name:'history.reviewRecovery',payload:{sessionId:'session-r1',expectedGeneration:7,sourceRevisionId:'source-r1',recoveryCandidateId:'rejected-draft-1',runId:'review-run'}}]);
 });
 const receipt={scope:'Synthetic Unicode selection/preview and actual HistoryDetail render/callback logic with synthetic hook slots. No browser DOM selection, native Store acceptance, provider, user data or host insertion.',status:tests.every(value=>value.status==='PASS')?'PASS':'FAIL',helperSha256:createHash('sha256').update(helperSource).digest('hex'),componentSha256:createHash('sha256').update(componentSource).digest('hex'),tests};
 await writeFile(out+'/helper-receipt.json',JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt,null,2));process.exitCode=receipt.status==='PASS'?0:1;

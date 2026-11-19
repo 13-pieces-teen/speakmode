@@ -58,6 +58,42 @@ impl Inner {
 }
 
 impl AppHub {
+    pub(crate) async fn review_recovery_candidate(&self,p:&Value)->Result<Value> {
+        let id=text(p,"sessionId")?;
+        let generation=number(p,"expectedGeneration")?;
+        let source_id=text(p,"sourceRevisionId")?;
+        let candidate_id=operation_id(p,"recoveryCandidateId")?;
+        let run=operation_id(p,"runId")?;
+        let expired=||ApiError::new("candidate_expired","recovery","整理候选已变化或过期，请刷新后再查看");
+        let detail=db_detail(self.db_read(DbCommand::GetResult{session_id:id.into()}).await?)?;
+        if detail.output.is_some()||detail.source.id!=source_id||detail.source.generation!=generation {
+            return Err(expired());
+        }
+        let mut inner=self.inner.lock().unwrap();
+        self.auxiliary_available()?;
+        if inner.guards.get(id).is_some_and(|guard|guard.is_cancelled()){return Err(expired());}
+        let session=inner.active.as_ref().filter(|s|s.id==id&&s.generation==generation
+            &&!s.busy()&&!s.cancel.is_cancelled()&&s.pending.is_none()
+            &&matches!(s.phase,SessionPhase::Failed|SessionPhase::Incomplete)
+            &&s.source.as_ref()==Some(&detail.source)).ok_or_else(expired)?;
+        let mut candidate=session.recovery_candidate.as_ref()
+            .filter(|candidate|candidate.revision.id==candidate_id&&candidate.revision.source_revision_id==source_id)
+            .cloned().ok_or_else(expired)?;
+        let personalization=candidate.revision.writing_receipt.as_ref().and_then(|receipt|receipt.personalization.clone());
+        if personalization.as_ref().is_some_and(|profile|personalization::revoked(&inner,profile)){return Err(expired());}
+        let cancel=session.cancel.child_token();
+        claim_operation(&mut inner,&format!("candidate:{id}:{run}"))?;
+        if let Some(old)=inner.candidate.take(){
+            old.cancel.cancel();
+            if let Some(guard)=old.adopting{guard.cancel();}
+        }
+        candidate.revision.id=run.into();
+        inner.candidate=Some(CandidateSlot{
+            personalization,key:id.into(),run:run.into(),cancel,base:String::new(),result:Some(candidate.clone()),adopting:None,
+        });
+        wire(candidate)
+    }
+
     pub(super) fn retry_configuration(&self,p:&Value,session:&ActiveSession)->Result<ProviderConfig> {
         self.auxiliary_available()?;
         match p.get("retryConfiguration").map(Value::as_str) {

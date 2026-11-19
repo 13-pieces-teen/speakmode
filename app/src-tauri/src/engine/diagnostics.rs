@@ -92,7 +92,8 @@ pub struct AutomaticRecoveryView {
 fn rewrite_error_code(code: Option<&str>) -> Option<&'static str> {
     const CODES: &[&str] = &[
         "rewrite_timeout", "rewrite_network", "network_setup", "rewrite_service_error",
-        "authentication_failed", "rate_limited", "invalid_response", "invalid_output", "invalid_local_repair", "stale_rewrite",
+        "authentication_failed", "rate_limited", "invalid_request", "rewrite_request_rejected", "rewrite_refused",
+        "rewrite_source_too_long", "invalid_response", "invalid_output", "invalid_local_repair", "stale_rewrite",
         "empty_output", "response_too_large", "truncated_output", "invalid_source_mapping",
         "incomplete_source_coverage", "rewrite_meaning_risk", "rewrite_admission_rejected", "rewrite_semantic_rejected", "cancelled", "source_incomplete",
         "rewrite_literal_changed", "protected_terms_missing", "protected_terms_new_latin", "protected_terms_marker_unknown", "protected_terms_marker_invalid",

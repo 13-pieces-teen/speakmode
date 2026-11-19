@@ -11,10 +11,34 @@ impl Default for RewriteWaitPolicy {
     fn default() -> Self { Self { deadline: Duration::from_secs(20) } }
 }
 impl RewriteWaitPolicy {
-    pub fn for_source(_reason: CreationReason, source: &SourceRevision) -> Self {
+    pub fn for_source(source: &SourceRevision) -> Self {
         // Count the frozen body and separators by Unicode characters, also on retry.
-        Self { deadline: Duration::from_millis(rewrite::initial_wait_ms(source)) }
+        Self { deadline: Duration::from_millis(rewrite::full_pipeline_wait_ms(source)) }
     }
+}
+
+pub(super) fn failure_message(error:&CloudError,stage:Option<&str>,has_candidate:bool)->String {
+    let step=match stage {
+        Some("review"|"finalReview"|"recoveryReview"|"recoveryFinalReview")=>"整理稿复核",
+        Some("repair"|"recoveryRepair")=>"整理稿修正",
+        _=>"整理",
+    };
+    let reason=match error.code.as_str() {
+        "rewrite_timeout"=>format!("{step}超时"),
+        "rewrite_network"|"network_setup"=>"连接整理服务失败".into(),
+        "rewrite_service_error"=>"整理服务暂时不可用".into(),
+        "authentication_failed"=>"整理服务认证失败，请检查 API Key".into(),
+        "rate_limited"=>"整理服务请求过于频繁，请稍后重试".into(),
+        "rewrite_request_rejected"|"invalid_request"=>"整理请求被服务拒绝，请检查服务配置和模型".into(),
+        "rewrite_refused"=>"整理服务未能处理本次内容".into(),
+        _=>match fallback_reason(error) {
+            Some(RewriteFallbackReason::MeaningRisk)=>format!("{step}未通过内容检查"),
+            Some(RewriteFallbackReason::InvalidOutput)=>format!("{step}返回的内容格式无效"),
+            _=>return error.message.clone(),
+        },
+    };
+    let retained=if has_candidate {"已保留识别稿和待核对的整理候选。"}else{"已保留完整识别稿。"};
+    format!("{reason}。{retained}")
 }
 
 pub(super) fn fallback_reason(error: &CloudError) -> Option<RewriteFallbackReason> {

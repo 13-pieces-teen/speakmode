@@ -51,9 +51,11 @@ async fn english_guidance_does_not_waive_numbers_negation_quotes_or_code_checks(
 async fn fact_rejection_is_not_overridden_by_a_fluent_english_draft() {
     let input="I have worked with the Kelm team and I am preparing a summary of my research.";
     let changed=input.replace("Kelm","Kelvin");
-    let server=Server::new(vec![Reply::draft(&changed),Reply::new(rejection("Kelm","Kelvin","facts"))]).await;
+    let server=Server::new(vec![
+        Reply::draft(&changed),Reply::new(rejection("Kelm","Kelvin","facts")),Reply::draft(&changed),
+    ]).await;
     let out=test_run(&server,input,Duration::from_secs(4)).await;
-    assert_eq!(out.result.unwrap_err().code,"rewrite_semantic_rejected");assert_eq!(server.count(),2);
+    assert_eq!(out.result.unwrap_err().code,"rewrite_semantic_rejected");assert_eq!(server.count(),3);
     assert!(out.trace.correction_attempted);assert!(out.trace.final_review.is_none());
 }
 

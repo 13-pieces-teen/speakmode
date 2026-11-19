@@ -360,7 +360,7 @@ impl AppHub {
             "revision.correctTerm"=>ReplayValue::Correction(value.pointer("/detail/session/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/detail/output/id").and_then(Value::as_str).unwrap_or("").into(),value.pointer("/dictionary/version").and_then(Value::as_u64),serde_json::from_value(value["dictionaryStatus"].clone()).unwrap_or(CorrectionDictionaryStatus::NotRequested)),
             "mode.save"=>ReplayValue::Mode(id("id"),value["revision"].as_u64().unwrap_or(0)),
             "revision.adopt"|"revision.edit"|"revision.restore"|"revision.undo"|"result.useSource"=>ReplayValue::Detail(value.pointer("/session/id").and_then(Value::as_str).unwrap_or("").into()),
-            "history.rewrite"=>ReplayValue::Candidate(id("sessionId"),id("id")),
+            "history.rewrite"|"history.reviewRecovery"=>ReplayValue::Candidate(id("sessionId"),id("id")),
             "mode.preview"|"personalization.compare"=>ReplayValue::Acknowledged,
             "shortcut.capture.begin"=>ReplayValue::Capture(id("captureId")),
             _=>ReplayValue::Safe(value.clone()),
@@ -382,7 +382,7 @@ impl AppHub {
             ReplayValue::Session(id,generation)=>{let i=self.inner.lock().unwrap();wire(i.active.as_ref().filter(|s|s.id==id&&s.generation==generation).ok_or_else(already)?.view())},
             ReplayValue::Detail(id)=>db_wire(self.db_read(DbCommand::GetResult{session_id:id}).await.map_err(|_|already())?),
             ReplayValue::Mode(id,revision)=>{let snapshot=db_mode(self.db_read(DbCommand::ModeSnapshot{id:id.clone(),revision:Some(revision)}).await.map_err(|_|already())?)?;wire(ModeRecord{id,name:snapshot.name,base_mode:snapshot.base_mode,rules:snapshot.rules,revision,builtin:false})},
-            ReplayValue::Candidate(id,run)=>{let i=self.inner.lock().unwrap();wire(i.candidate.as_ref().filter(|c|c.key==id&&c.run==run).and_then(|c|c.result.clone()).ok_or_else(already)?)},
+            ReplayValue::Candidate(id,run)=>{let i=self.inner.lock().unwrap();wire(i.candidate.as_ref().filter(|c|c.key==id&&c.run==run&&!c.cancel.is_cancelled()).and_then(|c|c.result.clone()).ok_or_else(already)?)},
             ReplayValue::Capture(id)=>{let i=self.inner.lock().unwrap();if i.shortcut_capture.as_deref()!=Some(&id){return Err(already());}Ok(json!({"captureId":id,"capturing":true}))},
         }
     }
@@ -457,6 +457,7 @@ impl AppHub {
             "usage.today"=>db_wire(self.db_read(DbCommand::UsageToday{date:chrono::Local::now().format("%Y-%m-%d").to_string()}).await?),
             "usage.total"=>db_wire(self.db_read(DbCommand::UsageTotal).await?),
             "history.rewrite"=>self.make_candidate(&p,false).await,
+            "history.reviewRecovery"=>return self.review_recovery_candidate(&p).await,
             "rewrite.retry"=>self.retry_rewrite(&p).await,
             "history.cancelCandidate"=>{let mut i=self.inner.lock().unwrap();let session=text(&p,"sessionId")?;let run=operation_id(&p,"runId")?;cancel_operation(&mut i,&format!("candidate:{session}:{run}"))?;if i.candidate.as_ref().is_some_and(|c|c.key==session&&run==c.run){if let Some(slot)=i.candidate.take(){slot.cancel.cancel();if let Some(guard)=slot.adopting{let decision=guard.cancel();return Ok(json!({"status":match decision{CancelDecision::Accepted=>"cancelled",CancelDecision::Pending=>"pending",CancelDecision::AlreadyCompleted=>"alreadyCompleted"}}));}}}Ok(Value::Null)},
             "revision.adopt"=>{

@@ -1,5 +1,5 @@
 //! Coordinator -> production dispatcher -> real loopback HTTP -> SQLite.
-//! The baseline arm injects the former cloud-only 20s clock, changing nothing else.
+//! Production budget selection and explicit short-deadline failure receipts.
 use super::*;
 use crate::cloud::rewrite::minimum_pipeline::tests::{Server,Reply};
 use crate::cloud::rewrite::execution::RequestOutcome;
@@ -22,7 +22,8 @@ async fn coordinator_allows_final_review_beyond_former_five_second_cutoff() {
     assert_eq!(output.text(),"预算3500元，先不要发送。");assert!(output.rewrite_recovery.is_none());
     assert_eq!(server.count(),2);assert_eq!(usage_count(&h),1);
     let snapshot=h.diagnostics.snapshot().unwrap();let rewrite=snapshot.traces[0].rewrite.as_ref().unwrap();
-    assert_eq!(rewrite.configured_budget_ms,20000);assert!(rewrite.automatic_recovery.is_none());
+    assert_eq!(rewrite.configured_budget_ms,40000);assert!(rewrite.automatic_recovery.is_none());
+    assert!(view(&h).recovery_candidate_id.is_none(),"a validated primary draft is not a recovery candidate");
 }
 
 #[tokio::test]

@@ -110,7 +110,7 @@ pub(super) fn install(hub: &AppHub, id: &str, phase: SessionPhase, worker_releas
         first_samples: true, provider_ready: true, level: 0.0, captions: vec![], error: None,
         stop: Arc::new(AtomicBool::new(false)), cancel: CancellationToken::new(), worker_released,
         processing_worker_released: true,db_pending:0,cancel_pending:false,
-        source: None, output: None, pending: None, cache: None, cache_complete: false,
+        source: None, output: None, recovery_candidate: None, pending: None, cache: None, cache_complete: false,
         cache_created: None, target: None, target_application:None, writing_scene:None, input_context_frozen:false,input_context:None,input_context_status:InputContextStatus::Disabled, target_capture_pending:false,input_context_capture_pending:false, target_capture_failure_reason:None, delivery_failure_reason:None, delivery: None,
         delivery_permit: None, delivery_worker_released: true,
         original_delivery_revoked:false,manual_copy_preserves_context:false,revision_intent_sequence:0,revision_receipt_sequence:0,

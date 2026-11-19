@@ -8,30 +8,19 @@ fn budget_source(text: String) -> SourceRevision {
 #[test]
 fn initial_rewrite_wait_budget_uses_adaptive_unicode_characters_not_utf8_bytes() {
     for character in ["a","轻","🎙"] {
-        for (count,seconds) in [(400,20),(401,20),(800,20),(801,30),(3000,30),(3001,60)] {
+        for (count,seconds) in [(400,40),(401,40),(800,40),(801,60),(3000,60),(3001,120)] {
             let frozen=budget_source(character.repeat(count));
             assert_eq!(frozen.text().chars().count(),count);
-            assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&frozen).deadline,
+            assert_eq!(RewriteWaitPolicy::for_source(&frozen).deadline,
                 Duration::from_secs(seconds),"{character}: {count} characters");
         }
     }
     // Separators are part of the actual source body sent for rewriting.
     let mut segmented=source("s");segmented.items[0].text="轻".repeat(399);segmented.items[1].text="语".repeat(400);
     assert_eq!(segmented.text().chars().count(),800);
-    assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&segmented).deadline,Duration::from_secs(20));
+    assert_eq!(RewriteWaitPolicy::for_source(&segmented).deadline,Duration::from_secs(40));
     segmented.items[1].text.push('音');
-    assert_eq!(RewriteWaitPolicy::for_source(CreationReason::NormalInitial,&segmented).deadline,Duration::from_secs(30));
-}
-
-#[test]
-fn explicit_rewrite_attempts_allow_full_source_length_budget() {
-    for reason in [CreationReason::Retry,CreationReason::History,CreationReason::UseSource,CreationReason::Preview] {
-        for (count,seconds) in [(1,20),(800,20),(801,30),(3001,60)] {
-            assert_eq!(RewriteWaitPolicy::for_source(reason,&budget_source("语".repeat(count))).deadline,
-                Duration::from_secs(seconds),"{reason:?}: {count} characters");
-        }
-    }
-    assert_eq!(RewriteWaitPolicy::default().deadline,Duration::from_secs(20));
+    assert_eq!(RewriteWaitPolicy::for_source(&segmented).deadline,Duration::from_secs(60));
 }
 
 pub(super) fn assert_unfinished(h:&Arc<AppHub>) {

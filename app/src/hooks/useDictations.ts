@@ -8,6 +8,7 @@ export function useDictations(){
   records:desktop.records,
   load:desktop.loadRecord,
   generate:async(record:Dictation,mode:Mode,runId:string,confirmedContext?:ConfirmedContext):Promise<Candidate>=>fromCandidate(await desktop.command<HistoryCandidate>('history.rewrite',{sessionId:record.id,sourceRevisionId:record.sourceRevisionId,modeId:toModeId(mode),baseRevisionId:record.revision,runId,...(confirmedContext?{confirmedContext}:{})})),
+  reviewRecovery:async(record:Dictation,generation:number,recoveryCandidateId:string,runId:string):Promise<Candidate>=>fromCandidate(await desktop.command<HistoryCandidate>('history.reviewRecovery',{sessionId:record.id,expectedGeneration:generation,sourceRevisionId:record.sourceRevisionId,recoveryCandidateId,runId})),
   cancelCandidate:async(id:string,runId:string|null|undefined)=>{if(!runId)return;await desktop.command('history.cancelCandidate',{sessionId:id,runId});},
   adopt:(record:Dictation,candidate:Candidate,reviewedText:string)=>changed('revision.adopt',{sessionId:record.id,expectedCurrentRevisionId:record.revision,candidateId:candidate.native.id,reviewedText}),
   edit:(record:Dictation,blocks:OutputBlock[])=>changed('revision.edit',{sessionId:record.id,expectedCurrentRevisionId:record.revision,blocks}),

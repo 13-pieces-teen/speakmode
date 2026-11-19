@@ -215,6 +215,15 @@ const renderRecovery=(live)=>{
  setDesktop({session:live,command:async(name,payload)=>calls.push({name,payload}),refresh:async()=>calls.push({name:'state.snapshot'})});
  return {tree:SessionRecovery({onOpen:id=>opened.push(id)}),calls,opened};
 };
+await test('Rejected recovery candidate action only opens its record and leaves generation to an explicit review',()=>{
+ const live={...session('failed'),sourceRevisionId:'source-r1',recoveryCandidateId:'draft-r1',error:'自动检查未通过'};
+ const {tree,calls,opened}=renderRecovery(live),button=nodes(tree,node=>node.type==='button'&&node.props.children==='查看整理候选')[0];
+ assert(button);assert.deepEqual(calls,[]);assert.deepEqual(opened,[]);button.props.onClick();assert.deepEqual(opened,['synthetic-result']);assert.deepEqual(calls,[]);
+ assert.equal(nodes(tree,node=>node.type==='p'&&node.props.children===live.error).length,1);
+ for(const change of [{workerReleased:false},{recoveryCandidateId:null},{sourceRevisionId:null},{state:'rewriting'},{state:'ready'}]){
+  assert.equal(nodes(renderRecovery({...live,...change}).tree,node=>node.type==='button'&&node.props.children==='查看整理候选').length,0);
+ }
+});
 await test('Pending cloud retry does not block an independent explicit source copy',async()=>{
  const calls=[];let release;
  const cloud=new Promise(resolve=>{release=resolve;});
