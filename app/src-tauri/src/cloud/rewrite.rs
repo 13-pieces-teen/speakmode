@@ -436,6 +436,11 @@ pub fn initial_wait_ms(source: &SourceRevision) -> u64 {
     match source.text().chars().count() { 0..=800 => 20000, 801..=3000 => 30000, _ => 60000 }
 }
 
+/// Generation plus independent full review need two nominal request windows.
+/// Explicit one-shot candidates retain initial_wait_ms. This is a bounded
+/// complete-attempt budget, never a fresh budget for each HTTP request.
+pub fn full_pipeline_wait_ms(source:&SourceRevision)->u64{initial_wait_ms(source).saturating_mul(2)}
+
 /// The 8192-token generation envelope is finite. Admit a conservative encoded
 /// source budget, leaving 2048 units for JSON/layout and modest editing growth.
 /// UTF-8 bytes are a deliberately conservative engineering bound, not an exact
@@ -589,7 +594,6 @@ pub async fn rewrite(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot,
 }
 
 pub async fn rewrite_with_dictionary(config: &ProviderConfig, secret: &str, mode: &ModeSnapshot, source: &SourceRevision, dictionary: &DictionarySnapshot, cancel: CancellationToken) -> Result<RewriteResult, CloudError> {
-    // Explicit preview/history callers retain their own 20-second budget.
     rewrite_with_execution(config,secret,mode,source,dictionary,cancel,RewriteExecution::for_duration(Duration::from_secs(20))).await
 }
 

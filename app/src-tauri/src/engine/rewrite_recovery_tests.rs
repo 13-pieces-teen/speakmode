@@ -4,6 +4,103 @@ use crate::cloud::rewrite::minimum_pipeline::tests::{Server, Reply, rejection};
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 
+fn uncertain_review()->String {
+    let mut review:Value=serde_json::from_str(ACCEPT).unwrap();review["decision"]=json!("reject");review["checks"]["cleanup"]=json!("uncertain");review.to_string()
+}
+
+const REVIEWABLE_DRAFT:&str="预算3500元，先不要发送。";
+const LATEST_REVIEWABLE_DRAFT:&str="预算3500元。先不要发送。";
+
+/// The full coordinator and both real HTTP attempts run here. Only the tiny
+/// test deadline changes; a stalled primary server cannot block recovery.
+async fn failed_reviewable_pipeline(h:&Arc<AppHub>,primary_timeout:bool,recovery_review_timeout:bool)->SourceRevision {
+    install(h,"s",SessionPhase::FinalizingAsr,true);install_trace(h);
+    h.inner.lock().unwrap().active.as_mut().unwrap().config.region=Some("beijing".into());
+    let mut frozen=source("s");frozen.items.truncate(1);frozen.items[0].text="嗯，预算3500元，先不要发送。".into();
+    h.checkpoint("s",7,frozen.clone()).unwrap();let processing=h.processing_lease("s",7);
+    let review=if primary_timeout {Reply::new(ACCEPT).after(4000)}else{Reply::new(uncertain_review())};
+    let primary=Server::new(vec![Reply::draft(REVIEWABLE_DRAFT),review]).await;
+    let recovery=Server::new(if recovery_review_timeout {
+        vec![Reply::draft(LATEST_REVIEWABLE_DRAFT),Reply::new(ACCEPT).after(4000)]
+    }else{vec![Reply::new("synthetic provider credential failure").http_status(401)]}).await;
+    let primary_endpoint=primary.endpoint.clone();let recovery_endpoint=recovery.endpoint.clone();
+    h.finish_rewrite_with_recovery_policy("s".into(),7,move|config,mode,input,cancel,execution,context|async move {
+        rewrite::rewrite_with_client_optional_context(&reqwest::Client::builder().no_proxy().build().unwrap(),&config,
+            "synthetic-key",&mode,&input,&DictionarySnapshot::default(),cancel,&primary_endpoint,execution,context.as_ref()).await
+    },move|config,mode,input,cancel,execution,context|async move {
+        // Exercise a real review timeout without sleeping for the production
+        // recovery budget. Observers and draft ownership remain unchanged.
+        let execution=if recovery_review_timeout {execution.recovery(tokio::time::Instant::now()+Duration::from_millis(800))}else{execution};
+        rewrite::minimum_pipeline::run_until_with_writing_context(&reqwest::Client::builder().no_proxy().build().unwrap(),
+            &config,"synthetic-key",&mode,&input,&DictionarySnapshot::default(),cancel,&recovery_endpoint,execution,&context).await
+    },RewriteWaitPolicy{deadline:Duration::from_millis(if primary_timeout{1600}else{3000})},|_,_,_|panic!("unreviewed draft cannot be delivered")).await;
+    drop(processing);
+    assert_unfinished(h);assert_eq!(h.db.get_result("s").unwrap().source,frozen);
+    assert_eq!(primary.count(),2);assert_eq!(recovery.count(),if recovery_review_timeout{2}else{1});
+    let expected=if recovery_review_timeout{"rewrite_timeout"}else{"authentication_failed"};
+    let session=view(h);assert_eq!(session.error_code.as_deref(),Some(expected));assert!(session.recovery_candidate_id.is_some());
+    let error=h.inner.lock().unwrap().active.as_ref().unwrap().error.clone().unwrap();assert_eq!(error.stage,"rewrite");
+    assert!(error.message.contains(if recovery_review_timeout{"整理稿复核超时"}else{"认证失败"}),"{}",error.message);
+    assert!(error.message.contains("待核对的整理候选"));
+    let diagnostics=h.diagnostics.snapshot().unwrap();let trace=&diagnostics.traces[0];let rewrite=trace.rewrite.as_ref().unwrap();
+    assert_eq!(trace.error_code.as_deref(),Some(expected));
+    assert_eq!(rewrite.error_code,Some(if primary_timeout{"rewrite_timeout"}else{"rewrite_semantic_rejected"}));
+    let recovery=rewrite.automatic_recovery.as_ref().unwrap();assert!(!recovery.validated);assert_eq!(recovery.error_code,Some(expected));
+    assert!(rewrite.requests.iter().all(|request|request.end_ms.is_some()));
+    frozen
+}
+
+#[tokio::test]
+async fn failed_review_keeps_original_or_latest_draft_only_for_explicit_identity_bound_adoption() {
+    for (primary_timeout,recovery_review_timeout) in [(false,false),(true,false),(false,true)] {
+        let h=hub();let frozen=failed_reviewable_pipeline(&h,primary_timeout,recovery_review_timeout).await;
+        let candidate_id=view(&h).recovery_candidate_id.unwrap();
+        let expected_text=if recovery_review_timeout{LATEST_REVIEWABLE_DRAFT}else{REVIEWABLE_DRAFT};
+        for window in ["main","recording"] {
+            let snapshot=h.snapshot(window).unwrap();assert!(snapshot["session"]["recoveryCandidateId"].is_string());
+            assert!(!snapshot.to_string().contains(expected_text),"snapshots expose candidate identity, never its body");
+        }
+        let payload=||json!({"sessionId":"s","expectedGeneration":7,"sourceRevisionId":frozen.id,"recoveryCandidateId":candidate_id,
+            "runId":Uuid::new_v4().to_string(),"requestId":Uuid::new_v4().to_string()});
+        let forbidden=h.command("recording",CommandRequest{name:"history.reviewRecovery".into(),payload:payload()}).await.unwrap_err();
+        assert_eq!(forbidden.code,"forbidden");
+        for field in ["expectedGeneration","sourceRevisionId","recoveryCandidateId"] {
+            let mut stale=payload();stale[field]=if field=="expectedGeneration"{json!(8)}else{json!("foreign")};
+            assert!(command(&h,"history.reviewRecovery",stale).await.is_err());
+            assert!(h.inner.lock().unwrap().candidate.is_none());assert_unfinished(&h);
+        }
+        let request=payload();let run=request["runId"].as_str().unwrap().to_owned();
+        let candidate=command(&h,"history.reviewRecovery",request).await.unwrap();
+        assert_eq!(candidate["id"],run);assert_eq!(candidate["sessionId"],"s");assert_eq!(candidate["sourceRevisionId"],frozen.id);
+        assert_eq!(candidate["blocks"][0]["text"],expected_text);assert!(!candidate["reviewIssues"].as_array().unwrap().is_empty());
+        assert_eq!(candidate["blocks"][0]["sourceRefs"],json!([frozen.items[0].id]));assert_unfinished(&h);
+        let unreviewed=command(&h,"revision.adopt",json!({"sessionId":"s","expectedCurrentRevisionId":"","candidateId":run,"requestId":Uuid::new_v4().to_string()})).await.unwrap_err();
+        assert_eq!(unreviewed.code,"candidate_review_required");assert_unfinished(&h);
+        command(&h,"revision.adopt",json!({"sessionId":"s","expectedCurrentRevisionId":"","candidateId":run,"reviewedText":expected_text,"requestId":Uuid::new_v4().to_string()})).await.unwrap();
+        let adopted=h.db.get_result("s").unwrap();assert_eq!(adopted.source,frozen);assert_eq!(adopted.output.unwrap().text(),expected_text);
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),1);assert_eq!(usage_count(&h),1);
+        assert_eq!(h.db.query_count("SELECT COUNT(*) FROM delivery_attempts").unwrap(),0);assert!(view(&h).recovery_candidate_id.is_none());
+    }
+}
+
+#[tokio::test]
+async fn cancelling_after_a_locally_admitted_http_draft_does_not_expose_a_recovery_candidate() {
+    let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);
+    h.inner.lock().unwrap().active.as_mut().unwrap().config.region=Some("beijing".into());
+    let mut frozen=source("s");frozen.items.truncate(1);frozen.items[0].text="嗯，预算3500元，先不要发送。".into();h.checkpoint("s",7,frozen).unwrap();
+    let processing=h.processing_lease("s",7);
+    let server=Server::new(vec![Reply::draft(REVIEWABLE_DRAFT),Reply::new(ACCEPT).after(4000)]).await;let endpoint=server.endpoint.clone();
+    let worker=h.clone();let task=tokio::spawn(async move {worker.finish_rewrite_with_recovery_policy("s".into(),7,move|config,mode,input,cancel,execution,context|async move {
+        rewrite::rewrite_with_client_optional_context(&reqwest::Client::builder().no_proxy().build().unwrap(),&config,
+            "synthetic-key",&mode,&input,&DictionarySnapshot::default(),cancel,&endpoint,execution,context.as_ref()).await
+    },|_,_,_,_,_,_|async{panic!("cancelled primary cannot start recovery")},None::<RewriteWaitPolicy>,|_,_,_|panic!("cancelled draft cannot deliver")).await;});
+    wait_until(||server.count()==2).await;assert!(view(&h).recovery_candidate_id.is_none());
+    h.cancel_session_async(&identity("s")).await.unwrap();task.await.unwrap();drop(processing);
+    assert_eq!(view(&h).state,SessionPhase::Cancelled);assert!(view(&h).recovery_candidate_id.is_none());
+    assert_eq!(h.db.query_count("SELECT COUNT(*) FROM outputs").unwrap(),0);assert_eq!(usage_count(&h),0);
+    assert!(h.inner.lock().unwrap().candidate.is_none());
+}
+
 #[tokio::test]
 async fn permanent_failures_inside_correction_never_start_a_second_session_attempt(){
     let input="嗯，预算3500元，如果测试通过再上线。";
@@ -37,8 +134,9 @@ async fn permanent_failures_inside_correction_never_start_a_second_session_attem
 async fn primary_and_recovery_http_requests_keep_separate_diagnostic_receipts() {
     let h=hub();install(&h,"s",SessionPhase::FinalizingAsr,true);install_trace(&h);
     h.inner.lock().unwrap().active.as_mut().unwrap().config.region=Some("beijing".into());
-    let mut frozen=source("s");frozen.items.truncate(1);frozen.items[0].text="嗯，先核对需求再安排下一步。".into();h.checkpoint("s",7,frozen).unwrap();
-    let server=Server::new(vec![Reply::new("invalid json"),Reply::draft("先核对需求再安排下一步。"),Reply::new(ACCEPT)]).await;
+    let mut frozen=source("s");frozen.items.truncate(1);frozen.items[0].text="嗯，先核对需求再安排下一步。".into();h.checkpoint("s",7,frozen.clone()).unwrap();
+    let server=Server::new(vec![Reply::draft("先核对需求再安排下一步。"),Reply::new(uncertain_review()),
+        Reply::draft("先核对需求，再安排下一步。"),Reply::new(ACCEPT)]).await;
     let primary_endpoint=server.endpoint.clone();let recovery_endpoint=server.endpoint.clone();
     h.finish_rewrite_with_recovery_policy("s".into(),7,move|config,mode,input,cancel,execution,context|async move {
         rewrite::rewrite_with_client_optional_context(&reqwest::Client::builder().no_proxy().build().unwrap(),&config,
@@ -47,11 +145,13 @@ async fn primary_and_recovery_http_requests_keep_separate_diagnostic_receipts() 
         rewrite::minimum_pipeline::run_until_with_writing_context(&reqwest::Client::builder().no_proxy().build().unwrap(),
             &config,"synthetic-secret",&mode,&input,&DictionarySnapshot::default(),cancel,&recovery_endpoint,execution,&context).await
     },None::<RewriteWaitPolicy>,|_,_,_|{}).await;
-    assert_eq!(server.count(),3);
+    assert_eq!(server.count(),4);
     let diagnostics=h.diagnostics.snapshot().unwrap();let rewrite=diagnostics.traces[0].rewrite.as_ref().unwrap();
-    assert_eq!(rewrite.requests.len(),3);assert!(rewrite.requests.iter().all(|r|r.end_ms.is_some()));
+    assert_eq!(rewrite.requests.len(),4);assert!(rewrite.requests.iter().all(|r|r.end_ms.is_some()));
     assert!(rewrite.automatic_recovery.as_ref().unwrap().validated);
     assert_eq!(h.db.get_result("s").unwrap().output.unwrap().rewrite_recovery.unwrap().kind,RewriteRecoveryKind::AutomaticRewrite);
+    let saved=h.db.get_result("s").unwrap();assert_eq!(saved.source,frozen);assert_eq!(saved.output.unwrap().text(),"先核对需求，再安排下一步。");
+    assert!(view(&h).recovery_candidate_id.is_none(),"successful recovery cannot expose an earlier reviewable draft");
 }
 
 #[tokio::test(start_paused=true)]

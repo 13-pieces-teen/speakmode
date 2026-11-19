@@ -1,5 +1,5 @@
 //! All stages share one absolute deadline. At most four calls, one repair.
-use super::{minimum,local_repair,semantic_review,CloudError,RewriteResult};
+use super::{minimum,local_repair,semantic_review,CloudError,RewriteResult,ManualReviewIssue};
 use crate::core::{DictionarySnapshot,ModeSnapshot,ProviderConfig,SourceRevision};
 use serde::Serialize;
 use std::time::Duration;
@@ -7,7 +7,6 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use super::execution::{RequestStage, RequestOutcome, RewriteExecution};
 
-const REPAIR_RESERVE_MS:u64=1400;
 #[derive(Default,Serialize)]#[serde(rename_all="camelCase")]
 pub struct Trace {
     pub calls:usize,pub elapsed_ms:u64,pub draft:Option<RewriteResult>,
@@ -96,6 +95,7 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
             return correct_and_review(client,config,secret,mode,source,dictionary,&cancel,endpoint,&execution,context,review_format,
                 generation_request,Some(&draft),feedback,safe_error(error),&mut trace).await;
         }
+        execution.publish_reviewable(&draft,&cancel,ManualReviewIssue::ReviewUnavailable);
         checkpoint(&cancel,deadline)?;
         let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&draft,context,
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
@@ -108,7 +108,8 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.review=Some(review.clone());checkpoint(&cancel,deadline)?;
         if review.accepted() && local_repair::residue_hint(source,&draft).is_none(){return Ok(draft);}
-        if deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejected());}
+        execution.publish_reviewable(&draft,&cancel,ManualReviewIssue::ReviewRejected);
+        if deadline.saturating_duration_since(Instant::now())<execution.repair_review_reserve(){return Err(rejected());}
         let Some(mut request)=local_repair::prepare(config,mode,source,&draft,&review)? else{
             // Uncertain judgments remain fallback. A definite rejection can
             // correct missing content/conditions as well as cleanup, even when
@@ -128,8 +129,10 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
         super::format_draft_spoken(&mut repaired,super::spoken_english(source,context));
         super::review_admission_with_writing_context(mode,source,&repaired,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&repaired)?;}
-        trace.repaired_draft=Some(repaired.clone());checkpoint(&cancel,deadline)?;
-        if repaired.blocks[0].text==draft.blocks[0].text{return Err(rejected());}
+        trace.repaired_draft=Some(repaired.clone());
+        if repaired.blocks[0].text==draft.blocks[0].text{checkpoint(&cancel,deadline)?;return Err(rejected());}
+        execution.publish_reviewable(&repaired,&cancel,ManualReviewIssue::ReviewUnavailable);
+        checkpoint(&cancel,deadline)?;
         if context.is_none() && local_repair::native_deletion_verified(source,&draft,&repaired,&review){
             trace.native_deletion_verified=true;checkpoint(&cancel,deadline)?;return Ok(repaired);
         }
@@ -143,7 +146,9 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
         // Final review records its own request-derived wire contract as well.
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(&cancel,deadline)?;
-        if !review.accepted() || local_repair::residue_hint(source,&repaired).is_some(){return Err(rejected());}
+        if !review.accepted() || local_repair::residue_hint(source,&repaired).is_some(){
+            execution.publish_reviewable(&repaired,&cancel,ManualReviewIssue::ReviewRejected);return Err(rejected());
+        }
         Ok(repaired)
     };
     let result=tokio::select!{biased;_=cancel.cancelled()=>Err(cancelled()),result=tokio::time::timeout_at(deadline,job)=>result.unwrap_or_else(|_|Err(timeout()))};
@@ -171,19 +176,22 @@ pub async fn experiment_simplification(config:&ProviderConfig,secret:&str,mode:&
 /// This is the single repair opportunity, not a retry loop. Admission failure
 /// uses at most three requests; reviewer rejection uses at most four. Context,
 /// masks, source identities and the original absolute deadline remain frozen.
+enum CorrectionFailure { Unavailable(CloudError), Content(CloudError) }
+impl From<CloudError> for CorrectionFailure {fn from(error:CloudError)->Self{Self::Content(error)}}
+
 async fn correct_and_review(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:&CancellationToken,endpoint:&str,execution:&RewriteExecution,
     context:Option<&crate::core::writing_context::WritingContext>,review_format:Option<semantic_review::MinimumReviewFormat>,
     generation:Option<(minimum::MinimumRequest,String)>,draft:Option<&RewriteResult>,feedback:serde_json::Value,
     rejection:CloudError,trace:&mut Trace)->Result<RewriteResult,CloudError> {
     checkpoint(cancel,execution.deadline)?;
-    if execution.deadline.saturating_duration_since(Instant::now())<Duration::from_millis(REPAIR_RESERVE_MS){return Err(rejection);}
+    if execution.deadline.saturating_duration_since(Instant::now())<execution.repair_review_reserve(){return Err(rejection);}
     let Some((mut request,content))=generation else{return Err(rejection);};
-    let result=async {
+    let result:Result<RewriteResult,CorrectionFailure>=async {
         request.prepare_correction(&content,feedback,context)?;
         checkpoint(cancel,execution.deadline)?;
         trace.repair_attempted=true;trace.correction_attempted=true;trace.calls+=1;
-        let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,cancel,execution,RequestStage::Repair).await?;
+        let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,cancel,execution,RequestStage::Repair).await.map_err(CorrectionFailure::Unavailable)?;
         request.validate_personalization(context)?;
         let mut corrected=minimum::parse(&content,mode,source,&request)?;
         super::normalize_draft_dictionary(source,dictionary,&mut corrected);
@@ -191,24 +199,30 @@ async fn correct_and_review(client:&reqwest::Client,config:&ProviderConfig,secre
         super::review_admission_with_writing_context(mode,source,&corrected,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&corrected)?;}
         trace.repaired_draft=Some(corrected.clone());
-        if draft.is_some_and(|draft|corrected.blocks[0].text==draft.blocks[0].text) {return Err(rejected());}
+        if draft.is_some_and(|draft|corrected.blocks[0].text==draft.blocks[0].text) {return Err(rejected().into());}
+        execution.publish_reviewable(&corrected,cancel,ManualReviewIssue::ReviewUnavailable);
         checkpoint(cancel,execution.deadline)?;
         let request=semantic_review::prepare_minimum_with_writing_context_and_format(config,mode,source,&corrected,context,
             review_format.unwrap_or_else(||semantic_review::minimum_format(config,source))).map_err(safe_error)?;
         checkpoint(cancel,execution.deadline)?;trace.calls+=1;
-        let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,cancel,execution,RequestStage::FinalReview).await?;
+        let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,cancel,execution,RequestStage::FinalReview).await.map_err(CorrectionFailure::Unavailable)?;
         request.validate_personalization(context)?;
-        let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&corrected).map_err(safe_error)?;
+        let mut review=semantic_review::parse_minimum(&content,&request,mode,source,&corrected).map_err(safe_error).map_err(CorrectionFailure::Unavailable)?;
         if context.is_some(){review.protocol_version=super::writing_context::VERSION;}
         trace.final_review=Some(review.clone());checkpoint(cancel,execution.deadline)?;
-        if !review.accepted() || local_repair::residue_hint(source,&corrected).is_some(){return Err(rejected());}
+        if !review.accepted() || local_repair::residue_hint(source,&corrected).is_some(){
+            execution.publish_reviewable(&corrected,cancel,ManualReviewIssue::ReviewRejected);return Err(rejected().into());
+        }
         Ok(corrected)
     }.await;
-    // Content/repair failures retain the original fidelity rejection. Preserve
-    // terminal transport/configuration errors so the session cannot interpret
-    // a 401/429/refusal as permission to start another same-account attempt.
-    // Cancellation and the shared deadline remain authoritative.
-    result.map_err(|error|if error.forbids_automatic_rewrite_retry()||error.code=="rewrite_timeout"{error}else{rejection})
+    // Invalid correction content retains the original fidelity rejection. All
+    // actual request failures and unusable final-review responses keep their
+    // structured code: neither is evidence of a semantic rejection.
+    result.map_err(|failure|match failure{
+        CorrectionFailure::Unavailable(error)=>error,
+        CorrectionFailure::Content(error) if error.forbids_automatic_rewrite_retry()||error.code=="rewrite_timeout"=>error,
+        CorrectionFailure::Content(_)=>rejection,
+    })
 }
 pub(super) async fn run_until(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,execution:RewriteExecution)->Result<RewriteResult,CloudError>{

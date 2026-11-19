@@ -35,11 +35,17 @@ export function HistoryDetail({record,onBack}:Props) {
  const editBaseline=useRef(record);
  const candidateRunId=useRef<string|null>(null);
  const run=useRef(0),recordRef=useRef(record),actionsRef=useRef(actions),busyRef=useRef(false),heading=useRef<HTMLHeadingElement>(null),editor=useRef<HTMLTextAreaElement>(null);
- const modeTrigger=useRef<HTMLButtonElement>(null),correctionTrigger=useRef<HTMLButtonElement>(null),deleteTrigger=useRef<HTMLButtonElement>(null);
+ const modeTrigger=useRef<HTMLButtonElement>(null),recoveryTrigger=useRef<HTMLButtonElement>(null),candidateTrigger=useRef<HTMLButtonElement|null>(null),correctionTrigger=useRef<HTMLButtonElement>(null),deleteTrigger=useRef<HTMLButtonElement>(null);
  const modeHeading=useRef<HTMLHeadingElement>(null),deleteHeading=useRef<HTMLHeadingElement>(null),candidateHeading=useRef<HTMLHeadingElement>(null);
  recordRef.current=record;actionsRef.current=actions;
  const panelId=useId(),candidateId=useId(),compareId=useId(),correctionId=useId(),deleteId=useId();
  const output=record.detail?.output,source=record.detail?.source;
+ const recovery=desktop.session;
+ const reviewableRecovery=!output&&source?.complete&&recovery?.workerReleased===true&&['failed','incomplete'].includes(recovery.state.toLowerCase())
+  &&(recovery.sessionId??recovery.id)===record.id&&recovery.generation===record.detail?.session.generation&&recovery.sourceRevisionId===source.id&&recovery.recoveryCandidateId
+  ?{generation:recovery.generation,candidateId:recovery.recoveryCandidateId}:null;
+ const recoveryOwner=reviewableRecovery?`${record.id}:${reviewableRecovery.generation}:${source?.id}:${reviewableRecovery.candidateId}`:null;
+ const recoveryOwnerRef=useRef(recoveryOwner);recoveryOwnerRef.current=recoveryOwner;
  useEffect(()=>{setRestoreBlock('');setRestoreSource('');setSourceSelection(null);setTargetSelection(null);},[record.id,record.revision,source?.id]);
  const dirty=(editing&&editText!==editBaseline.current.current.join('\n\n'))||candidate!==null;
  const mounted=useRef(true);
@@ -62,8 +68,26 @@ export function HistoryDetail({record,onBack}:Props) {
  function closeCorrection(){setCorrecting(false);requestAnimationFrame(()=>focusInView(correctionTrigger.current));}
  function closeDelete(){setDeleteOpen(false);requestAnimationFrame(()=>focusInView(deleteTrigger.current));}
  async function closeMode(){setModeOpen(false);const cancellation=busy==='candidate'?cancelCandidate():undefined;const generation=run.current;requestAnimationFrame(()=>{if(mounted.current&&run.current===generation)focusInView(modeTrigger.current);});await cancellation;}
- async function generate(mode=draftMode){const generation=++run.current;const runId=crypto.randomUUID();candidateRunId.current=runId;setCandidate(null);setCandidateText('');setCandidateBaseline(record.current.join('\n\n'));setBusy('candidate');setError('');setNotice('');try{const next=await actions.generate(record,mode,runId,confirmedContext);if(mounted.current&&run.current===generation&&candidateRunId.current===runId){setCandidateText(next.texts.join('\n\n'));setCandidate(next);setModeOpen(false);}}catch(e){if(mounted.current&&run.current===generation)setError(errorMessage(e));}finally{if(mounted.current&&run.current===generation)setBusy('');}}
- async function cancelCandidate(restoreFocus=false){const runId=candidateRunId.current;candidateRunId.current=null;const generation=++run.current;setCandidate(null);setBusy('');setNotice('');try{if(runId){await actions.cancelCandidate(record.id,runId);if(mounted.current&&run.current===generation)setNotice('候选已取消，当前版本保持不变。');}}catch(e){if(mounted.current&&run.current===generation){if(!candidateRunId.current)candidateRunId.current=runId;setError(errorMessage(e));}}finally{if(restoreFocus&&mounted.current&&run.current===generation)requestAnimationFrame(()=>focusInView(modeTrigger.current));}}
+ async function generate(mode=draftMode){const generation=++run.current;const runId=crypto.randomUUID();candidateTrigger.current=modeTrigger.current;candidateRunId.current=runId;setCandidate(null);setCandidateText('');setCandidateBaseline(record.current.join('\n\n'));setBusy('candidate');setError('');setNotice('');try{const next=await actions.generate(record,mode,runId,confirmedContext);if(mounted.current&&run.current===generation&&candidateRunId.current===runId){setCandidateText(next.texts.join('\n\n'));setCandidate(next);setModeOpen(false);}}catch(e){if(mounted.current&&run.current===generation)setError(errorMessage(e));}finally{if(mounted.current&&run.current===generation)setBusy('');}}
+ async function reviewRecovery(){
+  if(!reviewableRecovery||busyRef.current||candidateRunId.current)return;
+  busyRef.current=true;const generation=++run.current,runId=crypto.randomUUID(),owner=recoveryOwner;
+  candidateTrigger.current=recoveryTrigger.current;candidateRunId.current=runId;setCandidateText('');setCandidateBaseline(record.source.join('\n\n'));setBusy('recoveryCandidate');setError('');setNotice('');
+  const owns=()=>mounted.current&&run.current===generation&&candidateRunId.current===runId&&recoveryOwnerRef.current===owner;
+  try{
+   const next=await actions.reviewRecovery(record,reviewableRecovery.generation,reviewableRecovery.candidateId,runId);
+   if(!owns()){
+    void actionsRef.current.cancelCandidate(record.id,runId).catch(()=>{});
+    if(candidateRunId.current===runId)candidateRunId.current=null;
+    return;
+   }
+   if(next.native.id!==runId||next.native.sessionId!==record.id||next.native.sourceRevisionId!==record.sourceRevisionId||next.baseRevision!==record.revision)
+    throw new Error('这条候选的来源或版本已变化，请重新打开核对。');
+   setCandidateText(next.texts.join('\n\n'));setCandidate(next);setModeOpen(false);setDeleteOpen(false);
+  }catch(e){if(owns())setError(errorMessage(e));if(candidateRunId.current===runId){candidateRunId.current=null;void actionsRef.current.cancelCandidate(record.id,runId).catch(()=>{});}}
+  finally{busyRef.current=false;if(mounted.current&&run.current===generation)setBusy('');}
+ }
+ async function cancelCandidate(restoreFocus=false){const runId=candidateRunId.current;candidateRunId.current=null;const generation=++run.current;setCandidate(null);setBusy('');setNotice('');try{if(runId){await actions.cancelCandidate(record.id,runId);if(mounted.current&&run.current===generation)setNotice('候选已取消，当前版本保持不变。');}}catch(e){if(mounted.current&&run.current===generation){if(!candidateRunId.current)candidateRunId.current=runId;setError(errorMessage(e));}}finally{if(restoreFocus&&mounted.current&&run.current===generation)requestAnimationFrame(()=>focusInView(candidateTrigger.current));}}
  const stale=candidate!==null&&candidate.baseRevision!==record.revision;
  const candidateHints=candidate?.reviewIssues.map(issue=>issue==='valuesChanged'?'数字、单位或版本可能有变化':issue==='literalsChanged'?'引语或代码有变化':issue==='tenseChanged'?'现在或过去的状态可能有变化':issue==='confirmedTextChanged'?'有已确认内容未按原样保留':issue==='reviewRejected'?'全文复核仍有疑点，请核对后选择保留或修改':issue==='reviewUnavailable'?'全文复核未完成，请自行核对':'条件、否定或其他信息可能有变化')??[];
  const block=output?.blocks.find(b=>b.id===restoreBlock),item=source?.items.find(i=>i.id===restoreSource);
@@ -82,6 +106,7 @@ export function HistoryDetail({record,onBack}:Props) {
   <header className="history-detail-header"><div className="history-title-block"><p className="history-record-date">{record.date} · {record.time}{record.temporary?' · 临时结果，不保存正文':''}</p><h2 ref={heading} className="history-record-heading" tabIndex={-1}>{record.title}</h2></div><CopyAction record={record} label="复制文本"/></header>
   <div className="history-reading-layout"><div className="history-current"><p className="eyebrow">当前文本</p>{editing?<div className="history-edit-form"><TextArea ref={editor} aria-label="编辑当前文本" value={editText} onChange={e=>setEditText(e.target.value)} rows={12}/><div className="history-panel-actions"><Button variant="soft" color="gray" disabled={Boolean(busy)} onClick={()=>setEditing(false)}>取消修改</Button><Button disabled={!dirty||Boolean(busy)} onClick={()=>void perform('edit',saveEdit,'已保存修改。').catch(()=>{})}>保存修改</Button></div></div>:<RecordText record={record}/>}</div>
   </div>
+  {reviewableRecovery&&!candidate&&<section className="history-mode-panel" aria-label="核对整理候选"><h3 className="section-title">已有整理候选可核对</h3><p>对照完整识别稿，核对或编辑候选后保存为本地结果。</p><Button ref={recoveryTrigger} disabled={!desktop.available||Boolean(busy)||editing||correcting} loading={busy==='recoveryCandidate'} onClick={()=>void reviewRecovery()}>核对整理候选</Button></section>}
   <div className="history-quick-actions"><Button ref={correctionTrigger} size="2" variant="soft" color="gray" disabled={Boolean(busy)||Boolean(candidate)||editing||correcting||!output} aria-expanded={correcting} aria-controls={correctionId} onClick={()=>{setCorrecting(true);setModeOpen(false);setDeleteOpen(false);setNotice('');setError('');}}>纠正词条</Button></div>
   <details className="history-more"><summary>更多操作与本次参考</summary>
    <aside className="history-tools" aria-label="本条记录操作"><div className="history-tool-group"><h3 className="history-tool-label">成稿场合</h3><ModeBadge mode={record.mode} resolved={record.resolved} name={record.modeName} sourceState={record.sourceState} receipt={output?.writingReceipt}/>{output?.writingReceipt&&!output.rewriteFallback&&record.sourceState!=='source'&&<WritingReference receipt={output.writingReceipt}/>} {record.modeInstructions&&<details className="history-mode-snapshot"><summary>{record.sourceState==='model'?'本次使用的规则':'本次配置的规则'} · v{record.modeVersion}</summary><p>{record.modeInstructions}</p></details>}
@@ -93,7 +118,7 @@ export function HistoryDetail({record,onBack}:Props) {
   {output?.confirmedContext&&<ConfirmationSummary context={output.confirmedContext}/>}
   </details>
   {correcting&&<div id={correctionId}><TermCorrectionPanel record={record} onClose={closeCorrection} onSaved={message=>{closeCorrection();setNotice(message);}}/></div>}
-  <p className="history-local-status" role="status" aria-live="polite">{busy==='candidate'?'正在生成候选…':busy?'正在保存…':notice}</p>{error&&<p className="inline-error" role="alert">{error}</p>}
+  <p className="history-local-status" role="status" aria-live="polite">{busy==='candidate'?'正在生成候选…':busy==='recoveryCandidate'?'正在读取已有候选…':busy?'正在保存…':notice}</p>{error&&<p className="inline-error" role="alert">{error}</p>}
   {deleteOpen&&<section id={deleteId} className="history-mode-panel history-delete-panel" aria-labelledby={`${deleteId}-title`}><h3 id={`${deleteId}-title`} ref={deleteHeading} tabIndex={-1} className="section-title">删除这条口述？</h3><p className="history-secondary">将删除这条记录的正文与版本，今日使用量不会扣除。</p><div className="history-panel-actions"><Button variant="soft" color="gray" disabled={Boolean(busy)} onClick={closeDelete}>保留</Button><Button color="red" disabled={Boolean(busy)} onClick={()=>void perform('delete',async()=>{await actions.remove(record.id);onBack();},'').catch(()=>{})}>删除记录</Button></div></section>}
   {modeOpen&&<section id={panelId} className="history-mode-panel" aria-labelledby={`${panelId}-title`}><h3 id={`${panelId}-title`} ref={modeHeading} tabIndex={-1} className="section-title">选择成稿场合</h3><p className="history-secondary">先生成候选，再决定是否采用。新口述默认设置保持不变。</p><ModeSelector value={draftMode} onChange={setDraftMode} label="本条候选的使用场合"/>{source&&<ConfirmedContextEditor key={source.id} source={source} value={confirmedContext} onChange={setConfirmedContext} disabled={Boolean(busy)}/>}<div className="history-panel-actions"><Button variant="ghost" color="gray" onClick={()=>void closeMode()}>取消</Button><Button loading={busy==='candidate'} disabled={!desktop.available||Boolean(busy)} onClick={()=>void generate()}>生成候选</Button></div></section>}
   {candidate&&<section className="history-candidate" aria-labelledby={candidateId}>

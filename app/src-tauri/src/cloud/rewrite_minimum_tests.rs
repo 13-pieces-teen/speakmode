@@ -16,6 +16,8 @@ mod personalization_quality_regression_tests;
 mod email_authoring_tests;
 #[path="rewrite_correction_tests.rs"]
 mod correction_tests;
+#[path="rewrite_budget_tests.rs"]
+mod budget_tests;
 
 const ACCEPT: &str = r#"{"decision":"accept","checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"pass"},"issues":[]}"#;
 
@@ -49,12 +51,13 @@ fn fixture(text: &str) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
 }
 
 #[derive(Clone)]
-pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration, refusal:Option<&'static str> }
+pub(crate) struct Reply { content: String, finish: &'static str, status: u16, delay: Duration, refusal:Option<&'static str>, disconnect:bool }
 impl Reply {
-    pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO, refusal:None } }
+    pub(crate) fn new(content: impl Into<String>) -> Self { Self { content: content.into(), finish: "stop", status: 200, delay: Duration::ZERO, refusal:None,disconnect:false } }
     pub(crate) fn draft(text: &str) -> Self { Self::new(json!({"resolvedMode":"light","text":text}).to_string()) }
     pub(crate) fn after(mut self, millis: u64) -> Self { self.delay = Duration::from_millis(millis); self }
     pub(crate) fn http_status(mut self,status:u16)->Self{self.status=status;self}
+    pub(crate) fn disconnected()->Self{let mut reply=Self::new("");reply.disconnect=true;reply}
     pub(crate) fn refused()->Self{let mut reply=Self::new("refused synthetic response");reply.refusal=Some("synthetic refusal");reply}
 }
 pub(crate) struct Server { pub(crate) endpoint: String, requests: Arc<Mutex<Vec<Value>>>, arrived: Arc<Notify>, task: JoinHandle<()> }
@@ -96,6 +99,7 @@ impl Server {
                 } else { reply.content.clone() };
                 seen.lock().unwrap().push(body); signal.notify_one();
                 tokio::time::sleep(reply.delay).await;
+                if reply.disconnect{return;}
                 let mut message=json!({"content":response_content});
                 if let Some(refusal)=reply.refusal{message["refusal"]=json!(refusal);}
                 let body = json!({"choices":[{"finish_reason":reply.finish,"message":message}]}).to_string();
@@ -213,13 +217,16 @@ async fn writing_contract_label_does_not_hide_named_or_ordered_reviewer_wire_met
             if format==semantic_review::MinimumReviewFormat::Ordered {
                 value["checks"]=json!(["pass","pass",scope,"pass","pass"]);
             }
-            let server=Server::new(vec![Reply::draft(input),Reply::new(value.to_string())]).await;
+            let mut replies=vec![Reply::draft(input),Reply::new(value.to_string())];
+            if !accept{replies.push(Reply::draft(input));}
+            let server=Server::new(replies).await;
             let (config,mut mode,source)=fixture(input);mode.mode_id="email".into();
             let context=super::super::writing_context::for_mode(&mode).unwrap();
             let before=source.clone();
             let out=execute_until_with_review_format(&client(),&config,"synthetic-key",&mode,&source,&DictionarySnapshot::default(),
                 CancellationToken::new(),&server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4)),None,Some(&context),Some(format)).await;
-            assert_eq!(out.result.is_ok(),accept);assert_eq!(out.trace.calls,if accept{2}else{3});assert_eq!(server.count(),2);
+            assert_eq!(out.result.is_ok(),accept);assert_eq!(out.trace.calls,if accept{2}else{3});
+            assert_eq!(server.count(),out.trace.calls);
             assert_eq!(out.trace.correction_attempted,!accept);assert_eq!(source,before);
             if !accept {assert_eq!(out.result.as_ref().err().unwrap().code,"rewrite_semantic_rejected");}
             let serialized=serde_json::to_value(&out.trace).unwrap();

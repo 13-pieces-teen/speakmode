@@ -45,6 +45,7 @@ export function SessionRecovery({onOpen}:{onOpen:(id:string)=>void}) {
     {s.canRetryAsr?' 重新识别会创建新的识别尝试。':' 已保存的识别稿保持原样。'}重试完成后先查看结果，不会自动输入到其他应用。</p>
   </div>}
   <div className="session-recovery-actions">
+   {problem&&s.workerReleased===true&&s.recoveryCandidateId&&s.sourceRevisionId&&<Button variant="soft" disabled={Boolean(busy||shortBusy)} onClick={()=>onOpen(s.sessionId??s.id!)}>查看整理候选</Button>}
    {problem&&<Button disabled={Boolean(busy||shortBusy)||s.workerReleased!==true} onClick={()=>void act('session.start')}>开始下一条口述</Button>}
    {ongoing&&<Button variant="soft" color="gray" disabled={Boolean(shortBusy)} onClick={()=>void act('session.cancel')}>取消本次口述</Button>}
    {view.canStop&&<Button disabled={Boolean(busy||shortBusy)} onClick={()=>void act('session.stop')}>结束口述</Button>}
