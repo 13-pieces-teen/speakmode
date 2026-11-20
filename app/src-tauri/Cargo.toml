@@ -1,6 +1,6 @@
 [package]
 name = "speakmode"
-version = "0.2.47"
+version = "0.2.48"
 edition = "2024"
 publish = false
 description = "SpeakMode Windows voice input"
@@ -19,7 +19,7 @@ required-features = ["desktop"]
 [features]
 default = []
 custom-protocol = ["tauri/custom-protocol"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-autostart"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-autostart", "dep:tauri-plugin-updater", "dep:rustls"]
 # Lab-only candidate. Normal desktop builds retain the evaluated v3 prompts.
 experimental-english-dictation = []
 
@@ -58,6 +58,8 @@ tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-autostart = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std"] }
+tauri-plugin-updater = { version = "=2.14.1", optional = true, default-features = false, features = ["rustls-tls", "system-proxy"] }
 windows = { version = "0.58", features = ["Foundation", "Win32_Foundation", "Win32_UI_Accessibility", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_System_Memory", "Win32_System_DataExchange", "Win32_System_Threading", "Win32_System_ProcessStatus", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_Diagnostics_ToolHelp", "Win32_System_SystemServices"] }
 
 [patch.crates-io]

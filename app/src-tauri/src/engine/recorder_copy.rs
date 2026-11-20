@@ -19,6 +19,7 @@ impl AppHub {
         // Holding the live-session lock through the bounded clipboard operation
         // makes this explicit user action atomic with a new recording/dismissal.
         let _native=self.native_io.lock().unwrap();let mut inner=self.inner.lock().unwrap();
+        Self::update_command_available(&inner,name)?;
         let s=inner.active.as_mut().filter(|s|s.id==id&&s.generation==generation)
             .ok_or_else(||ApiError::new("stale_session","result","当前口述已经变化").for_session(id,generation))?;
         let cache_expired=recovery&&s.error.as_ref().is_some_and(|error|error.code=="asr_retry_expired");

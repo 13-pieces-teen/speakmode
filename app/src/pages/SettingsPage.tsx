@@ -11,6 +11,7 @@ import { PageHeading } from '../components/ui';
 import { SettingsSection, SettingRow } from '../components/SettingsControls';
 import { ShortcutEditor } from '../components/ShortcutEditor';
 import { ProviderSettings } from '../components/ProviderSettings';
+import { UpdateSettings } from '../components/UpdateSettings';
 import { useDesktop } from '../services/DesktopProvider';
 import { errorMessage } from '../services/bridge';
 import './settings.css';
@@ -58,6 +59,7 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
   const { available, devices, devicesStatus, errors, command, refresh } = useDesktop();
   const [feedback, setFeedback] = useState<SaveFeedback | null>(null);
   const [saving, setSaving] = useState(false);
+  const [providerDraft, setProviderDraft] = useState({dirty:false,pending:false});
   const savingRef = useRef(false);
   const [resetRevision, setResetRevision] = useState(0);
   const disabled = !available || saving;
@@ -189,7 +191,8 @@ export function SettingsPage({ defaultMode, onDefaultModeChange, preferences, on
           <Switch id="launch-on-startup" aria-describedby="launch-on-startup-description settings-preview-scope" disabled={disabled} checked={preferences.launchOnStartup} onCheckedChange={value => handle(update('launchOnStartup', value, '开机启动偏好'))} />
         </SettingRow>
       </SettingsSection>
-      <ProviderSettings />
+      <ProviderSettings onDraftStateChange={setProviderDraft} />
+      <UpdateSettings installBlocked={saving||providerDraft.pending?'正在保存设置，请完成后再安装更新。':providerDraft.dirty?'请先保存或取消云端服务中尚未保存的修改，再安装更新。':undefined} />
     </div>
     <footer className="settings-footer">
       <div className="settings-feedback"><SettingFeedback feedback={feedback} target="reset" /></div>

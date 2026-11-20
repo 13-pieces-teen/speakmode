@@ -232,6 +232,11 @@ impl ActiveSession {
     pub(crate) fn busy(&self)->bool {
         !self.resources_released() || self.error.as_ref().is_some_and(|e|e.code=="cancel_cleanup_failed") || matches!(self.phase,SessionPhase::Starting|SessionPhase::Recording|SessionPhase::FinalizingAsr|SessionPhase::Rewriting) || self.delivery.as_ref().is_some_and(|d|matches!(d.state,DeliveryState::Prepared|DeliveryState::Dispatched))
     }
+    pub(super) fn blocks_update_shutdown(&self)->bool {
+        self.busy()||self.pending.is_some()||self.recovery_candidate.is_some()
+            || (matches!(self.phase,SessionPhase::Failed|SessionPhase::Incomplete)
+                && (self.source.is_some()||!self.captions.is_empty()||self.cache.as_ref().is_some_and(|pcm|!pcm.is_empty())))
+    }
     fn resources_released(&self)->bool {
         self.worker_released&&self.delivery_worker_released&&self.processing_worker_released
             &&!self.target_capture_pending&&!self.input_context_capture_pending&&self.db_pending==0&&!self.cancel_pending
@@ -1215,7 +1220,7 @@ impl AppHub {
         let generation=match p.get("expectedGeneration"){Some(value)=>value.as_u64().ok_or_else(||ApiError::new("invalid_payload","recovery","来源版本无效"))?,None=>saved.session.seed.generation};
         if generation!=saved.session.seed.generation{return Err(ApiError::new("stale_session","recovery","识别稿版本已经变化"));}
         let guard=self.record_guard(&id,generation);
-        {let mut i=self.inner.lock().unwrap();if let Some(s)=i.active.as_mut().filter(|s|s.id==id){
+        {let mut i=self.inner.lock().unwrap();self.auxiliary_available()?;if let Some(s)=i.active.as_mut().filter(|s|s.id==id){
             if s.generation!=generation{return Err(ApiError::new("stale_session","recovery","当前口述版本已经变化"));}
             if s.busy()||s.pending.is_some(){return Err(ApiError::new("session_busy","recovery","请等待处理释放或先重试保存"));}s.db_pending+=1;}}
         Ok((id,generation,guard))
@@ -1227,11 +1232,13 @@ impl AppHub {
         self.publish_session();self.publish("recovery.changed",Value::Null);wire(detail)
     }
     pub fn use_source(&self,p:&Value)->Result<Value> {
+        let _operation=self.reserve_content_operation()?;
         let id=p.get("sessionId").or_else(||p.get("resultId")).and_then(Value::as_str).ok_or_else(||ApiError::new("invalid_payload","recovery","缺少来源身份"))?;
         let saved=db_detail(self.db_blocking(DbCommand::GetResult{session_id:id.into()},None,DbPriority::Normal)?)?;let(id,generation,guard)=self.prepare_use_source(p,&saved)?;
         let result=self.db_blocking(DbCommand::UseSource{session_id:id.clone(),expected_generation:generation,created_at:now()},Some(guard),DbPriority::Critical);self.use_source_receipt(&id,generation,result)
     }
     pub async fn use_source_async(&self,p:&Value)->Result<Value> {
+        let _operation=self.reserve_content_operation()?;
         let id=p.get("sessionId").or_else(||p.get("resultId")).and_then(Value::as_str).ok_or_else(||ApiError::new("invalid_payload","recovery","缺少来源身份"))?;
         let saved=db_detail(self.db_read(DbCommand::GetResult{session_id:id.into()}).await?)?;let(id,generation,guard)=self.prepare_use_source(p,&saved)?;
         let result=self.db_write(DbCommand::UseSource{session_id:id.clone(),expected_generation:generation,created_at:now()},guard,DbPriority::Critical).await;self.use_source_receipt(&id,generation,result)
