@@ -3,6 +3,7 @@ mod recorder_controls;
 mod diagnostics;
 mod typeless_import;
 mod personalization;
+mod update_shutdown;
 pub use session::{LiveSession, SessionPhase};
 
 use crate::{cloud::{self, CloudError, credentials, rewrite}, core::*, platform};
@@ -140,6 +141,8 @@ pub(crate) struct Inner {
     requests:HashMap<String,Arc<RequestRecord>>,
     request_order:VecDeque<String>,
     settings_pending:Option<String>,
+    update_shutdown_started:bool,
+    update_readers:usize,
 }
 pub struct AppHub {
     diagnostics:diagnostics::DiagnosticsRecorder,
@@ -268,7 +271,7 @@ impl AppHub {
         let db=DbClient::open(data_dir.join("speakmode.sqlite"))?;
         let config=db.snapshot().provider_config;
         let keys=CredentialAvailability::read(&config);let key_configured=keys.asr&&keys.rewrite;
-        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,main_result_request:None,active:None,recoveries:Vec::new(),candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_dismiss_control:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
+        Ok(Arc::new(Self{diagnostics:diagnostics::DiagnosticsRecorder::default(),inner:Mutex::new(Inner{onboarding:OnboardingRuntime::default(),guards:HashMap::new(),sequence:0,main_result_request:None,active:None,recoveries:Vec::new(),candidate:None,preview:None,preview_sources:HashMap::new(),personalization_workers:HashMap::new(),personalization_revocations:HashMap::new(),shortcut_capture:None,capture_commit_guard:None,used_operation_ids:HashSet::new(),cancelled_operation_ids:HashSet::new(),auxiliary_workers:HashMap::new(),key_configured,asr_key_configured:keys.asr,rewrite_key_configured:keys.rewrite,requests:HashMap::new(),request_order:VecDeque::new(),settings_pending:None,update_shutdown_started:false,update_readers:0}),db,db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),subscribers:Mutex::new(HashMap::new()),publication:Mutex::new(()),native_io:Mutex::new(()),lifecycle_epoch:std::sync::atomic::AtomicU64::new(0),capture_available:std::sync::atomic::AtomicBool::new(true),quitting:std::sync::atomic::AtomicBool::new(false),shortcut_capture_available:std::sync::atomic::AtomicBool::new(true),shortcut_focus_epoch:std::sync::atomic::AtomicU64::new(0),shortcut_io:Mutex::new(()),data_dir,hooks:Mutex::new(None),native_actions:Mutex::new(None),recorder_dismiss_control:Mutex::new(None),recorder_control:Mutex::new(None),stop_target_control:Mutex::new(None)}))
     }
     pub fn set_native_actions(&self,actions:Arc<dyn Fn(&str,bool)->Result<()>+Send+Sync>){*self.native_actions.lock().unwrap()=Some(actions);}
     pub fn set_recorder_dismiss_control(&self,control:Arc<dyn Fn(String,u64)->Result<()>+Send+Sync>){*self.recorder_dismiss_control.lock().unwrap()=Some(control);}
@@ -318,23 +321,31 @@ impl AppHub {
         if window=="recording" && !matches!(request.name.as_str(),"state.snapshot"|"session.stop"|"session.cancel"|"session.selectMode"|"app.showMain"|"window.dismissRecorder"|"window.resizeRecorder"|"session.captionRendered"|"result.copy"|"recoverable.copy") {return Err(ApiError::new("forbidden","ipc","录音窗口只允许操作当前会话"));}
         if !matches!(window,"main"|"recording"){return Err(ApiError::new("forbidden","ipc","窗口无访问权限"));}
         let mutation=!matches!(request.name.as_str(),"state.snapshot"|"preferences.get"|"mode.list"|"dictionary.list"|"provider.status"|"credential.status"|"audio.listDevices"|"history.list"|"history.get"|"usage.today"|"usage.total"|"personalization.get"|"personalization.stats"|"diagnostics.get"|"session.captionRendered");
-        if !mutation{return self.execute_command(window,request).await;}
+        if !mutation{
+            // Track reads for update teardown without making device enumeration
+            // or a statistics display unnecessarily block ordinary new dictation.
+            let _lease=self.reserve_update_read(&request.name)?;
+            return self.execute_command(window,request).await;
+        }
         let request_id=text(&request.payload,"requestId")?;
         if request_id.is_empty()||request_id.len()>128{return Err(ApiError::new("invalid_request_id","ipc","请求身份无效"));}
         let key=format!("{window}:{request_id}");
         let mut fingerprint=request.payload.clone();if let Some(object)=fingerprint.as_object_mut(){object.remove("requestId");}
         let fingerprint=format!("{:x}",Sha256::digest(format!("{}:{}",request.name,fingerprint).as_bytes()));
-        let (record,owner)={let mut i=self.inner.lock().unwrap();
-            if let Some(record)=i.requests.get(&key){if record.fingerprint!=fingerprint{return Err(ApiError::new("request_id_conflict","ipc","同一请求身份不能复用为不同操作"));}(record.clone(),false)}
+        let track=!matches!(request.name.as_str(),"session.start"|"session.stop"|"session.cancel"|"session.selectMode"|"recovery.activate");
+        let (record,owner)={let mut i=self.inner.lock().unwrap();Self::update_command_available(&i,&request.name)?;
+            if let Some(record)=i.requests.get(&key){if record.fingerprint!=fingerprint{return Err(ApiError::new("request_id_conflict","ipc","同一请求身份不能复用为不同操作"));}
+                // A replay may still load the current saved detail. Its read
+                // lifetime must not fall through an accepted updater gate.
+                if track{self.db_command_workers.fetch_add(1,std::sync::atomic::Ordering::SeqCst);}(record.clone(),false)}
             else {while i.requests.len()>=256 {let Some(old)=i.request_order.iter().find(|key|i.requests.get(*key).is_some_and(|r|r.outcome.lock().unwrap().is_some())).cloned() else{return Err(ApiError::new("requests_busy","ipc","正在处理的操作较多，请稍候"));};i.request_order.retain(|key|key!=&old);i.requests.remove(&old);}
-                let record=Arc::new(RequestRecord{fingerprint,outcome:Mutex::new(None),completed:tokio::sync::Notify::new()});i.requests.insert(key.clone(),record.clone());i.request_order.push_back(key);(record,true)}
+                let record=Arc::new(RequestRecord{fingerprint,outcome:Mutex::new(None),completed:tokio::sync::Notify::new()});i.requests.insert(key.clone(),record.clone());i.request_order.push_back(key);
+                if track{self.db_command_workers.fetch_add(1,std::sync::atomic::Ordering::SeqCst);}(record,true)}
         };
-        if !owner{loop {let notified=record.completed.notified();tokio::pin!(notified);notified.as_mut().enable();let outcome=record.outcome.lock().unwrap().clone();if let Some(outcome)=outcome{return match outcome{Ok(value)=>self.replay(value).await,Err(error)=>Err(error)};}notified.await;}}
+        if !owner{let _lease=track.then(||CommandLease(Arc::clone(self)));loop {let notified=record.completed.notified();tokio::pin!(notified);notified.as_mut().enable();let outcome=record.outcome.lock().unwrap().clone();if let Some(outcome)=outcome{return match outcome{Ok(value)=>self.replay(value).await,Err(error)=>Err(error)};}notified.await;}}
         // The operation owns its reply and resources, not the IPC receiver.
         // Dropping a caller must not discard a late successful COMMIT.
-        let track=!matches!(request.name.as_str(),"session.start"|"session.stop"|"session.cancel"|"session.selectMode"|"recovery.activate");
         let hub=Arc::clone(self);let owned_record=Arc::clone(&record);let window=window.to_owned();let (reply_tx,reply_rx)=tokio::sync::oneshot::channel();
-        if track{self.db_command_workers.fetch_add(1,std::sync::atomic::Ordering::SeqCst);}
         tokio::spawn(async move{
             let _lease=track.then(||CommandLease(Arc::clone(&hub)));let _owner=RequestOwner(Arc::clone(&owned_record));
             let name=request.name.clone();

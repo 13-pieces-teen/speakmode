@@ -77,6 +77,41 @@
       "path": "supplements/chromium-superfasthash-LICENSE.txt",
       "sha256": "c84acd2b557e4532ecb9da3aa0a613be252ac123ebaffb0184b4e5c7a7fc62af",
       "bytes": 1721
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/minisign-verify-0.3.0-LICENSE",
+      "sha256": "42c8695fbc468866d9756be99af0ba4e37d733f8daa3c8827c8d80b8bec1b2f9",
+      "bytes": 2312
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/README.md",
+      "sha256": "a0eda5cdf9eaa46d43a3b2a2b2a8de66d27e18b280e91c089e5eb83b0b5bfb0c",
+      "bytes": 3306
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/rustls-platform-verifier-0.7.1-LICENSE-APACHE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "bytes": 11357
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/rustls-platform-verifier-0.7.1-LICENSE-MIT",
+      "sha256": "1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c",
+      "bytes": 1066
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/tauri-plugin-updater-2.14.1-LICENSE.spdx",
+      "sha256": "eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef",
+      "bytes": 888
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/tauri-plugin-updater-2.14.1-LICENSE_APACHE-2.0",
+      "sha256": "0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9",
+      "bytes": 10173
+    },
+    {
+      "path": "supplements/windows-updater-0.2.48/tauri-plugin-updater-2.14.1-LICENSE_MIT",
+      "sha256": "89ff9689dcf9dd53968785d05a26f7898bb169dbfcada8d032b3e68cf0d55607",
+      "bytes": 1089
     }
   ],
   "supplements": [
@@ -84,6 +119,11 @@
       "addedIn": "0.2.12",
       "path": "supplements/chromium-superfasthash-LICENSE.txt",
       "scope": "Chromium-compatible PersistentHash Rust adaptation; original dependency inputs above remain a historical snapshot."
+    },
+    {
+      "addedIn": "0.2.48",
+      "path": "supplements/windows-updater-0.2.48/README.md",
+      "scope": "Exact published license texts for three newly locked Windows normal updater dependencies; original inputs and inventories remain historical."
     }
   ]
 }

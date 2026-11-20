@@ -10,8 +10,14 @@ use tauri::{AppHandle, Manager, State, WebviewWindow, WebviewWindowBuilder, Wind
     ipc::Channel, menu::{Menu, MenuItem}, tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState}};
 use tauri_plugin_autostart::ManagerExt;
 
+#[cfg(windows)]
+#[path = "desktop_updater.rs"]
+mod updater;
+
 struct DesktopState {
     hub: Arc<AppHub>,
+    #[cfg(windows)]
+    updates: updater::Updates,
     // 0 running, 1 cleanup requested, 2 confirmed, 3 cleanup failed/retry only. ExitRequested fires
     // again after AppHandle::exit: allow it only after state 2, without recursion.
     exit: AtomicU8,
@@ -136,6 +142,29 @@ async fn app_command(window: WebviewWindow, state: State<'_, Arc<DesktopState>>,
     // Never accept a client-supplied window label. Engine applies the recording
     // surface whitelist to this label before payloads are processed.
     let exit = state.exit.load(Ordering::Acquire);
+    if matches!(request.name.as_str(), "update.status" | "update.check" | "update.download" | "update.install") {
+        if window.label() != "main" {
+            return Err(native_error("forbidden_window", "请从主面板管理版本更新"));
+        }
+        #[cfg(windows)]
+        {
+            let app = window.app_handle();
+            let updates = &state.updates;
+            let version = || request.payload["version"].as_str()
+                .ok_or_else(|| ApiError::new("invalid_payload", "update", "请选择待更新的版本。"));
+            match request.name.as_str() {
+                "update.status" => {},
+                "update.install" => updates.install(app, state.inner(), version()?).await?,
+                _ if exit != 0 => return Err(native_error("app_exiting", "退出流程已开始，请重新打开 SpeakMode 后再检查更新")),
+                "update.check" => updates.check(app).await,
+                "update.download" => updates.download(version()?).await?,
+                _ => unreachable!(),
+            }
+            return Ok(updates.status());
+        }
+        #[cfg(not(windows))]
+        return Ok(json!({"currentVersion": window.app_handle().package_info().version.to_string(), "state": "disabled"}));
+    }
     let allowed_during_exit = matches!(request.name.as_str(), "state.snapshot" | "app.showMain" | "app.quit") ||
         exit == 3 && matches!(request.name.as_str(), "preferences.get" | "mode.list" | "provider.status" |
             "credential.status" | "history.get" | "history.list" | "usage.today" | "usage.total" | "result.copy" | "recoverable.copy");
@@ -290,6 +319,10 @@ fn start_maintenance(app:AppHandle,state:Arc<DesktopState>){
     });
 }
 fn request_exit(app: AppHandle, state: Arc<DesktopState>) {
+    if state.exit.load(Ordering::Acquire) == 2 {
+        app.exit(0);
+        return;
+    }
     if !begin_exit(&app,&state){return;}
     tauri::async_runtime::spawn(async move {
         let cleanup = async {
@@ -947,7 +980,14 @@ pub fn run() {
             std::fs::create_dir_all(&directory)?;
             crate::maintenance::mark_profile(&directory)?;
             let hub = AppHub::open(&directory).map_err(|e| std::io::Error::other(e.message))?;
-            let state = Arc::new(DesktopState { hub, exit: AtomicU8::new(0), hook_starting: AtomicBool::new(false), maintenance_starting: AtomicBool::new(false),maintenance:Mutex::new(None),ui_thread: std::thread::current().id(), recorder: Mutex::new(RecorderState::default()), mode_item: Mutex::new(None) });
+            #[cfg(windows)]
+            let updates = updater::Updates::new(app.handle(), override_dir.is_none())?;
+            let state = Arc::new(DesktopState {
+                hub,
+                #[cfg(windows)]
+                updates,
+                exit: AtomicU8::new(0), hook_starting: AtomicBool::new(false), maintenance_starting: AtomicBool::new(false),maintenance:Mutex::new(None),ui_thread: std::thread::current().id(), recorder: Mutex::new(RecorderState::default()), mode_item: Mutex::new(None)
+            });
             app.manage(Arc::clone(&state));
             let autostart_launch = std::env::args().any(|arg| arg == "--autostart");
             state.hub.shortcut_capture_focus_changed(!autostart_launch);
@@ -988,6 +1028,8 @@ pub fn run() {
                 publish_error(&state, native_error("autostart_mismatch", "开机启动的系统状态与偏好不一致，请在设置中重新确认"));
             }
             start_maintenance(app.handle().clone(),Arc::clone(&state));
+            #[cfg(windows)]
+            updater::schedule(app.handle().clone(), &state);
             start_hotkeys(app.handle().clone(), state, shortcut);
             Ok(())
         })

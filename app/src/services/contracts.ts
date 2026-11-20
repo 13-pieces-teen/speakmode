@@ -27,6 +27,7 @@ export interface ProviderModelOption { id:string; label:string; implemented:bool
 export interface ProviderModelCatalog { asr:ProviderModelOption[]; rewrite:ProviderModelOption[] }
 export interface ProviderDefinition extends ProviderModelCatalog { id:string; label:string }
 export interface ProviderStatus { config:ProviderConfig; configured:boolean; credentialConfigured?:boolean; asrCredentialConfigured?:boolean; rewriteCredentialConfigured?:boolean; status?:string; message?:string; modelCatalog?:ProviderModelCatalog; providerCatalog?:ProviderDefinition[] }
+export interface AppUpdateStatus { currentVersion:string; state:'disabled'|'idle'|'checking'|'upToDate'|'available'|'downloading'|'downloaded'|'installing'|'error'; version?:string; notes?:string; downloadedBytes?:number; totalBytes?:number; message?:string }
 export interface AudioDevice { id:string; name:string; isDefault?:boolean; available?:boolean }
 export interface DictionaryEntry { id:string; term:string; createdAt:string; updatedAt:string }
 export interface DictionarySnapshot { version:number; entries:DictionaryEntry[] }

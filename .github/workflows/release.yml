@@ -38,6 +38,28 @@ jobs:
             throw 'Cargo and Tauri desktop versions must match.'
           }
           "SPEAKMODE_VERSION=$($config.version)" >> $env:GITHUB_ENV
+      - name: Validate updater signing configuration
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBLIC_KEY) -or [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw 'Tagged releases require TAURI_UPDATER_PUBLIC_KEY and TAURI_SIGNING_PRIVATE_KEY. No unsigned release will be published.'
+          }
+          $publicKey = $env:TAURI_UPDATER_PUBLIC_KEY.Trim()
+          try { $decodedKey = [Convert]::FromBase64String($publicKey) } catch {
+            throw 'TAURI_UPDATER_PUBLIC_KEY must be the base64 public-key content, not a path.'
+          }
+          if ($decodedKey.Length -eq 0) { throw 'TAURI_UPDATER_PUBLIC_KEY is empty.' }
+          $override = @{
+            bundle = @{ createUpdaterArtifacts = $true }
+            plugins = @{ updater = @{ pubkey = $publicKey } }
+          } | ConvertTo-Json -Depth 5 -Compress
+          $overridePath = Join-Path $env:RUNNER_TEMP 'speakmode-updater.conf.json'
+          [IO.File]::WriteAllText($overridePath, $override, [Text.UTF8Encoding]::new($false))
+          "SPEAKMODE_TAURI_CONFIG=$overridePath" >> $env:GITHUB_ENV
+      - name: Test release scripts
+        run: ./scripts/test-release-assets.ps1
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -52,10 +74,17 @@ jobs:
       - name: Test desktop library
         run: ./scripts/build-desktop.ps1 -Task Test
       - name: Build NSIS installer
-        run: ./scripts/build-desktop.ps1 -Task Package
-      - name: Prepare downloads
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          ./scripts/prepare-release-assets.ps1 -Installer "app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/SpeakMode_${env:SPEAKMODE_VERSION}_x64-setup.exe" -OutputDirectory release-assets -SourceCommit $env:GITHUB_SHA
+          $env:TAURI_SIGNING_PRIVATE_KEY = $env:TAURI_SIGNING_PRIVATE_KEY.Trim()
+          ./scripts/build-desktop.ps1 -Task Package -TauriConfig $env:SPEAKMODE_TAURI_CONFIG
+      - name: Prepare downloads
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          ./scripts/prepare-release-assets.ps1 -Installer "app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/SpeakMode_${env:SPEAKMODE_VERSION}_x64-setup.exe" -OutputDirectory release-assets -SourceCommit $env:GITHUB_SHA -RequireUpdater -UpdaterPublicKey $env:TAURI_UPDATER_PUBLIC_KEY -Repository $env:GITHUB_REPOSITORY
       - name: Retain build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -70,7 +99,7 @@ jobs:
           # Create a draft first so failed uploads never become the latest download.
           gh release create $env:GITHUB_REF_NAME --verify-tag --draft --title "SpeakMode $env:SPEAKMODE_VERSION" --notes-file release-assets/RELEASE-NOTES.md
           if ($LASTEXITCODE -ne 0) { throw 'Release already exists or could not be created. Inspect it before retrying.' }
-          gh release upload $env:GITHUB_REF_NAME release-assets/*.exe release-assets/SHA256SUMS.txt release-assets/build-info.json
+          gh release upload $env:GITHUB_REF_NAME release-assets/*.exe release-assets/*.sig release-assets/latest.json release-assets/SHA256SUMS.txt release-assets/build-info.json
           if ($LASTEXITCODE -ne 0) { throw 'Upload failed; release remains a draft.' }
           gh release edit $env:GITHUB_REF_NAME --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish the draft release.' }

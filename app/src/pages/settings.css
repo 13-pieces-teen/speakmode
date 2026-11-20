@@ -97,6 +97,15 @@
 .settings-provider-notice { display: flex; gap: 7px; align-items: flex-start; color: var(--sm-muted); font-size: 12px; line-height: 22px; margin: 0; }
 .settings-provider-notice svg { flex-shrink: 0; margin-top: 3px; }
 .settings-provider-notice:empty { display: none; }
+.settings-update-actions, .settings-update-confirm-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.settings-update-confirm-actions { margin-top: 22px; }
+.settings-update-status { color: var(--sm-secondary); font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.settings-update-status p { margin: 5px 0; }
+.settings-update-status progress { display: block; width: 100%; height: 8px; margin: 13px 0 8px; accent-color: var(--sm-accent); }
+.settings-update-notes { margin-top: 14px; color: var(--sm-secondary); font-size: 13px; line-height: 1.8; }
+.settings-update-notes summary { width: fit-content; max-width: 100%; min-height: 30px; cursor: pointer; overflow-wrap: anywhere; }
+.settings-update-notes summary:focus-visible, .settings-update-notes p:focus-visible { outline: 3px solid #85aff5; outline-offset: 3px; border-radius: 3px; }
+.settings-update-notes p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; padding: 14px 16px; margin: 8px 0 0; border-radius: 9px; background: #f6f8fb; }
 /* The shortcut editor participates in the row grid; expanded content spans both columns. */
 .settings-shortcut-row .shortcut-editor { display: contents; }
 .shortcut-current { grid-column: 2; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 0; }

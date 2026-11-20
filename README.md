@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/readme/status.svg" alt="当前桌面源码 v0.2.47 · Windows x64 · 自备 API Key · Tauri 2、Rust 与 React" width="594" />
+  <img src="docs/assets/readme/status.svg" alt="当前桌面源码 v0.2.48 · Windows x64 · 自备 API Key · Tauri 2、Rust 与 React" width="594" />
 </p>
 
 <p align="center">
@@ -117,7 +117,7 @@
 
 从 [GitHub Releases 下载最新 Windows x64 安装包](https://github.com/13-pieces-teen/speakmode/releases/latest/download/SpeakMode-windows-x64-setup.exe)，安装后即可使用，无需配置开发环境。需要自备云服务 API Key；首次使用可跟随应用内引导，完成服务配置、快捷键测试与口述练习。
 
-安装包目前未做 Windows 代码签名，系统可能显示发布者未知或 SmartScreen 提示。首次安装需要联网准备 WebView2 Runtime。升级时重新下载最新版安装包；当前没有应用内自动更新。各版本的更新说明、验证范围与 SHA256 校验文件见 [Release 页面](https://github.com/13-pieces-teen/speakmode/releases/latest)。
+安装包目前未做 Windows 代码签名，系统可能显示发布者未知或 SmartScreen 提示。首次安装需要联网准备 WebView2 Runtime。支持应用内更新的版本可在「设置 → 应用更新」检查、下载和安装签名更新。旧版本可下载最新版安装包覆盖升级。各版本的更新说明、验证范围与 SHA256 校验文件见 [Release 页面](https://github.com/13-pieces-teen/speakmode/releases/latest)。
 
 ### 运行桌面应用
 

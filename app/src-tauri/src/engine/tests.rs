@@ -36,6 +36,8 @@ mod startup_visibility_tests;
 mod hotkey_start_queue_tests;
 #[path="capture_bridge_tests.rs"]
 mod capture_bridge_tests;
+#[path="update_shutdown_tests.rs"]
+mod update_shutdown_tests;
 
 
 trait TestDb {
@@ -84,7 +86,7 @@ pub(super) fn hub() -> Arc<AppHub> {
             guards: Default::default(), sequence: 0, main_result_request:None, active: None, recoveries: Vec::new(),
             candidate: None, preview: None, preview_sources:Default::default(),personalization_workers:Default::default(),personalization_revocations:Default::default(), shortcut_capture:None,capture_commit_guard:None, used_operation_ids:Default::default(),
             cancelled_operation_ids:Default::default(),auxiliary_workers:Default::default(),key_configured: false, asr_key_configured:false, rewrite_key_configured:false, requests: Default::default(),
-            request_order: Default::default(),settings_pending:None,
+            request_order: Default::default(),settings_pending:None,update_shutdown_started:false,update_readers:0,
         }),
         db:DbClient::in_memory().unwrap(),db_command_workers:std::sync::atomic::AtomicUsize::new(0),settings_io:Mutex::new(()),shortcut_io:Mutex::new(()),
         subscribers: Mutex::new(HashMap::new()), publication: Mutex::new(()),

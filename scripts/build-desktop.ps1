@@ -6,6 +6,9 @@ Run a Windows desktop check, library test or NSIS build using one bounded cache.
 ValidateOnly performs read-only path, cache and disk checks and prints a JSON
 plan. It does not create directories, change environment variables or compile.
 Budgets are preflight thresholds, not live disk quotas. Nothing is auto-deleted.
+.PARAMETER TauriConfig
+Optional JSON object or JSON file for the Package task's Tauri --config override.
+Relative file paths are resolved from the repository root. Omit for local builds.
 #>
 [CmdletBinding()]
 param(
@@ -18,6 +21,7 @@ param(
     [double]$MinFreeGiB = 8,
     [ValidateRange(1, 64)]
     [int]$TestThreads = 4,
+    [string]$TauriConfig,
     [switch]$ValidateOnly
 )
 
@@ -32,6 +36,32 @@ if (-not (Test-Path -LiteralPath $speakManifest -PathType Leaf)) {
 }
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw 'The desktop build entry point requires Windows.'
+}
+$speakTauriConfig = $null
+if ($PSBoundParameters.ContainsKey('TauriConfig')) {
+    if ($Task -ne 'Package' -or [string]::IsNullOrWhiteSpace($TauriConfig)) {
+        throw 'TauriConfig requires the Package task and a nonempty JSON object or JSON file.'
+    }
+    $speakConfigJson = $TauriConfig
+    if ($TauriConfig.TrimStart().StartsWith('{')) {
+        $speakTauriConfig = $TauriConfig
+    } else {
+        $speakTauriConfig = $TauriConfig
+        if (-not [IO.Path]::IsPathRooted($speakTauriConfig)) {
+            $speakTauriConfig = Join-Path $speakRepo $speakTauriConfig
+        }
+        $speakTauriConfig = [IO.Path]::GetFullPath($speakTauriConfig)
+        $speakConfigJson = Get-Content -LiteralPath $speakTauriConfig -Raw -Encoding utf8
+    }
+    try { $speakConfigObject = $speakConfigJson | ConvertFrom-Json } catch {
+        throw 'TauriConfig must contain valid JSON.'
+    }
+    # ConvertFrom-Json can unwrap a one-element array in Windows PowerShell.
+    # Require the original root object as well as the parsed object type.
+    if (-not $speakConfigJson.TrimStart().StartsWith('{') -or $null -eq $speakConfigObject -or
+        $speakConfigObject.GetType().FullName -cne 'System.Management.Automation.PSCustomObject') {
+        throw 'TauriConfig must contain a JSON object.'
+    }
 }
 
 if ([string]::IsNullOrWhiteSpace($TargetDirectory)) {
@@ -133,7 +163,9 @@ if ($Task -eq 'Test') {
 } elseif ($Task -eq 'Package') {
     $speakCommand = 'node.exe'
     $speakTauri = Join-Path $speakApp 'node_modules\@tauri-apps\cli\tauri.js'
-    $speakArguments = @($speakTauri, 'build', '--ci', '--target', $speakTriple, '--bundles', 'nsis', '--', '--locked')
+    $speakArguments = @($speakTauri, 'build', '--ci', '--target', $speakTriple, '--bundles', 'nsis')
+    if ($null -ne $speakTauriConfig) { $speakArguments += @('--config', $speakTauriConfig) }
+    $speakArguments += @('--', '--locked')
     if (-not (Test-Path -LiteralPath $speakTauri -PathType Leaf)) {
         $speakViolations += 'Local Tauri CLI is missing. Run npm ci in app before packaging.'
     }
