@@ -167,7 +167,7 @@ pub fn prepare(config: &ProviderConfig, mode: &ModeSnapshot, source: &SourceRevi
     validate_draft(source, draft)?;
     super::super::models::validate_rewrite_model(config)?;
     let binding = ReviewBinding { source_sha256: fingerprint(source), draft_sha256: fingerprint(draft) };
-    let data = json!({"sourceText":source.text(), "draftText":draft.blocks[0].text, "resolvedMode":draft.resolved_mode});
+    let data = json!({"sourceText":super::model_source_text(source), "draftText":draft.blocks[0].text, "resolvedMode":draft.resolved_mode});
     let mut request=ReviewRequest {
         body: json!({
             "model":config.rewrite_model,
@@ -238,7 +238,7 @@ cleanup：无意义卡顿、残句和不自然搭配已修复。“是现在的�
         prompt=prompt.replace(schema,r#""checks":["pass/fail/uncertain","pass/fail/uncertain","pass/fail/uncertain","pass/fail/uncertain","pass/fail/uncertain"]"#);
         prompt.push_str("\nchecks 必须恰有五项，按 coverage、facts、scope、intent、cleanup 的固定顺序逐项填写；每项仍只能是 pass、fail、uncertain。不得省略、换序或用总评代替；仅五项全部 pass 且 issues=[] 才 accept。");
     }
-    let mut data = json!({"sourceText":source.text(),"draftText":draft.blocks[0].text,"baseMode":mode.base_mode,
+    let mut data = json!({"sourceText":super::model_source_text(source),"draftText":draft.blocks[0].text,"baseMode":mode.base_mode,
         "resolvedMode":draft.resolved_mode,"formatRules":mode.rules});
     if english { data["sourceFragments"] = json!(source.items.iter().map(|item|item.text.as_str()).collect::<Vec<_>>()); }
     let mut request=MinimumReviewRequest{body:json!({"model":config.rewrite_model,"messages":[
@@ -312,7 +312,6 @@ fn parse_bound(content:&str,binding:&ReviewBinding,source:&SourceRevision,draft:
         WireChecks::Ordered([coverage,facts,scope,intent,cleanup]) if ordered=>Checks{coverage,facts,scope,intent,cleanup},
         _=>return Err(error("invalid_semantic_review","语义核对格式与请求不一致")),
     };
-    let source_text = source.text();
     let draft_text = &draft.blocks[0].text;
     let all_pass = [checks.coverage,checks.facts,checks.scope,checks.intent,checks.cleanup]
         .iter().all(|status|*status==Status::Pass);
@@ -320,7 +319,10 @@ fn parse_bound(content:&str,binding:&ReviewBinding,source:&SourceRevision,draft:
         return Err(error("invalid_semantic_review", "语义核对的总判断与分项结论不一致"));
     }
     if wire.issues.len()>5 {return Err(error("invalid_semantic_review","语义核对问题超过数量限制"));}
-    for issue in &wire.issues {check_issue(issue,&source_text,draft_text)?;}
+    if !wire.issues.is_empty() {
+        let source_text = super::model_source_text(source);
+        for issue in &wire.issues {check_issue(issue,&source_text,draft_text)?;}
+    }
     // A model's five passes cannot waive native spelling/letter-list guards.
     if all_pass {super::spoken_format::validate(source,&draft.blocks)?;}
     Ok(SemanticReview { decision:wire.decision,checks,issues:wire.issues,binding:binding.clone(),

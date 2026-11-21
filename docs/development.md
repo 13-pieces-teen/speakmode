@@ -1,6 +1,6 @@
 # SpeakMode 开发指南
 
-当前桌面源码版本为 **0.2.48**，前端 package 版本为 **0.4.35**。[0.2.48 发布说明](releases/v0.2.48.md)记录内置更新器。自动整理的时间预算、失败提示和候选核对入口见 [0.2.47 发布说明](releases/v0.2.47.md)。快捷键行为见[快速双按取消](experiments/hotkey-quick-cancel-2026-11-15.md)和[短按唤起](experiments/hotkey-short-press-2026-11-15.md)。
+当前桌面源码版本为 **0.2.49**，前端 package 版本为 **0.4.35**。中文数字和跨识别分片的处理见 [0.2.49 发布说明](releases/v0.2.49.md)。应用内更新见 [0.2.48 发布说明](releases/v0.2.48.md)。自动整理的时间预算、失败提示和候选核对入口见 [0.2.47 发布说明](releases/v0.2.47.md)。快捷键行为见[快速双按取消](experiments/hotkey-quick-cancel-2026-11-15.md)和[短按唤起](experiments/hotkey-short-press-2026-11-15.md)。
 
 F8 等普通触发键按下即响应，单独修饰键仍按完整手势处理；所有快捷键共用的开始/结束及 500ms 快速连按取消规则保留。[0.2.43 快捷键切换记录](experiments/hotkey-toggle-2026-11-14.md)中的释放时序仅用于历史对照。
 

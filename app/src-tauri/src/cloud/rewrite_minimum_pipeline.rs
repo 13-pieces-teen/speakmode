@@ -32,6 +32,18 @@ fn safe_error(error:CloudError)->CloudError{
     else if error.code=="rewrite_meaning_risk" {CloudError::new("rewrite_admission_rejected","rewrite","整理稿未通过复核前检查，识别稿仍保留")}
     else {error}
 }
+fn format_draft(draft: &mut RewriteResult, source: &SourceRevision, mode: &ModeSnapshot,
+    context: Option<&crate::core::writing_context::WritingContext>) {
+    super::format_draft_spoken(draft, super::spoken_english(source, context));
+    // Free-form Mode rules already go to generation and review. Leave their
+    // compatible numeric presentation choices intact instead of guessing at them.
+    if !mode.rules.trim().is_empty() {
+        return;
+    }
+    for block in &mut draft.blocks {
+        block.text = super::spoken_format::normalize_chinese_numbers(&block.text);
+    }
+}
 async fn execute(client:&reqwest::Client,config:&ProviderConfig,secret:&str,mode:&ModeSnapshot,source:&SourceRevision,
     dictionary:&DictionarySnapshot,cancel:CancellationToken,endpoint:&str,wait:Duration)->Outcome {
     execute_from(client,config,secret,mode,source,dictionary,cancel,endpoint,wait,None).await
@@ -81,7 +93,7 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
             draft
         };
         super::normalize_draft_dictionary(source,dictionary,&mut draft);
-        super::format_draft_spoken(&mut draft,super::spoken_english(source,context));
+        format_draft(&mut draft,source,mode,context);
         trace.draft=Some(draft.clone());
         // Only the lab pays for shadow routing. It cannot bypass full review
         // and ordinary dictation does not perform an unused extra analysis.
@@ -126,7 +138,7 @@ async fn execute_with_policy(client:&reqwest::Client,config:&ProviderConfig,secr
         let content=super::fluent_pipeline::request_observed(client,config,secret,endpoint,&request.body,&cancel,&execution,RequestStage::Repair).await?;
         request.validate_personalization(context)?;
         let mut repaired=local_repair::apply_with_writing_context(&content,&request,mode,source,&draft,context).map_err(safe_error)?;
-        super::format_draft_spoken(&mut repaired,super::spoken_english(source,context));
+        format_draft(&mut repaired,source,mode,context);
         super::review_admission_with_writing_context(mode,source,&repaired,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&repaired)?;}
         trace.repaired_draft=Some(repaired.clone());
@@ -195,7 +207,7 @@ async fn correct_and_review(client:&reqwest::Client,config:&ProviderConfig,secre
         request.validate_personalization(context)?;
         let mut corrected=minimum::parse(&content,mode,source,&request)?;
         super::normalize_draft_dictionary(source,dictionary,&mut corrected);
-        super::format_draft_spoken(&mut corrected,super::spoken_english(source,context));
+        format_draft(&mut corrected,source,mode,context);
         super::review_admission_with_writing_context(mode,source,&corrected,context).map_err(safe_error)?;
         if context.is_some(){super::writing_context::validate_tense(source,&corrected)?;}
         trace.repaired_draft=Some(corrected.clone());

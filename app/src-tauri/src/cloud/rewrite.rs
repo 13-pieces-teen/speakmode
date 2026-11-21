@@ -60,6 +60,13 @@ mod long;
 mod protected_terms;
 #[path="rewrite_literals.rs"]
 mod literals;
+#[path="rewrite_numeric_fragments.rs"]
+mod numeric_fragments;
+
+fn model_source_text(source: &SourceRevision) -> String {
+    numeric_fragments::projected_text(source).unwrap_or_else(|| source.text())
+}
+
 #[path="rewrite_literal_corrections.rs"]
 mod literal_corrections;
 #[path="rewrite_format_requests.rs"]

@@ -48,13 +48,14 @@ pub(super) fn prepare_with_literal_policy(config:&ProviderConfig,mode:&ModeSnaps
     let prompt = if english { super::language::GENERATION } else { PROMPT };
     let mut body = super::request_body_with_system(config, mode, source, format!("协议版本：{VERSION}\n{prompt}"))?;
     let english_format=super::spoken_english(source,context);
-    let canonical = super::spoken_format::normalize(&super::terms::canonicalize(&source.text(), dictionary),english_format);
     let explicit_english = context.is_some_and(|v|v.language==crate::core::DraftLanguage::English);
+    let text = super::model_source_text(source);
     let terms = if protect_long && !explicit_english && super::uses_guarded_long(source) {
+        let canonical = super::spoken_format::normalize(&super::terms::canonicalize(&text, dictionary),english_format);
         Some(if precise_literals {ProtectedTerms::new_precise(&canonical,&super::terms::matching_terms(source,dictionary))?}
             else{ProtectedTerms::new_guarded(&canonical)?})
     } else { None };
-    let text = terms.as_ref().map_or_else(||source.text(), |p|p.masked_source().to_owned());
+    let text = terms.as_ref().map_or(text, |p|p.masked_source().to_owned());
     if let Some(terms)=&terms {
         let policy=if terms.protects_all_latin(){"不在标记外输出英文字母。"}
             else{"精确保护实验 precise-literals-v1：标记外的普通英文允许整理重复、卡顿和语法，但不得猜测或新增专名、合并明确逐个列举的字母。"};

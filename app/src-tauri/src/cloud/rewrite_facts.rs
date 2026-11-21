@@ -197,9 +197,113 @@ fn decimal(raw: &str, multiplier: u128) -> Option<String> {
     else { Some(format!("{whole}.{remainder:0width$}", width = fraction.len()).trim_end_matches('0').to_owned()) }
 }
 
+const DAY_PERIODS: &[&str] = &["上午", "下午", "凌晨", "中午", "晚上", "早上", "早晨", "傍晚"];
+const CLOCK_EVENTS: &[&str] = &["开始", "结束", "送到", "到达", "开会", "截止", "出发", "签到", "见面", "交付", "集合", "起飞"];
+const HORIZONTAL_SPACE: [char; 3] = [' ', '\t', '\u{3000}'];
+const APPROXIMATE_CLOCK_PREFIXES: &[&str] = &["大约在", "大概在", "约在", "大约", "大概", "约"];
+const APPROXIMATE_CLOCK_SUFFIXES: &[&str] = &["左右", "前后"];
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum ClockRelation {
+    At,
+    Before,
+    After,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) struct ClockScope {
+    period: Option<&'static str>,
+    approximate: bool,
+    relation: ClockRelation,
+}
+
+fn approximate_clock_start(text: &str) -> Option<usize> {
+    APPROXIMATE_CLOCK_PREFIXES.iter().find_map(|cue| {
+        let prefix = text.strip_suffix(cue)?;
+        // 预约在下午五点 is an appointment at a definite time.
+        (!cue.starts_with('约') || !prefix.ends_with(['预', '邀', '签', '合', '赴', '续', '相']))
+            .then_some(prefix.len())
+    })
+}
+
+fn clock_prefix(text: &str, start: usize) -> (usize, Option<&'static str>, bool) {
+    let before_hour = text[..start].trim_end_matches(HORIZONTAL_SPACE);
+    let after_period_approximation = approximate_clock_start(before_hour);
+    let period_text = before_hour[..after_period_approximation.unwrap_or(before_hour.len())]
+        .trim_end_matches(HORIZONTAL_SPACE);
+    let period = DAY_PERIODS.iter().copied().find(|word| period_text.ends_with(word));
+    let period_start = period.map(|word| period_text.len() - word.len());
+    let before_period_approximation = period_start
+        .and_then(|left| approximate_clock_start(period_text[..left].trim_end_matches(HORIZONTAL_SPACE)));
+    let left = before_period_approximation.or(period_start).or(after_period_approximation).unwrap_or(start);
+    let approximate = before_period_approximation.is_some() || after_period_approximation.is_some();
+    (left, period.map(|word| if word == "早晨" { "早上" } else { word }), approximate)
+}
+
+fn clock_suffix(text: &str) -> (ClockRelation, bool, &str) {
+    let tail = text.trim_start_matches(HORIZONTAL_SPACE);
+    let approx = APPROXIMATE_CLOCK_SUFFIXES.iter().find_map(|cue| tail.strip_prefix(cue));
+    let tail = approx.unwrap_or(tail).trim_start_matches(HORIZONTAL_SPACE);
+    for (markers, relation) in [
+        (["之前", "以前", "前"], ClockRelation::Before),
+        (["之后", "以后", "后"], ClockRelation::After),
+    ] {
+        if let Some(rest) = markers.iter().find_map(|marker| {
+            if *marker == "前" && ["前来", "前往"].iter().any(|cue| tail.starts_with(cue)) {
+                return None;
+            }
+            tail.strip_prefix(marker)
+        }) {
+            return (relation, approx.is_some(), rest);
+        }
+    }
+    (ClockRelation::At, approx.is_some(), tail)
+}
+
+fn clock_event(text: &str) -> Option<&'static str> {
+    CLOCK_EVENTS.iter().copied().find(|cue| text.starts_with(cue)).or_else(|| {
+        let at_end = |suffix: &str| suffix.trim_start().chars().next().is_none_or(super::is_separator);
+        text.strip_prefix('见').is_some_and(|tail| at_end(tail.strip_prefix('吧').unwrap_or(tail))).then_some("见")
+    })
+}
+
+pub(super) fn clock_scope(text: &str, fact: &Fact) -> Option<ClockScope> {
+    if !fact.key.starts_with("clock:") { return None; }
+    let (_, period, prefix_approximate) = clock_prefix(text, fact.start);
+    let (relation, suffix_approximate, _) = clock_suffix(&text[fact.end..]);
+    Some(ClockScope { period, approximate: prefix_approximate || suffix_approximate, relation })
+}
+
+fn clock_minute_shorthand(raw: &str) -> bool {
+    let digit = |c: char| matches!(c, '0'..='9' | '零' | '〇' | '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九');
+    let mut chars = raw.chars();
+    if matches!((chars.next(), chars.next(), chars.next()), (Some(a), Some(b), None) if digit(a) && digit(b)) {
+        return true;
+    }
+    raw.split_once('十').is_some_and(|(tens, ones)| {
+        matches!(tens, "" | "一" | "二" | "三" | "四" | "五")
+            && (ones.is_empty() || "一二三四五六七八九".contains(ones) && ones.chars().count() == 1)
+    })
+}
+
+fn shorthand_clock_context(text: &str, start: usize, end: usize) -> bool {
+    let before = text[..start].trim_end();
+    if before.ends_with(['负', '-']) || explicit_amount_label(text, start, end)
+        || text[..start].chars().next_back().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    {
+        return false;
+    }
+    let has_period = clock_prefix(text, start).1.is_some();
+    let (_, _, after) = clock_suffix(&text[end..]);
+    let event = after.trim_start_matches(HORIZONTAL_SPACE);
+    let terminal = |suffix: &str| suffix.trim_start().chars().next().is_none_or(super::is_separator);
+    clock_event(event).is_some()
+        || has_period && (terminal(event) || event.strip_prefix('到').is_some_and(terminal))
+}
+
 // Explicit hour/minute notation must precede the decimal scanner: 十点十分
 // otherwise becomes the invalid decimal 十点十 and both time fields disappear.
-// Support a bounded H点M分 / H:MM pair, retaining both fields as one fact.
+// Support H点M分 / H:MM and context-bound H点M, retaining both fields as one fact.
 // Whole H点 additionally requires an explicit day-period prefix or 点整 with
 // a clock boundary. This does not infer AM/PM or parse general Chinese prose.
 fn clock_fact(text: &str, start: usize) -> Option<Fact> {
@@ -216,13 +320,10 @@ fn clock_fact(text: &str, start: usize) -> Option<Fact> {
     let hour = value(&rest[..hour_len])?;
     if minute_len == 0 {
         if colon || hour > 23 { return None; }
-        let before = text[..start].trim_end();
-        let period = ["上午", "下午", "凌晨", "中午", "晚上", "早上", "早晨", "傍晚"]
-            .iter().any(|prefix| before.ends_with(prefix));
+        let period = clock_prefix(text, start).1.is_some();
         let (after, exact) = minute_text.strip_prefix('整').map_or((minute_text, false), |after| (after, true));
         let boundary = after.is_empty() || after.chars().next().is_some_and(|c| c.is_whitespace() || super::is_separator(c))
-            || ["前", "后", "开始", "结束", "送到", "到达", "开会", "截止", "出发", "签到", "见面", "交付", "集合"]
-                .iter().any(|suffix| after.starts_with(suffix));
+            || after.starts_with(['前', '后']) || CLOCK_EVENTS.iter().any(|suffix| after.starts_with(suffix));
         if (!period && !exact) || !boundary { return None; }
         return Some(Fact { key: format!("clock:{hour}:00"), start,
             end: start + hour_len + '点'.len_utf8() + if exact { '整'.len_utf8() } else { 0 } });
@@ -232,17 +333,55 @@ fn clock_fact(text: &str, start: usize) -> Option<Fact> {
         if hour_len > 2 || minute_len != 2 || !rest[..hour_len].bytes().all(|c| c.is_ascii_digit())
             || !minute_text[..minute_len].bytes().all(|c| c.is_ascii_digit()) { return None; }
         0
-    } else {
-        let after = minute_suffix.strip_prefix('分')?;
+    } else if let Some(after) = minute_suffix.strip_prefix('分') {
         // 十点五分钟 is 10.5 minutes, not 10:05. 这一点十分自然 is
         // prose, not a clock reading; keep that bounded intensifier use neutral.
         if after.starts_with('钟') || after.starts_with('之') || DEGREE_ADJECTIVES.iter().any(|word| after.starts_with(word)) { return None; }
         '分'.len_utf8()
+    } else {
+        let end = start + hour_len + '点'.len_utf8() + minute_len;
+        if !clock_minute_shorthand(&minute_text[..minute_len]) || !shorthand_clock_context(text, start, end) {
+            return None;
+        }
+        0
     };
     let minute = value(&minute_text[..minute_len])?;
     if hour > 23 || minute > 59 { return None; }
     Some(Fact { key: format!("clock:{hour}:{minute:02}"), start,
         end: start + hour_len + (if colon { 1 } else { '点'.len_utf8() }) + minute_len + suffix_len })
+}
+
+pub(super) fn fragment_clock_range(text: &str, start: usize) -> Option<(usize, usize)> {
+    if text[..start].chars().next_back().is_some_and(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '点') || chinese_digit(c)
+    }) {
+        return None;
+    }
+    let fact = clock_fact(text, start)?;
+    let (left, period, _) = clock_prefix(text, start);
+    let left = if period.is_some() {
+        let before = text[..left].trim_end_matches(HORIZONTAL_SPACE);
+        ["今天", "明天", "后天", "昨天", "前天"].iter()
+            .find_map(|day| before.strip_suffix(day).map(str::len))
+            .unwrap_or(left)
+    } else {
+        left
+    };
+    let (relation, approximate, after) = clock_suffix(&text[fact.end..]);
+    let mut right = fact.end;
+    if relation != ClockRelation::At || approximate {
+        right = text.len() - after.len();
+    }
+    // Shorthand H点MM uses a nearby event to establish its meaning. Permit
+    // that cue itself to cross a soft seam, even though it's outside the time.
+    let wording = &text[start..fact.end];
+    if wording.contains('点') && !wording.ends_with(['点', '分', '整']) {
+        let event_text = after.trim_start_matches(HORIZONTAL_SPACE);
+        if let Some(event) = clock_event(event_text) {
+            right = text.len() - event_text.len() + event.len();
+        }
+    }
+    Some((left, right))
 }
 
 pub(super) fn extract(text: &str) -> Vec<Fact> {
@@ -371,6 +510,81 @@ pub(super) fn canonical_text(text: &str) -> String {
         result.push_str(&text[start..fact.start]); result.push(' '); result.push_str(&fact.key); result.push(' '); start = fact.end;
     }
     result.push_str(&text[start..]); result
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    #[test]
+    fn clock_scope_preserves_period_uncertainty_and_relative_cutoff() {
+        fn signature(text: &str) -> (String, ClockScope) {
+            let fact = extract(text).into_iter().find(|f| f.key.starts_with("clock:")).unwrap();
+            let scope = clock_scope(text, &fact).unwrap();
+            (fact.key, scope)
+        }
+        let afternoon = signature("下午三点零五开会。");
+        assert_eq!(afternoon, signature("下午3:05开会。"));
+        assert_ne!(afternoon, signature("上午3:05开会。"));
+        assert_ne!(afternoon, signature("3:05开会。"));
+        assert_eq!(afternoon, signature("预约在下午3:05开会。"));
+        let approximate = signature("约在凌晨零点〇五起飞。");
+        assert_eq!(approximate, signature("凌晨0:05左右起飞。"));
+        assert_ne!(approximate, signature("凌晨0:05起飞。"));
+        let after_period = signature("下午约五点开会。");
+        assert_eq!(after_period, signature("约在下午5:00开会。"));
+        assert_eq!(after_period, signature("下午5:00左右开会。"));
+        assert_ne!(after_period, signature("约在5:00开会。"));
+        let deadline = signature("请在下午四点二五前到达。");
+        assert_eq!(deadline, signature("请在下午4:25之前到达。"));
+        assert_ne!(deadline, signature("请在下午4:25后到达。"));
+    }
+
+    #[test]
+    fn clock_seam_range_covers_the_relevant_cue_but_stops_before_following_prose() {
+        let text = "会议在约下午五点零三开始检查。";
+        let start = text.find('五').unwrap();
+        let (left, right) = fragment_clock_range(text, start).unwrap();
+        assert_eq!(&text[left..right], "约下午五点零三开始");
+        assert_eq!(fragment_clock_range("用时三点零五分钟。", "用时".len()), None);
+    }
+
+    #[test]
+    fn colloquial_minutes_in_explicit_clock_context_match_written_time() {
+        for (spoken, written, key) in [
+            ("我们下午三点零五见。", "我们下午3:05见。", "clock:3:05"),
+            ("会议三点二十开始。", "会议3:20开始。", "clock:3:20"),
+            ("约在凌晨零点〇五。", "约在凌晨0:05。", "clock:0:05"),
+            ("三点05左右开会。", "3:05左右开会。", "clock:3:05"),
+            ("下午三点五十九前到。", "下午3:59前到。", "clock:3:59"),
+        ] {
+            let source = extract(spoken);
+            let draft = extract(written);
+            assert_eq!(source[0].key, key, "{spoken}");
+            assert_eq!(draft[0].key, key, "{written}");
+            assert!(!spoken[source[0].end..].starts_with('分'), "{spoken}");
+        }
+        for changed in ["我们下午3.05见。", "我们下午3:50见。", "我们下午见。"] {
+            assert!(extract(changed).iter().all(|fact| fact.key != "clock:3:05"), "{changed}");
+        }
+    }
+
+    #[test]
+    fn decimal_units_and_ambiguous_fragments_do_not_create_clocks() {
+        for (input, key) in [("用时三点零五分钟。", "millisecond:183000"), ("预算三点零五元。", "cny:3.05")] {
+            assert_eq!(extract(input)[0].key, key, "{input}");
+        }
+        for input in [
+            "下午三点零五元。",
+            "这里还有三点一是成本。",
+            "三点零五。",
+            "下午三点五。",
+            "下午三点六十见。",
+            "预算三点零五开始执行。",
+        ] {
+            assert!(extract(input).iter().all(|fact| !fact.key.starts_with("clock:")), "{input}");
+        }
+    }
 }
 
 #[cfg(test)]
