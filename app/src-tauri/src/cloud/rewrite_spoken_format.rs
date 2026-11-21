@@ -5,9 +5,14 @@ use crate::core::{SourceRevision,OutputBlock};
 use serde_json::{Value,json};
 use std::collections::{HashMap,HashSet};
 
-pub(super) const VERSION:&str="spoken-format-v3";
+#[path = "rewrite_chinese_numbers.rs"]
+mod chinese_numbers;
+
+pub(super) const VERSION:&str="spoken-format-v6";
 const ACRONYMS:&[&str]=&["ADHD","LLM","RAG","API","APP","GPU","CPU","NLP","ASR","SDK","SQL","HTTP","HTTPS","URL","JSON","HTML","CSS","CIKM","ADMA","DCG","AI","UI","UX"];
 const POLICY:&str=r#"Spoken notation: use Arabic digits for unambiguous calendar years and dates. Chinese prose uses 2026年10月23日; English prose uses 2026-10-23 for a complete explicit date. Missing year/month/day stays missing. Never resolve tomorrow/weekdays from the current date, choose an interpretation of 3/4, fix an invalid recorded date, or borrow a year from another event. Literal quotes, code, addresses, identifiers and explicit verbatim wording retain their original spelling.
+中文数字写法：明确的数量、金额、测量值和连续逐位读出的数字默认用阿拉伯数字，例如“三百”→“300”、“四七一”→“471”、“零零七”→“007”。formatRules 中明确且兼容的数字写法优先，例如要求金额用中文数字。保留原来的数字值、顺序、前导零、单位、正负、约数和归属，不代做计算。钟点还要保留时段及“前／后”范围。分清钟点、列举和小数；列举用清楚的分隔符，不把相邻数字串拼成千位分组。歧义、专名、成语、惯用语、“一个疑问”这类泛指，以及已确认或要求逐字保留的写法维持原样。
+中文同音识别校正：通读同一次口述的全部片段。两个读音相同或相近的写法只有在上下文明确指向同一事物、且其中一个已出现的写法在两处都明确合适时，才将误识别的那一处改成该写法。后文“这个／该／刚才说的”等明确回指可以佐证，词频或读音相似本身不能佐证。不同对象、真实对比、引文、代码、已确认的写法和缺少依据的词保留原样，不做全局替换。复核时允许有上述依据的校正，误合并或凭空改词时 facts 不通过，明确的同音误识别仍残留时 cleanup 不通过。
 Spelled Latin letters can be an acronym or individual units. Join only the same letters in the same order when the local prose clearly refers to one known term, e.g. A D H D -> ADHD, L L M -> LLM, R A G -> RAG. Do not expand an acronym, infer a condition/diagnosis, guess an unfamiliar name, remove repeated letters or join across unrelated words. Explicit separate letters, spelling lessons, choices, variables and uncertain letter groups stay separate. An ideographic comma (、) inside a group of individual letters explicitly enumerates separate units, regardless of nearby profession, acronym, or negated acronym context; preserve every letter in order, including repetitions. A separator between distinct spelled known terms (L L M、R A G) still permits each term to normalize independently. Source-bound separateLetterGroups identify protected occurrences; another occurrence of the same acronym never authorizes merging a list. An article a and pronoun I are not automatically AI. Chinese/English hesitation may separate an otherwise clear acronym; meaningful Chinese is never a separator to delete. Generic degrees or 度 retain an unspecified scale; only explicit Celsius/Fahrenheit in the source permits ℃/℉ notation, and profession or context never supplies a scale. Apply the same policy during generation, review and repair. Equivalent notation is not changed meaning; a changed value or merged letter list is changed meaning."#;
 
 #[derive(Clone)]
@@ -173,6 +178,10 @@ pub(super) fn normalize(text:&str,english:bool)->String {
         output.push_str(&text[offset..run.start]);output.push_str(&run.letters);offset=run.end;
     }
     output.push_str(&text[offset..]);super::dates::normalize(&output,english)
+}
+
+pub(super) fn normalize_chinese_numbers(text: &str) -> String {
+    chinese_numbers::normalize(text)
 }
 fn protected(run:&Run,text:&str)->bool {
     if run.allowed{return false;}

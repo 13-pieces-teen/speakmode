@@ -3,6 +3,8 @@
 //! Every joined or corrected span retains original item IDs and byte ranges.
 //! This view is never persisted as an edited source or used for source restore.
 use super::{anchors, facts, fingerprints, partial_correction, Kind, CORRECTIONS, FILLERS};
+use super::review_admission::digit_strings;
+use super::super::numeric_fragments;
 use crate::core::{OutputBlock, SourceRevision};
 use std::collections::HashMap;
 
@@ -102,6 +104,32 @@ fn quoted_origin(masks: &HashMap<&str, Vec<bool>>, span: &Span<'_>) -> bool {
         .and_then(|mask| mask.get(origin.start))).copied().unwrap_or(true)
 }
 
+fn apply_identifier_correction<'a>(spans: &mut [Span<'a>], replacement: &Span<'a>,
+    quotes: &HashMap<&str, Vec<bool>>) -> bool {
+    let Some((previous, earlier)) = spans.split_last_mut() else { return false; };
+    let Some((role, start, owner)) = digit_strings::identifier(&previous.text) else { return false; };
+    if quoted_origin(quotes, previous) || !anchors(&previous.text).is_empty()
+        || !anchors(&replacement.text).is_empty() {
+        return false;
+    }
+    let corrected = if let Some((next_role, next_start, next_owner)) = digit_strings::identifier(&replacement.text) {
+        // Preserve the stated owner when the same role is repeated using an alias.
+        if role != next_role || owner != next_owner {
+            return false;
+        }
+        &replacement.text[next_start..]
+    } else {
+        let Some(corrected) = digit_strings::standalone(&replacement.text) else { return false; };
+        if earlier.iter().any(|span| digit_strings::extract(&span.text).contains_key(role)) {
+            return false;
+        }
+        corrected
+    };
+    previous.text.replace_range(start.., corrected);
+    extend_origins(previous, &replacement.origins);
+    true
+}
+
 struct NumericRepair {
     target: usize,
     replacement: usize,
@@ -141,6 +169,28 @@ fn same_numeric_owner(old: &str, start: usize, end: usize, new: &str, next_start
         && old[..start].trim() == new[..next_start].trim()
         && old[end..].trim() == new[next_end..].trim()
         && anchors(old).is_empty() && anchors(new).is_empty()
+}
+
+fn apply_clock_correction<'a>(spans: &mut [Span<'a>], replacement: &Span<'a>,
+    quotes: &HashMap<&str, Vec<bool>>) -> bool {
+    let Some(previous) = spans.last_mut() else { return false; };
+    if quoted_origin(quotes, previous) { return false; }
+    let before = facts::extract(&previous.text);
+    let after = facts::extract(&replacement.text);
+    let ([old], [new]) = (before.as_slice(), after.as_slice()) else { return false; };
+    // A correction must repeat the adjacent event, not merely share a clock
+    // or leave its qualifier implicit. Preserve the exact owner and action.
+    let action = previous.text[old.end..].trim();
+    if !old.key.starts_with("clock:") || !new.key.starts_with("clock:")
+        || action.is_empty()
+        || previous.text[..old.start].trim() != replacement.text[..new.start].trim()
+        || action != replacement.text[new.end..].trim()
+    {
+        return false;
+    }
+    previous.text.replace_range(old.start..old.end, &replacement.text[new.start..new.end]);
+    extend_origins(previous, &replacement.origins);
+    true
 }
 
 fn acknowledges_retired_value(text: &str, repair: &NumericRepair) -> bool {
@@ -258,11 +308,38 @@ fn resolve_correction<'a>(spans: &mut [Span<'a>], replacement: &Span<'a>) -> boo
 pub(super) fn analysis_spans(source: &SourceRevision) -> Vec<Span<'_>> {
     let quotes = quote_masks(source);
     let mut raw = Vec::<Span<'_>>::new();
-    for item in &source.items {
-        for clause in facts::clauses(&item.text) {
-            let start = clause.as_ptr() as usize - item.text.as_ptr() as usize;
-            raw.push(Span { origins: vec![SourceSlice { source_id: &item.id, start, end: start + clause.len() }], text: clause.to_owned(), unresolved_correction: false });
+    let mut boundaries = numeric_fragments::joined_boundaries(source).into_iter().peekable();
+    let mut first = 0;
+    for last in 0..source.items.len() {
+        if boundaries.next_if_eq(&last).is_some() {
+            continue;
         }
+        let items = &source.items[first..=last];
+        let mut joined = String::new();
+        let mut starts = Vec::new();
+        let text = if items.len() == 1 {
+            starts.push(0);
+            items[0].text.as_str()
+        } else {
+            for item in items {
+                starts.push(joined.len());
+                joined.push_str(&item.text);
+            }
+            &joined
+        };
+        for clause in facts::clauses(text) {
+            let start = clause.as_ptr() as usize - text.as_ptr() as usize;
+            let end = start + clause.len();
+            let first_item = starts.partition_point(|&offset| offset <= start) - 1;
+            let origins = items.iter().zip(&starts).skip(first_item).take_while(|(_, offset)| **offset < end)
+                .map(|(item, &offset)| SourceSlice {
+                    source_id: &item.id,
+                    start: start.saturating_sub(offset),
+                    end: (end - offset).min(item.text.len()),
+                }).collect();
+            raw.push(Span { origins, text: clause.to_owned(), unresolved_correction: false });
+        }
+        first = last + 1;
     }
     // A provider item boundary is not a sentence boundary. Move only the
     // hanging 不是 before 说, and only without explicit intervening punctuation.
@@ -311,6 +388,14 @@ pub(super) fn analysis_spans(source: &SourceRevision) -> Vec<Span<'_>> {
         if !pending.is_empty() && !FILLERS.contains(&span.text.trim()) {
             let repair = (!quoted).then(|| numeric_repair(&result, &span)).flatten();
             extend_origins(&mut span, &pending);
+            if !quoted && !pending_pause
+                && (apply_clock_correction(&mut result, &span, &quotes)
+                    || apply_identifier_correction(&mut result, &span, &quotes))
+            {
+                // The replacement already owns its full source range.
+                pending.clear();
+                continue;
+            }
             // New pause-prefixed numeric repairs are enabled only with a
             // positive, same-unit, uniquely identified adjacent value.
             span.unresolved_correction = if quoted || (pending_pause && !facts::extract(&span.text).is_empty() && repair.is_none()) {

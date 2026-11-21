@@ -3,40 +3,121 @@
 //! The caller must first validate JSON, Mode, source coverage and block references.
 //! Compare global canonical fact sets after explicit spoken repairs. This deliberately
 //! does not reuse prefix/bigram scope matching, and cannot prove who owns a value,
-//! how often it occurs, or whether prose retains its meaning. Count/scalar facts stay
-//! for the independent reviewer: their determiners are the false-rejection problem.
+//! how often it occurs, or whether prose retains its meaning. Identified digit
+//! strings retain spelling and occurrence order. General count/scalar facts
+//! stay with the independent reviewer: determiners cause false rejections.
 use super::{anchors, effective_spans, facts, same_kind, CloudError, Kind};
 use crate::core::{OutputBlock, SourceRevision};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use super::super::english_years;
+
+#[path = "rewrite_digit_strings.rs"]
+pub(super) mod digit_strings;
 
 fn reject(message: &'static str) -> CloudError {
     CloudError::new("rewrite_meaning_risk", "rewrite", message)
 }
 
-fn numeric_set<'a>(texts: impl Iterator<Item = &'a str>) -> HashSet<String> {
-    texts.flat_map(facts::extract).map(|fact| fact.key)
-        .filter(|key| !key.starts_with("count:") && !key.starts_with("scalar:"))
-        .collect()
+#[derive(Default)]
+struct NumericEvidence {
+    values: HashSet<String>,
+    clocks: HashMap<(String, facts::ClockScope), usize>,
 }
 
-fn numeric_sets(source: &SourceRevision, blocks: &[OutputBlock], spans: &[super::Span<'_>]) -> (HashSet<String>, HashSet<String>) {
+fn numeric_set<'a>(texts: impl Iterator<Item = &'a str>) -> NumericEvidence {
+    let mut result = NumericEvidence::default();
+    for text in texts {
+        for fact in facts::extract(text) {
+            if let Some(scope) = facts::clock_scope(text, &fact) {
+                *result.clocks.entry((fact.key.clone(), scope)).or_default() += 1;
+            }
+            if !fact.key.starts_with("count:") && !fact.key.starts_with("scalar:") {
+                result.values.insert(fact.key);
+            }
+        }
+    }
+    result
+}
+
+fn numeric_sets(source: &SourceRevision, blocks: &[OutputBlock], spans: &[super::Span<'_>]) -> (NumericEvidence, NumericEvidence) {
     let mut source_numbers = numeric_set(spans.iter().map(|span| span.text.as_str()));
     let mut output_numbers = numeric_set(blocks.iter().map(|block| block.text.as_str()));
     // Whole-source extraction is essential here: clause splitting would turn
     // "in twenty thirty.\nTwo." into a false 2030 before seeing its suffix.
     let text=source.text();
     let expected=english_years::source_keys(&text);
-    output_numbers.extend(blocks.iter().flat_map(|block| english_years::retained_keys(&block.text))
+    output_numbers.values.extend(blocks.iter().flat_map(|block| english_years::retained_keys(&block.text))
         .filter(|key|expected.contains(key)));
-    source_numbers.extend(expected);
+    source_numbers.values.extend(expected);
     // A date's optional comma must not hide its year from clause-based
     // extraction. Use the effective (already corrected) spans in source order,
     // rather than reintroducing a date withdrawn by an explicit spoken repair.
     let effective=spans.iter().map(|span|span.text.as_str()).collect::<Vec<_>>().join(", ");
-    source_numbers.extend(super::super::dates::fact_keys(&effective));
-    output_numbers.extend(blocks.iter().flat_map(|block|super::super::dates::fact_keys(&block.text)));
+    source_numbers.values.extend(super::super::dates::fact_keys(&effective));
+    output_numbers.values.extend(blocks.iter().flat_map(|block|super::super::dates::fact_keys(&block.text)));
     (source_numbers, output_numbers)
+}
+
+fn effective_digit_text(source: &SourceRevision, spans: &[super::Span<'_>]) -> String {
+    let items: HashMap<_, _> = source.items.iter().enumerate()
+        .map(|(index, item)| (item.id.as_str(), (index, item.text.as_str()))).collect();
+    let separator_gap = |gap: &str| gap.chars().all(|c| c.is_whitespace() || super::is_separator(c));
+    let mut text = String::new();
+    let mut previous: Option<&super::semantics::SourceSlice<'_>> = None;
+    for span in spans.iter().filter(|span| !span.text.is_empty()) {
+        let current = span.origins.first();
+        if let Some(previous) = previous {
+            let gap = current.and_then(|origin| {
+                let &(left_index, left) = items.get(previous.source_id)?;
+                let &(right_index, right) = items.get(origin.source_id)?;
+                if left_index == right_index {
+                    let between = left.get(previous.end..origin.start)?;
+                    separator_gap(between).then_some((between, None))
+                } else if right_index == left_index + 1 {
+                    let trailing = left.get(previous.end..)?;
+                    let leading = right.get(..origin.start)?;
+                    (separator_gap(trailing) && separator_gap(leading)).then_some((trailing, Some(leading)))
+                } else {
+                    None
+                }
+            });
+            // Retain explicit separators at either edge of a fragment. The
+            // newline still separates fragments and blocks ASCII thousands grouping.
+            match gap {
+                Some((left, Some(right))) => {
+                    text.push_str(left);
+                    text.push('\n');
+                    text.push_str(right);
+                }
+                Some((between, None)) => text.push_str(between),
+                None => text.push('\n'),
+            }
+        }
+        text.push_str(&span.text);
+        previous = span.origins.last();
+    }
+    text
+}
+
+fn preserves_digit_sequences(source: &SourceRevision, blocks: &[OutputBlock], spans: &[super::Span<'_>]) -> bool {
+    let effective = effective_digit_text(source, spans);
+    let output = blocks.iter().map(|block| block.text.as_str()).collect::<Vec<_>>().join("\n");
+    let mut expected = digit_strings::extract(&effective);
+    let mut actual = digit_strings::extract(&output);
+    let explicit_comparison = expected.remove(digit_strings::COMPARISON).is_some();
+    actual.remove(digit_strings::COMPARISON);
+    if expected != actual {
+        return false;
+    }
+    // An output-side comparison alone can come from normal cardinal formatting
+    // ("三百减去三十" -> "300减去30"). When the source actually contains a
+    // digit-string comparison, compare both views with the same exact formatting
+    // so neighboring cardinal expressions do not create draft-only matches.
+    let comparison = |text| {
+        let normalized = super::super::spoken_format::normalize_chinese_numbers(text);
+        digit_strings::extract(&normalized).remove(digit_strings::COMPARISON)
+    };
+    !explicit_comparison || comparison(&effective) == comparison(&output)
 }
 
 fn kinds<'a>(texts: impl Iterator<Item = &'a str>) -> HashSet<Kind> {
@@ -73,7 +154,8 @@ fn sorted(values: impl Iterator<Item = String>) -> Vec<String> {
 /// changing validation, repairing a draft, or asserting semantic equivalence.
 pub(super) fn evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> serde_json::Value {
     let spans = effective_spans(source);
-    let (source_numbers, output_numbers) = numeric_sets(source, blocks, &spans);
+    let (source_facts, output_facts) = numeric_sets(source, blocks, &spans);
+    let (source_numbers, output_numbers) = (&source_facts.values, &output_facts.values);
     let source_kinds = kinds(spans.iter().map(|span| span.text.as_str()));
     let output_kinds = kinds(blocks.iter().map(|block| block.text.as_str()));
     let time_labels = |values: &HashSet<Kind>| sorted(values.iter().copied()
@@ -102,8 +184,9 @@ pub(super) fn evidence(source: &SourceRevision, blocks: &[OutputBlock]) -> serde
             "blockCount": blocks.len()
         },
         "differences": {
-            "numericRemoved": sorted(source_numbers.difference(&output_numbers).cloned()),
-            "numericAdded": sorted(output_numbers.difference(&source_numbers).cloned()),
+            "numericRemoved": sorted(source_numbers.difference(output_numbers).cloned()),
+            "numericAdded": sorted(output_numbers.difference(source_numbers).cloned()),
+            "clockScopeChanged": source_facts.clocks != output_facts.clocks,
             "timeRemoved": sorted(source_kinds.difference(&output_kinds).copied().filter(|kind| matches!(kind, Kind::Time(_))).map(kind_label)),
             "timeAdded": sorted(output_kinds.difference(&source_kinds).copied().filter(|kind| matches!(kind, Kind::Time(_))).map(kind_label)),
             "missingQualifierKindsUnderSameKindRule": missing_kinds
@@ -145,8 +228,14 @@ pub(super) fn validate_with_email_omission(source: &SourceRevision, blocks: &[Ou
         return Err(reject("语义复核的来源或改口含义尚不明确"));
     }
     let (source_numbers, output_numbers) = numeric_sets(source, blocks, &spans);
-    if source_numbers != output_numbers {
+    if source_numbers.values != output_numbers.values {
         return Err(reject("语义复核前发现明确数值、单位或版本变化"));
+    }
+    if source_numbers.clocks != output_numbers.clocks {
+        return Err(reject("语义复核前发现钟点的时段、约略程度或前后限定变化"));
+    }
+    if !preserves_digit_sequences(source, blocks, &spans) {
+        return Err(reject("语义复核前发现明确数值或编号的数字序列发生变化"));
     }
     // Only an anchor inside the exact original wrapper range may be omitted.
     // Corrected/merged spans and every other customer question stay protected.

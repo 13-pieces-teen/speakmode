@@ -66,6 +66,195 @@ async fn run(server:&Server,config:&ProviderConfig,mode:&ModeSnapshot,source:&So
         &server.endpoint,RewriteExecution::for_duration(Duration::from_secs(4))).await
 }
 
+fn split_fixture(fragments: &[&str]) -> (ProviderConfig, ModeSnapshot, SourceRevision) {
+    let (config, mode, mut source) = fixture(fragments[0]);
+    for (index, text) in fragments.iter().enumerate().skip(1) {
+        source.items.push(SourceItem {
+            id: format!("item-{index}"), provider_item_id: index.to_string(), capture_order: index as u64,
+            text: (*text).into(), is_final: true, start_ms: None, end_ms: None,
+        });
+    }
+    (config, mode, source)
+}
+
+#[tokio::test]
+async fn split_numbers_share_a_model_view_and_keep_original_source_ids() {
+    let (config, mode, source) = split_fixture(&["请在下午五点", "零三开始，验证码是零零", "七。"]);
+    let frozen = source.clone();
+    let expected = "请在下午5:03开始，验证码是007。";
+    let server = Server::new(vec![draft(expected), Reply::Fixed(ACCEPT.into())]).await;
+
+    let result = run(&server, &config, &mode, &source).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, expected);
+    assert_eq!(result.blocks[0].source_refs, ["item-0", "item-1", "item-2"]);
+    assert_eq!(source, frozen);
+    assert_eq!(source.text(), "请在下午五点\n零三开始，验证码是零零\n七。");
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert_eq!(data(request)["sourceText"], "请在下午五点零三开始，验证码是零零七。");
+    }
+}
+
+#[tokio::test]
+async fn stitched_source_quote_can_anchor_sentence_repair() {
+    let (config, mode, source) = split_fixture(&["这个流程还没有太能做到，下午五点", "零三开会。"]);
+    let stitched = "这个流程还没有太能做到，下午五点零三开会。";
+    let fixed = "这个流程还没有很好地做到，下午五点零三开会。";
+    let rejection = json!({
+        "decision":"reject",
+        "checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"fail"},
+        "issues":[{"dimension":"cleanup","sourceQuote":stitched,"draftQuote":stitched,"reason":"修正卡顿搭配"}]
+    });
+    let repair = json!({"replacements":[{"id":"r0","text":fixed}]});
+    let server = Server::new(vec![
+        draft(stitched), Reply::Fixed(rejection.to_string()), Reply::Fixed(repair.to_string()),
+        Reply::Fixed(ACCEPT.into()),
+    ]).await;
+
+    let result = run(&server, &config, &mode, &source).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, fixed);
+    assert_eq!(result.blocks[0].source_refs, ["item-0", "item-1"]);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(data(&requests[2])["targets"][0]["sourceQuote"], stitched);
+    for request in requests.iter() {
+        assert_eq!(data(request)["sourceText"], stitched);
+    }
+}
+
+#[tokio::test]
+async fn chinese_homophones_across_fragments_and_numbers_share_generation_and_review_policy() {
+    let (config, mode, mut source) = fixture("我有一个疑问：之前有三百的法石，");
+    let continuation = "那去除这个罚时，岂不是之前的四七一应该是一七一呢？这是我的一个问题。";
+    source.items.push(SourceItem {
+        id: "item-1".into(),
+        provider_item_id: "1".into(),
+        capture_order: 1,
+        text: continuation.into(),
+        is_final: true,
+        start_ms: None,
+        end_ms: None,
+    });
+    let before = source.clone();
+    let corrected = format!("我有一个疑问：之前有三百的罚时，{continuation}");
+    let expected = "我有一个疑问：之前有300的罚时，那去除这个罚时，岂不是之前的471应该是171呢？这是我的一个问题。";
+    let server = Server::new(vec![draft(&corrected), Reply::Fixed(ACCEPT.into())]).await;
+
+    let result = run(&server, &config, &mode, &source).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, expected);
+    assert_eq!(result.blocks[0].source_refs, ["item-0", "item-1"]);
+    assert_eq!(source, before);
+    assert_eq!(server.count(), 2);
+    let requests = server.requests.lock().unwrap();
+    let source_text = before.text();
+    assert_eq!(data(&requests[0])["sourceText"], source_text);
+    let review = data(&requests[1]);
+    assert_eq!(review["sourceText"], source_text);
+    assert_eq!(review["draftText"], expected);
+    for request in requests.iter() {
+        let system = request["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains(spoken_format::VERSION));
+        assert!(system.contains("同音"));
+    }
+}
+
+#[tokio::test]
+async fn custom_numeric_format_survives_generation_and_sentence_repair() {
+    let input = "这个方案还没有太能做到，预算三百元。";
+    let fixed = "这个方案还没有很好地做到，预算三百元。";
+    let (config, mut mode, source) = fixture(input);
+    mode.rules = "金额用中文数字。".into();
+    let rejection = json!({
+        "decision":"reject",
+        "checks":{"coverage":"pass","facts":"pass","scope":"pass","intent":"pass","cleanup":"fail"},
+        "issues":[{"dimension":"cleanup","sourceQuote":input,"draftQuote":input,"reason":"修正卡顿搭配"}]
+    });
+    let repair = json!({"replacements":[{"id":"r0","text":fixed}]});
+    let server = Server::new(vec![
+        draft(input), Reply::Fixed(rejection.to_string()), Reply::Fixed(repair.to_string()),
+        Reply::Fixed(ACCEPT.into()),
+    ]).await;
+
+    let result = run(&server, &config, &mode, &source).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, fixed);
+    assert_eq!(server.count(), 4);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(data(&requests[1])["draftText"], input);
+    assert_eq!(data(&requests[3])["draftText"], fixed);
+    for request in requests.iter() {
+        assert_eq!(data(request)["formatRules"], mode.rules);
+    }
+}
+
+#[tokio::test]
+async fn losing_leading_zeroes_cannot_reach_model_review() {
+    let input = "验证码是零零七。";
+    let changed = "验证码是7。";
+    let (config, mode, source) = fixture(input);
+    let server = Server::new(vec![draft(changed), draft(changed)]).await;
+
+    let error = run(&server, &config, &mode, &source).await.err().unwrap();
+
+    assert_eq!(error.code, "rewrite_admission_rejected");
+    assert_eq!(server.count(), 2);
+    let requests = server.requests.lock().unwrap();
+    let correction = data(&requests[1]);
+    assert_eq!(correction["sourceText"], input);
+    assert_eq!(correction["correctionFeedback"]["stage"], "admission");
+    assert!(correction.get("draftText").is_none());
+}
+
+#[tokio::test]
+async fn spoken_clock_and_separate_identifiers_reach_review_without_changing_value() {
+    for (input, generated, expected) in [
+        ("我们下午三点零五见。", "我们下午3:05见。", "我们下午3:05见。"),
+        ("编号一二三,四五六。", "编号一二三,四五六。", "编号123, 456。"),
+    ] {
+        let (config, mode, source) = fixture(input);
+        let server = Server::new(vec![draft(generated), Reply::Fixed(ACCEPT.into())]).await;
+        let result = run(&server, &config, &mode, &source).await.unwrap();
+
+        assert_eq!(result.blocks[0].text, expected);
+        assert_eq!(server.count(), 2);
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(data(&requests[1])["draftText"], expected);
+    }
+}
+
+#[tokio::test]
+async fn homophones_for_distinct_objects_follow_the_existing_review_recovery() {
+    let input = "游戏道具叫法石，赛道上还有罚时规则。";
+    let merged = "游戏道具叫罚时，赛道上还有罚时规则。";
+    let (config, mode, source) = fixture(input);
+    let rejection = json!({
+        "decision":"reject",
+        "checks":{"coverage":"pass","facts":"fail","scope":"pass","intent":"pass","cleanup":"pass"},
+        "issues":[]
+    });
+    let server = Server::new(vec![
+        draft(merged), Reply::Fixed(rejection.to_string()), draft(input),
+        Reply::Fixed(ACCEPT.into()),
+    ]).await;
+
+    let result = run(&server, &config, &mode, &source).await.unwrap();
+
+    assert_eq!(result.blocks[0].text, input);
+    assert_eq!(server.count(), 4);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(data(&requests[2])["rejectedDraft"]["text"], merged);
+    assert_eq!(data(&requests[2])["sourceText"], input);
+    assert_eq!(data(&requests[3])["draftText"], input);
+    for request in requests.iter() {
+        let system = request["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("不同对象"));
+    }
+}
+
 #[tokio::test]
 async fn protected_long_chinese_restores_normalized_acronym_and_date_before_frozen_review(){
     let input=format!("我们讨论 A D H D 的研究，报告日期是二零二六年十月二十三日。{}","接着记录当前实验的流程和观察结果。".repeat(30));

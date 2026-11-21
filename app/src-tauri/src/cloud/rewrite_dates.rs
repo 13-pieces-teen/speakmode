@@ -122,7 +122,7 @@ fn english(text:&str,start:usize,calendar_years:&[(usize,usize,u16)])->Option<Me
     }
     None
 }
-fn protected_notation(text:&str,start:usize,end:usize)->bool {
+pub(super) fn protected_notation(text:&str,start:usize,end:usize)->bool {
     // Year-only English mentions include the gap after "in"/"year" so that
     // rendering retains its space. Their token boundary starts after that gap.
     let start=start+text[start..end].len()-text[start..end].trim_start().len();

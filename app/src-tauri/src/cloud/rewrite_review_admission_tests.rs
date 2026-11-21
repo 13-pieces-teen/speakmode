@@ -33,6 +33,26 @@ fn review_admission_allows_cleanup_and_exact_unit_normalization() {
 }
 
 #[test]
+fn clock_admission_preserves_period_approximation_and_cutoff_after_stitching() {
+    let input = ["约在", "凌晨五点", "零五起飞。"];
+    assert!(admitted(&input, "凌晨5:05左右起飞。"));
+    assert!(!admitted(&input, "凌晨5:05起飞。"));
+    assert!(!admitted(&input, "下午5:05左右起飞。"));
+    let cutoff = ["请在下午四点", "二五前到达。"];
+    assert!(admitted(&cutoff, "请在下午4:25之前到达。"));
+    assert!(!admitted(&cutoff, "请在下午4:25后到达。"));
+}
+
+#[test]
+fn adjacent_clock_correction_retires_only_the_same_repeated_action() {
+    let input = ["下午三点", "零五开会，不对，下午三点", "零七开会。"];
+    assert!(admitted(&input, "下午3:07开会。"));
+    assert!(!admitted(&input, "下午3:05开会。"));
+    let different_action = ["下午三点零五交付，不对，下午三点零七开会。"];
+    assert!(!admitted(&different_action, "下午3:07开会。"));
+}
+
+#[test]
 fn explicit_unitless_amounts_cannot_change_even_before_an_all_pass_reviewer() {
     for (input,good,bad) in [
         ("预算三千，暂时不发布。","预算3000，暂时不发布。","预算999，暂时不发布。"),
@@ -59,8 +79,77 @@ fn unitless_amount_checks_resolve_only_existing_explicit_correction_scope() {
     assert!(!admitted(&["甲预算3000，乙预算5000，我说错了，是3500。"],"甲预算3000，乙预算3500。"));
     // Generic scalars/counts deliberately remain outside this finite admission
     // check. Its pass is still not a semantic equivalence or owner proof.
-    assert!(admitted(&["这个编号3000。"],"这个编号999。"));
+    assert!(admitted(&["这个结果3000。"],"这个结果999。"));
     assert!(admitted(&["做一个工具。"],"做两个工具。"));
+}
+
+#[test]
+fn explicit_digit_strings_keep_zeroes_multiplicity_and_local_order() {
+    for (input, good, bad) in [
+        ("验证码零零七。", "校验码是007。", "校验码是7。"),
+        ("订单尾号零七。", "订单尾号07。", "订单尾号70。"),
+        ("这个编号3000。", "这个编号3000。", "这个编号999。"),
+        ("编号一二三,四五六。", "编号123, 456。", "编号123,456。"),
+        ("编号一二三、四五六。", "编号123、456。", "编号456、123。"),
+        ("验证码零零七，验证码也是零零七。", "验证码007，验证码也是007。", "验证码007。"),
+    ] {
+        assert!(admitted(&[input], good), "{input} -> {good}");
+        assert!(!admitted(&[input], bad), "{input} -> {bad}");
+    }
+    assert!(admitted(&["验证码零零七，订单号一二三。"], "订单号123，验证码007。"));
+    assert!(admitted(&["验证码零零七，不对，是零零八。"], "验证码008。"));
+    assert!(admitted(&["验证码零零七，我说错了，验证码零零八。"], "验证码008。"));
+    assert!(!admitted(&["验证码零零七，不对，是零零八。"], "验证码007。"));
+    assert!(admitted(&["保留「提醒，验证码零零七」。订单号一二三。"], "保留「提醒，验证码零零七」。订单号123。"));
+    assert!(admitted(&["验证码零零七", "记得发送。"], "验证码007。记得发送。"));
+    assert!(!admitted(&["验证码零零七", "记得发送。"], "验证码7。记得发送。"));
+}
+
+#[test]
+fn digit_labels_canonicalize_width_and_aliases_without_losing_value_or_owner() {
+    for (input, good, bad) in [
+        ("验证码是００七。", "验证码是007。", "验证码是００８。"),
+        ("请把登录验证码设为〇〇七。", "请把登录验证码设为007。", "请把登录验证码设为008。"),
+        ("手机号码是幺三零零零零零零零零七。", "手机号是13000000007。", "号码是13000000007。"),
+        ("订单号零零七，我说错了，订单编号零零八。", "订单编号008。", "订单号007。"),
+    ] {
+        assert!(admitted(&[input], good), "{input} -> {good}");
+        assert!(!admitted(&[input], bad), "{input} -> {bad}");
+    }
+    assert!(!admitted(&["甲订单号零零七，不对，乙订单编号零零八。"], "乙订单编号008。"));
+}
+
+#[test]
+fn explicit_list_boundaries_preserve_each_identifier_across_fragments() {
+    for (input, good, bad) in [
+        (&["编号一二三", "四五六，分别登记。"][..], "编号123、456，分别登记。", "编号123456，分别登记。"),
+        (&["两组编号是零一二,", "零三四。"][..], "两组编号是012, 034。", "两组编号是012,034。"),
+        (&["两组编号是零一二", "，零三四。"][..], "两组编号是012、034。", "两组编号是012。"),
+        (&["验证码是零零七。", "三个人已经确认。"][..], "验证码是007。三个人已经确认。", "验证码是0073。有人已经确认。"),
+    ] {
+        assert!(admitted(input, good), "{input:?} -> {good}");
+        assert!(!admitted(input, bad), "{input:?} -> {bad}");
+    }
+}
+
+#[test]
+fn direct_comparison_digit_strings_keep_values_across_recognition_fragments() {
+    let input = [
+        "我有一个疑问：之前有三百的法石，",
+        "那去除这个罚时，岂不是之前的四七一应该是一七一呢？",
+    ];
+    let good = "我有一个疑问：之前有300的罚时，那去除这个罚时，岂不是之前的471应该是171呢？";
+    assert!(admitted(&input, good));
+    assert!(admitted(&input, &good.replace("471应该是", "471，应该是：")));
+    assert!(!admitted(&input, &good.replace("471", "472")));
+    assert!(!admitted(&input, &good.replace("171", "172")));
+    assert!(!admitted(&input, &good.replace("之前的471应该是", "之前应该是")));
+
+    let cardinal = "三百减去三十等于二百七十。";
+    assert!(admitted(&[cardinal], "300减去30等于270。"));
+    let mixed = [cardinal, "之前的四七一应该是一七一。"];
+    assert!(admitted(&mixed, "300减去30等于270。之前的471应该是171。"));
+    assert!(!admitted(&mixed, "300减去30等于270。之前的472应该是171。"));
 }
 
 #[test]

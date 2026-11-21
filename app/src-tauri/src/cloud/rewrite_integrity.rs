@@ -21,6 +21,12 @@ mod quantity_roles;
 mod review_admission;
 use semantics::{analysis_spans as effective_spans, Span};
 
+pub(super) use review_admission::digit_strings::{digit as fragment_digit, labeled_prefix as fragment_identifier_prefix};
+
+pub(super) fn fragment_clock_range(text: &str, start: usize) -> Option<(usize, usize)> {
+    facts::fragment_clock_range(text, start)
+}
+
 /// Experimental precheck only; success still requires independent semantic review.
 pub(super) fn review_admission(source: &SourceRevision, blocks: &[OutputBlock]) -> Result<(), CloudError> {
     review_admission::validate(source, blocks)
@@ -260,7 +266,7 @@ fn normalize_numbers(text: &str) -> String {
     result
 }
 
-fn chinese_number(text: &str) -> Option<u64> {
+pub(super) fn chinese_number(text: &str) -> Option<u64> {
     let digit = |c| match c { '零' | '〇' => Some(0u64), '一' => Some(1), '二' | '两' => Some(2), '三' => Some(3), '四' => Some(4), '五' => Some(5), '六' => Some(6), '七' => Some(7), '八' => Some(8), '九' => Some(9), _ => None };
     if !text.chars().any(|c| matches!(c, '十' | '百' | '千' | '万' | '亿')) {
         return text.chars().try_fold(0u64, |number, c| number.checked_mul(10)?.checked_add(digit(c)?));
